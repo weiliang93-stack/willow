@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FitBot — Your Fitness Chat Buddy</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="chat-app">
+    <header class="chat-header">
+      <div class="avatar">💪</div>
+      <div>
+        <h1>FitBot</h1>
+        <p class="subtitle">your fitness chat buddy</p>
+      </div>
+    </header>
+
+    <main id="messages" class="messages"></main>
+
+    <form id="chat-form" class="chat-input">
+      <input
+        id="user-input"
+        type="text"
+        placeholder="Ask me about workouts, nutrition, or motivation..."
+        autocomplete="off"
+        autofocus
+      >
+      <button type="submit">Send</button>
+    </form>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
