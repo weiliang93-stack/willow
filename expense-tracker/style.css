@@ -285,14 +285,15 @@ button.secondary:hover {
 .category-chip {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   background: #e4efe8;
   color: #12331f;
   border-radius: 999px;
-  padding: 5px 6px 5px 12px;
+  padding: 5px 6px;
   font-size: 13px;
 }
 
+.category-chip .move-category-btn,
 .category-chip .delete-category-btn {
   background: none;
   color: #4a6b57;
@@ -301,7 +302,17 @@ button.secondary:hover {
   line-height: 1;
 }
 
+.category-chip .move-category-btn:hover,
 .category-chip .delete-category-btn:hover {
   background: none;
+  color: #12331f;
+}
+
+.category-chip .delete-category-btn:hover {
   color: #c0392b;
+}
+
+.category-chip .move-category-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
