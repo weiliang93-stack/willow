@@ -212,4 +212,29 @@ expenseListEl.addEventListener("click", (event) => {
   render();
 });
 
+document.getElementById("export-csv-btn").addEventListener("click", exportCsv);
+
+function exportCsv() {
+  const rows = [["Date", "Category", "Card", "Amount", "Note"]];
+  const sorted = [...expenses].sort((a, b) => a.date.localeCompare(b.date));
+  for (const e of sorted) {
+    const card = cards.find((c) => c.id === e.cardId);
+    rows.push([e.date, e.category, card ? card.name : "Unknown", e.amount.toFixed(2), e.note || ""]);
+  }
+
+  const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `expenses-${todayStr()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function csvEscape(value) {
+  const str = String(value);
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
 render();
