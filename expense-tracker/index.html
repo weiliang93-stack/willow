@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Budget Tracker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Budget Tracker</h1>
+      <p class="subtitle" id="month-label"></p>
+    </header>
+
+    <section class="card-panel">
+      <div class="panel-heading">
+        <h2>Cards</h2>
+        <button id="add-card-btn" class="link-btn">+ Add card</button>
+      </div>
+      <div id="cards-list" class="cards-list"></div>
+
+      <form id="add-card-form" class="inline-form hidden">
+        <input id="card-name" type="text" placeholder="Card name (e.g. Amex)" required>
+        <input id="card-cap" type="number" min="0" step="0.01" placeholder="Monthly cap ($)" required>
+        <div class="form-actions">
+          <button type="submit">Save card</button>
+          <button type="button" id="cancel-card-btn" class="secondary">Cancel</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="expense-panel">
+      <h2>Add expense</h2>
+      <form id="add-expense-form" class="expense-form">
+        <input id="expense-amount" type="number" min="0" step="0.01" placeholder="Amount ($)" required>
+        <select id="expense-category" required>
+          <option value="" disabled selected>Category</option>
+          <option>Food</option>
+          <option>Transport</option>
+          <option>Shopping</option>
+          <option>Bills</option>
+          <option>Entertainment</option>
+          <option>Other</option>
+        </select>
+        <select id="expense-card" required>
+          <option value="" disabled selected>Card</option>
+        </select>
+        <input id="expense-date" type="date" required>
+        <input id="expense-note" type="text" placeholder="Note (optional)">
+        <button type="submit">Add expense</button>
+      </form>
+      <p id="no-cards-hint" class="hint hidden">Add a card above before logging an expense.</p>
+    </section>
+
+    <section class="history-panel">
+      <div class="panel-heading">
+        <h2>This month's expenses</h2>
+        <span id="month-total" class="month-total"></span>
+      </div>
+      <div id="expense-list" class="expense-list"></div>
+    </section>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
