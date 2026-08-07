@@ -1,0 +1,219 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #f2f4f3;
+  color: #1a2b22;
+  padding: 16px;
+}
+
+.app {
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+header {
+  padding: 8px 4px 20px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.subtitle {
+  margin: 4px 0 0;
+  color: #667;
+  font-size: 13px;
+}
+
+section {
+  background: white;
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+h2 {
+  font-size: 15px;
+  margin: 0;
+  color: #33463b;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: #1e5f3a;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card-item {
+  border: 1px solid #e5e9e6;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.card-item-top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.card-item-top .name {
+  font-weight: 600;
+}
+
+.card-item-top .amounts {
+  color: #556;
+}
+
+.progress-track {
+  background: #eef1ef;
+  border-radius: 8px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 8px;
+  background: #2f9e58;
+  transition: width 0.2s ease;
+}
+
+.progress-fill.warn {
+  background: #e0a63a;
+}
+
+.progress-fill.over {
+  background: #d9534f;
+}
+
+.empty-state {
+  color: #889;
+  font-size: 13px;
+  padding: 8px 0;
+}
+
+.inline-form,
+.expense-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.inline-form.hidden {
+  display: none;
+}
+
+.inline-form input,
+.expense-form input,
+.expense-form select {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+  width: 100%;
+}
+
+.form-actions {
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  background: #1e5f3a;
+  color: white;
+  border: none;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #17492c;
+}
+
+button.secondary {
+  background: #eee;
+  color: #333;
+}
+
+button.secondary:hover {
+  background: #ddd;
+}
+
+.hint {
+  color: #889;
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
+.hint.hidden {
+  display: none;
+}
+
+.month-total {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.expense-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.expense-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #f0f0f0;
+  padding: 8px 0;
+  font-size: 13px;
+}
+
+.expense-row .meta {
+  color: #778;
+  font-size: 12px;
+}
+
+.expense-row .amount {
+  font-weight: 600;
+  margin-right: 10px;
+}
+
+.expense-row .delete-btn {
+  background: none;
+  color: #c0392b;
+  padding: 2px 6px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.expense-row .delete-btn:hover {
+  background: #fbe9e7;
+}
