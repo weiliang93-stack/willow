@@ -248,16 +248,30 @@ button.secondary:hover {
   width: auto;
 }
 
-.edit-card-btn {
+.card-actions {
+  display: flex;
+  gap: 14px;
   margin-top: 8px;
+}
+
+.edit-card-btn,
+.delete-card-btn {
   background: none;
-  color: #1e5f3a;
   padding: 0;
   font-size: 12px;
   font-weight: 600;
 }
 
-.edit-card-btn:hover {
+.edit-card-btn {
+  color: #1e5f3a;
+}
+
+.delete-card-btn {
+  color: #c0392b;
+}
+
+.edit-card-btn:hover,
+.delete-card-btn:hover {
   background: none;
   text-decoration: underline;
 }

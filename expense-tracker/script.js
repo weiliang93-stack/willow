@@ -186,7 +186,10 @@ function renderCards() {
         <div class="progress-fill ${fillClass}" style="width: ${pct}%"></div>
       </div>
       <span class="cycle-label">${escapeHtml(cycleLabel(card))}</span>
-      <button type="button" class="edit-card-btn" data-id="${card.id}">Edit</button>
+      <div class="card-actions">
+        <button type="button" class="edit-card-btn" data-id="${card.id}">Edit</button>
+        <button type="button" class="delete-card-btn" data-id="${card.id}">Delete</button>
+      </div>
     `;
     cardsListEl.appendChild(item);
   }
@@ -398,6 +401,20 @@ cardsListEl.addEventListener("click", (event) => {
   if (editBtn) {
     editingCardId = editBtn.dataset.id;
     renderCards();
+    return;
+  }
+
+  const deleteBtn = event.target.closest(".delete-card-btn");
+  if (deleteBtn) {
+    const card = cards.find((c) => c.id === deleteBtn.dataset.id);
+    const hasExpenses = expenses.some((e) => e.cardId === deleteBtn.dataset.id);
+    const message = hasExpenses
+      ? `Delete "${card.name}"? Past expenses logged on it will stay in your history but show as "Unknown".`
+      : `Delete "${card.name}"?`;
+    if (!window.confirm(message)) return;
+    cards = cards.filter((c) => c.id !== deleteBtn.dataset.id);
+    save();
+    render();
     return;
   }
 
