@@ -295,12 +295,17 @@ function renderCategories() {
     categoriesListEl.innerHTML = '<p class="empty-state">No categories yet — add one below.</p>';
     return;
   }
-  for (const category of categories) {
+  categories.forEach((category, index) => {
     const chip = document.createElement("span");
     chip.className = "category-chip";
-    chip.innerHTML = `${escapeHtml(category)} <button type="button" class="delete-category-btn" data-name="${escapeHtml(category)}" aria-label="Delete">&times;</button>`;
+    chip.innerHTML = `
+      <button type="button" class="move-category-btn" data-name="${escapeHtml(category)}" data-direction="-1" aria-label="Move earlier" ${index === 0 ? "disabled" : ""}>&#8249;</button>
+      ${escapeHtml(category)}
+      <button type="button" class="move-category-btn" data-name="${escapeHtml(category)}" data-direction="1" aria-label="Move later" ${index === categories.length - 1 ? "disabled" : ""}>&#8250;</button>
+      <button type="button" class="delete-category-btn" data-name="${escapeHtml(category)}" aria-label="Delete">&times;</button>
+    `;
     categoriesListEl.appendChild(chip);
-  }
+  });
 }
 
 function renderCategorySelect() {
@@ -469,11 +474,23 @@ addCategoryForm.addEventListener("submit", (event) => {
 });
 
 categoriesListEl.addEventListener("click", (event) => {
-  const btn = event.target.closest(".delete-category-btn");
-  if (!btn) return;
-  categories = categories.filter((c) => c !== btn.dataset.name);
-  save();
-  render();
+  const deleteBtn = event.target.closest(".delete-category-btn");
+  if (deleteBtn) {
+    categories = categories.filter((c) => c !== deleteBtn.dataset.name);
+    save();
+    render();
+    return;
+  }
+
+  const moveBtn = event.target.closest(".move-category-btn");
+  if (moveBtn) {
+    const index = categories.indexOf(moveBtn.dataset.name);
+    const newIndex = index + parseInt(moveBtn.dataset.direction, 10);
+    if (index === -1 || newIndex < 0 || newIndex >= categories.length) return;
+    [categories[index], categories[newIndex]] = [categories[newIndex], categories[index]];
+    save();
+    render();
+  }
 });
 
 expenseForm.addEventListener("submit", (event) => {
