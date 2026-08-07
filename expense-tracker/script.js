@@ -2,6 +2,7 @@ const STORAGE_KEYS = {
   cards: "budgetTracker.cards",
   expenses: "budgetTracker.expenses",
   categories: "budgetTracker.categories",
+  monthlyBudget: "budgetTracker.monthlyBudget",
 };
 
 const DEFAULT_CATEGORIES = ["Food", "Transport", "Shopping", "Bills", "Entertainment", "Other"];
@@ -9,6 +10,7 @@ const DEFAULT_CATEGORIES = ["Food", "Transport", "Shopping", "Bills", "Entertain
 let cards = load(STORAGE_KEYS.cards, []);
 let expenses = load(STORAGE_KEYS.expenses, []);
 let categories = load(STORAGE_KEYS.categories, DEFAULT_CATEGORIES);
+let monthlyBudget = load(STORAGE_KEYS.monthlyBudget, null);
 let editingCardId = null;
 
 function load(key, fallback) {
@@ -24,6 +26,7 @@ function save() {
   localStorage.setItem(STORAGE_KEYS.cards, JSON.stringify(cards));
   localStorage.setItem(STORAGE_KEYS.expenses, JSON.stringify(expenses));
   localStorage.setItem(STORAGE_KEYS.categories, JSON.stringify(categories));
+  localStorage.setItem(STORAGE_KEYS.monthlyBudget, JSON.stringify(monthlyBudget));
 }
 
 function uid() {
@@ -133,6 +136,12 @@ const expenseListEl = document.getElementById("expense-list");
 const monthTotalEl = document.getElementById("month-total");
 const monthLabelEl = document.getElementById("month-label");
 
+const budgetDisplayEl = document.getElementById("budget-display");
+const editBudgetBtn = document.getElementById("edit-budget-btn");
+const editBudgetForm = document.getElementById("edit-budget-form");
+const cancelBudgetBtn = document.getElementById("cancel-budget-btn");
+const budgetInput = document.getElementById("budget-input");
+
 const thisMonth = currentMonthKey(todayStr());
 
 monthLabelEl.textContent = new Date().toLocaleDateString(undefined, {
@@ -144,11 +153,45 @@ expenseDateInput.value = todayStr();
 // --- rendering ---
 
 function render() {
+  renderBudget();
   renderCards();
   renderCardSelect();
   renderCategories();
   renderCategorySelect();
   renderExpenses();
+}
+
+function monthlyTotalSpent() {
+  return expenses
+    .filter((e) => currentMonthKey(e.date) === thisMonth)
+    .reduce((sum, e) => sum + e.amount, 0);
+}
+
+function renderBudget() {
+  if (monthlyBudget === null) {
+    budgetDisplayEl.innerHTML = '<p class="empty-state">No budget set yet — tap Edit to set how much you want to spend this month.</p>';
+    return;
+  }
+
+  const spent = monthlyTotalSpent();
+  const remaining = monthlyBudget - spent;
+  const pct = monthlyBudget > 0 ? Math.min((spent / monthlyBudget) * 100, 100) : 0;
+  let fillClass = "";
+  if (spent >= monthlyBudget) fillClass = "over";
+  else if (spent >= monthlyBudget * 0.7) fillClass = "warn";
+
+  const remainingLabel =
+    remaining >= 0 ? `${formatMoney(remaining)} left this month` : `${formatMoney(Math.abs(remaining))} over budget`;
+
+  budgetDisplayEl.innerHTML = `
+    <div class="card-item-top">
+      <span class="amounts">${formatMoney(spent)} / ${formatMoney(monthlyBudget)}</span>
+    </div>
+    <div class="progress-track">
+      <div class="progress-fill ${fillClass}" style="width: ${pct}%"></div>
+    </div>
+    <span class="cycle-label">${escapeHtml(remainingLabel)}</span>
+  `;
 }
 
 function renderCards() {
@@ -327,8 +370,7 @@ function renderExpenses() {
     .filter((e) => currentMonthKey(e.date) === thisMonth)
     .sort((a, b) => b.date.localeCompare(a.date));
 
-  const total = monthExpenses.reduce((sum, e) => sum + e.amount, 0);
-  monthTotalEl.textContent = formatMoney(total);
+  monthTotalEl.textContent = formatMoney(monthlyTotalSpent());
 
   expenseListEl.innerHTML = "";
   if (monthExpenses.length === 0) {
@@ -366,6 +408,31 @@ function escapeHtml(str) {
 }
 
 // --- events ---
+
+editBudgetBtn.addEventListener("click", () => {
+  budgetInput.value = monthlyBudget === null ? "" : monthlyBudget;
+  editBudgetForm.classList.remove("hidden");
+  budgetDisplayEl.classList.add("hidden");
+  budgetInput.focus();
+});
+
+cancelBudgetBtn.addEventListener("click", () => {
+  editBudgetForm.classList.add("hidden");
+  budgetDisplayEl.classList.remove("hidden");
+  editBudgetForm.reset();
+});
+
+editBudgetForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const value = parseFloat(budgetInput.value);
+  if (!Number.isNaN(value)) {
+    monthlyBudget = value;
+    save();
+  }
+  editBudgetForm.classList.add("hidden");
+  budgetDisplayEl.classList.remove("hidden");
+  render();
+});
 
 addCardBtn.addEventListener("click", () => {
   addCardForm.classList.remove("hidden");
