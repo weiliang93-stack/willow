@@ -223,6 +223,31 @@ button.secondary:hover {
   margin-top: 14px;
 }
 
+.cycle-label {
+  display: block;
+  color: #778;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: #445;
+}
+
+.radio-group label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.radio-group input[type="radio"] {
+  width: auto;
+}
+
 .edit-card-btn {
   margin-top: 8px;
   background: none;
