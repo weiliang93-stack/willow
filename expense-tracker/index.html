@@ -13,6 +13,22 @@
       <p class="subtitle" id="month-label"></p>
     </header>
 
+    <section class="budget-panel">
+      <div class="panel-heading">
+        <h2>Monthly Budget</h2>
+        <button id="edit-budget-btn" class="link-btn">Edit</button>
+      </div>
+      <div id="budget-display"></div>
+
+      <form id="edit-budget-form" class="inline-form hidden">
+        <input id="budget-input" type="number" min="0" step="0.01" placeholder="Monthly budget ($)" required>
+        <div class="form-actions">
+          <button type="submit">Save</button>
+          <button type="button" id="cancel-budget-btn" class="secondary">Cancel</button>
+        </div>
+      </form>
+    </section>
+
     <section class="card-panel">
       <div class="panel-heading">
         <h2>Cards</h2>
