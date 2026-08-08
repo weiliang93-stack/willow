@@ -227,6 +227,38 @@ button.secondary:hover {
   margin-top: 14px;
 }
 
+.search-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.search-form input,
+.search-form select {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+  width: 100%;
+}
+
+.date-range {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.date-range span {
+  color: #778;
+  font-size: 13px;
+}
+
+.date-range input {
+  flex: 1;
+  min-width: 0;
+}
+
 .cycle-label {
   display: block;
   color: #778;

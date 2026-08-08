@@ -92,6 +92,29 @@
       <div id="expense-list" class="expense-list"></div>
       <button id="export-csv-btn" class="secondary export-btn" type="button">Export all expenses as CSV</button>
     </section>
+
+    <section class="search-panel">
+      <div class="panel-heading">
+        <h2>Search Expenses</h2>
+        <button type="button" id="clear-search-btn" class="link-btn">Clear</button>
+      </div>
+      <div class="search-form">
+        <input id="search-text" type="text" placeholder="Search notes...">
+        <select id="search-category">
+          <option value="">All categories</option>
+        </select>
+        <div class="date-range">
+          <input id="search-date-from" type="date" aria-label="From date">
+          <span>to</span>
+          <input id="search-date-to" type="date" aria-label="To date">
+        </div>
+      </div>
+      <div class="panel-heading">
+        <span id="search-result-summary" class="hint"></span>
+        <span id="search-total" class="month-total"></span>
+      </div>
+      <div id="search-results" class="expense-list"></div>
+    </section>
   </div>
 
   <script src="script.js"></script>
