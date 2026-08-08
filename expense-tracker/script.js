@@ -12,6 +12,7 @@ let expenses = load(STORAGE_KEYS.expenses, []);
 let categories = load(STORAGE_KEYS.categories, DEFAULT_CATEGORIES);
 let monthlyBudget = load(STORAGE_KEYS.monthlyBudget, null);
 let editingCardId = null;
+let editingExpenseId = null;
 
 function load(key, fallback) {
   try {
@@ -377,6 +378,10 @@ function renderCategorySelect() {
 }
 
 function buildExpenseRow(expense) {
+  if (editingExpenseId === expense.id) {
+    return buildExpenseEditForm(expense);
+  }
+
   const row = document.createElement("div");
   row.className = "expense-row";
   row.innerHTML = `
@@ -386,9 +391,84 @@ function buildExpenseRow(expense) {
     </div>
     <div style="display:flex; align-items:center;">
       <span class="amount">${formatMoney(expense.amount)}</span>
+      <button class="edit-expense-btn" data-id="${expense.id}" aria-label="Edit">&#9998;</button>
       <button class="delete-btn" data-id="${expense.id}" aria-label="Delete">&times;</button>
     </div>
   `;
+  return row;
+}
+
+function buildExpenseEditForm(expense) {
+  const row = document.createElement("div");
+  row.className = "expense-row expense-edit-row";
+
+  const form = document.createElement("div");
+  form.className = "inline-form";
+
+  const amountInput = document.createElement("input");
+  amountInput.type = "number";
+  amountInput.min = "0";
+  amountInput.step = "0.01";
+  amountInput.value = expense.amount;
+  amountInput.className = "edit-expense-amount";
+
+  const categorySelect = document.createElement("select");
+  categorySelect.className = "edit-expense-category";
+  const categoryOptions = categories.includes(expense.category)
+    ? categories
+    : [...categories, expense.category];
+  for (const category of categoryOptions) {
+    const opt = document.createElement("option");
+    opt.value = category;
+    opt.textContent = category;
+    categorySelect.appendChild(opt);
+  }
+  categorySelect.value = expense.category;
+
+  const paymentSelect = document.createElement("select");
+  paymentSelect.className = "edit-expense-card";
+  const cashOpt = document.createElement("option");
+  cashOpt.value = "cash";
+  cashOpt.textContent = "Cash / Other";
+  paymentSelect.appendChild(cashOpt);
+  for (const card of cards) {
+    const opt = document.createElement("option");
+    opt.value = card.id;
+    opt.textContent = card.name;
+    paymentSelect.appendChild(opt);
+  }
+  if (expense.cardId === "cash" || cards.some((c) => c.id === expense.cardId)) {
+    paymentSelect.value = expense.cardId;
+  }
+
+  const dateInput = document.createElement("input");
+  dateInput.type = "date";
+  dateInput.value = expense.date;
+  dateInput.className = "edit-expense-date";
+
+  const noteInput = document.createElement("input");
+  noteInput.type = "text";
+  noteInput.placeholder = "Note (optional)";
+  noteInput.value = expense.note || "";
+  noteInput.className = "edit-expense-note";
+
+  const actions = document.createElement("div");
+  actions.className = "form-actions";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.textContent = "Save";
+  saveBtn.className = "save-expense-edit";
+  saveBtn.dataset.id = expense.id;
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.className = "secondary cancel-expense-edit";
+
+  actions.append(saveBtn, cancelBtn);
+  form.append(amountInput, categorySelect, paymentSelect, dateInput, noteInput, actions);
+  row.appendChild(form);
   return row;
 }
 
@@ -640,13 +720,52 @@ expenseForm.addEventListener("submit", (event) => {
   render();
 });
 
-expenseListEl.addEventListener("click", (event) => {
-  const btn = event.target.closest(".delete-btn");
-  if (!btn) return;
-  expenses = expenses.filter((e) => e.id !== btn.dataset.id);
-  save();
-  render();
-});
+function onExpenseRowClick(event) {
+  const editBtn = event.target.closest(".edit-expense-btn");
+  if (editBtn) {
+    editingExpenseId = editBtn.dataset.id;
+    render();
+    return;
+  }
+
+  const cancelBtn = event.target.closest(".cancel-expense-edit");
+  if (cancelBtn) {
+    editingExpenseId = null;
+    render();
+    return;
+  }
+
+  const saveBtn = event.target.closest(".save-expense-edit");
+  if (saveBtn) {
+    const row = saveBtn.closest(".expense-row");
+    const amount = parseFloat(row.querySelector(".edit-expense-amount").value);
+    const category = row.querySelector(".edit-expense-category").value;
+    const cardId = row.querySelector(".edit-expense-card").value;
+    const date = row.querySelector(".edit-expense-date").value;
+    const note = row.querySelector(".edit-expense-note").value.trim();
+    const expense = expenses.find((e) => e.id === saveBtn.dataset.id);
+    if (expense && !Number.isNaN(amount) && category && cardId && date) {
+      expense.amount = amount;
+      expense.category = category;
+      expense.cardId = cardId;
+      expense.date = date;
+      expense.note = note;
+      save();
+    }
+    editingExpenseId = null;
+    render();
+    return;
+  }
+
+  const deleteBtn = event.target.closest(".delete-btn");
+  if (deleteBtn) {
+    expenses = expenses.filter((e) => e.id !== deleteBtn.dataset.id);
+    save();
+    render();
+  }
+}
+
+expenseListEl.addEventListener("click", onExpenseRowClick);
 
 searchTextInput.addEventListener("input", renderSearchResults);
 searchCategorySelect.addEventListener("change", renderSearchResults);
@@ -661,13 +780,7 @@ clearSearchBtn.addEventListener("click", () => {
   renderSearchResults();
 });
 
-searchResultsEl.addEventListener("click", (event) => {
-  const btn = event.target.closest(".delete-btn");
-  if (!btn) return;
-  expenses = expenses.filter((e) => e.id !== btn.dataset.id);
-  save();
-  render();
-});
+searchResultsEl.addEventListener("click", onExpenseRowClick);
 
 document.getElementById("export-csv-btn").addEventListener("click", exportCsv);
 
