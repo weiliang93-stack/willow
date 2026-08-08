@@ -391,7 +391,7 @@ function buildExpenseRow(expense) {
     </div>
     <div style="display:flex; align-items:center;">
       <span class="amount">${formatMoney(expense.amount)}</span>
-      <button class="edit-expense-btn" data-id="${expense.id}" aria-label="Edit">&#9998;</button>
+      <button class="edit-expense-btn" data-id="${expense.id}">Edit</button>
       <button class="delete-btn" data-id="${expense.id}" aria-label="Delete">&times;</button>
     </div>
   `;
