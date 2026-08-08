@@ -504,12 +504,12 @@ function renderSearchCategorySelect() {
   }
 }
 
-function renderSearchResults() {
+function getSearchFilterResults() {
   const text = searchTextInput.value.trim().toLowerCase();
   const category = searchCategorySelect.value;
   const dateFrom = searchDateFromInput.value;
   const dateTo = searchDateToInput.value;
-  const hasFilter = text || category || dateFrom || dateTo;
+  const hasFilter = Boolean(text || category || dateFrom || dateTo);
 
   const results = expenses
     .filter((e) => {
@@ -520,6 +520,12 @@ function renderSearchResults() {
       return true;
     })
     .sort((a, b) => b.date.localeCompare(a.date));
+
+  return { results, hasFilter };
+}
+
+function renderSearchResults() {
+  const { results, hasFilter } = getSearchFilterResults();
 
   const total = results.reduce((sum, e) => sum + e.amount, 0);
   searchTotalEl.textContent = results.length ? formatMoney(total) : "";
@@ -782,11 +788,18 @@ clearSearchBtn.addEventListener("click", () => {
 
 searchResultsEl.addEventListener("click", onExpenseRowClick);
 
-document.getElementById("export-csv-btn").addEventListener("click", exportCsv);
+document.getElementById("export-csv-btn").addEventListener("click", () => {
+  exportCsv(expenses, "all");
+});
 
-function exportCsv() {
+document.getElementById("export-search-csv-btn").addEventListener("click", () => {
+  const { results, hasFilter } = getSearchFilterResults();
+  exportCsv(hasFilter ? results : expenses, hasFilter ? "filtered" : "all");
+});
+
+function exportCsv(list, filenameSuffix) {
   const rows = [["Date", "Category", "Payment method", "Amount", "Note"]];
-  const sorted = [...expenses].sort((a, b) => a.date.localeCompare(b.date));
+  const sorted = [...list].sort((a, b) => a.date.localeCompare(b.date));
   for (const e of sorted) {
     rows.push([e.date, e.category, paymentMethodLabel(e.cardId), e.amount.toFixed(2), e.note || ""]);
   }
@@ -796,7 +809,7 @@ function exportCsv() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `expenses-${todayStr()}.csv`;
+  a.download = `expenses-${filenameSuffix}-${todayStr()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
