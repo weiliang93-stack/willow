@@ -142,6 +142,15 @@ const editBudgetForm = document.getElementById("edit-budget-form");
 const cancelBudgetBtn = document.getElementById("cancel-budget-btn");
 const budgetInput = document.getElementById("budget-input");
 
+const searchTextInput = document.getElementById("search-text");
+const searchCategorySelect = document.getElementById("search-category");
+const searchDateFromInput = document.getElementById("search-date-from");
+const searchDateToInput = document.getElementById("search-date-to");
+const clearSearchBtn = document.getElementById("clear-search-btn");
+const searchResultsEl = document.getElementById("search-results");
+const searchResultSummaryEl = document.getElementById("search-result-summary");
+const searchTotalEl = document.getElementById("search-total");
+
 const thisMonth = currentMonthKey(todayStr());
 
 monthLabelEl.textContent = new Date().toLocaleDateString(undefined, {
@@ -159,6 +168,8 @@ function render() {
   renderCategories();
   renderCategorySelect();
   renderExpenses();
+  renderSearchCategorySelect();
+  renderSearchResults();
 }
 
 function monthlyTotalSpent() {
@@ -365,6 +376,22 @@ function renderCategorySelect() {
   }
 }
 
+function buildExpenseRow(expense) {
+  const row = document.createElement("div");
+  row.className = "expense-row";
+  row.innerHTML = `
+    <div>
+      <div>${escapeHtml(expense.category)}${expense.note ? " — " + escapeHtml(expense.note) : ""}</div>
+      <div class="meta">${expense.date} · ${escapeHtml(paymentMethodLabel(expense.cardId))}</div>
+    </div>
+    <div style="display:flex; align-items:center;">
+      <span class="amount">${formatMoney(expense.amount)}</span>
+      <button class="delete-btn" data-id="${expense.id}" aria-label="Delete">&times;</button>
+    </div>
+  `;
+  return row;
+}
+
 function renderExpenses() {
   const monthExpenses = expenses
     .filter((e) => currentMonthKey(e.date) === thisMonth)
@@ -379,19 +406,56 @@ function renderExpenses() {
   }
 
   for (const expense of monthExpenses) {
-    const row = document.createElement("div");
-    row.className = "expense-row";
-    row.innerHTML = `
-      <div>
-        <div>${escapeHtml(expense.category)}${expense.note ? " — " + escapeHtml(expense.note) : ""}</div>
-        <div class="meta">${expense.date} · ${escapeHtml(paymentMethodLabel(expense.cardId))}</div>
-      </div>
-      <div style="display:flex; align-items:center;">
-        <span class="amount">${formatMoney(expense.amount)}</span>
-        <button class="delete-btn" data-id="${expense.id}" aria-label="Delete">&times;</button>
-      </div>
-    `;
-    expenseListEl.appendChild(row);
+    expenseListEl.appendChild(buildExpenseRow(expense));
+  }
+}
+
+function renderSearchCategorySelect() {
+  const currentValue = searchCategorySelect.value;
+  searchCategorySelect.innerHTML = '<option value="">All categories</option>';
+  for (const category of categories) {
+    const opt = document.createElement("option");
+    opt.value = category;
+    opt.textContent = category;
+    searchCategorySelect.appendChild(opt);
+  }
+  if (categories.includes(currentValue)) {
+    searchCategorySelect.value = currentValue;
+  }
+}
+
+function renderSearchResults() {
+  const text = searchTextInput.value.trim().toLowerCase();
+  const category = searchCategorySelect.value;
+  const dateFrom = searchDateFromInput.value;
+  const dateTo = searchDateToInput.value;
+  const hasFilter = text || category || dateFrom || dateTo;
+
+  const results = expenses
+    .filter((e) => {
+      if (text && !(e.note || "").toLowerCase().includes(text)) return false;
+      if (category && e.category !== category) return false;
+      if (dateFrom && e.date < dateFrom) return false;
+      if (dateTo && e.date > dateTo) return false;
+      return true;
+    })
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  const total = results.reduce((sum, e) => sum + e.amount, 0);
+  searchTotalEl.textContent = results.length ? formatMoney(total) : "";
+  searchResultSummaryEl.textContent = hasFilter
+    ? `${results.length} match${results.length === 1 ? "" : "es"}`
+    : "Use the filters above to search all expenses";
+
+  searchResultsEl.innerHTML = "";
+  if (!hasFilter) return;
+  if (results.length === 0) {
+    searchResultsEl.innerHTML = '<p class="empty-state">No matching expenses.</p>';
+    return;
+  }
+
+  for (const expense of results) {
+    searchResultsEl.appendChild(buildExpenseRow(expense));
   }
 }
 
@@ -577,6 +641,27 @@ expenseForm.addEventListener("submit", (event) => {
 });
 
 expenseListEl.addEventListener("click", (event) => {
+  const btn = event.target.closest(".delete-btn");
+  if (!btn) return;
+  expenses = expenses.filter((e) => e.id !== btn.dataset.id);
+  save();
+  render();
+});
+
+searchTextInput.addEventListener("input", renderSearchResults);
+searchCategorySelect.addEventListener("change", renderSearchResults);
+searchDateFromInput.addEventListener("change", renderSearchResults);
+searchDateToInput.addEventListener("change", renderSearchResults);
+
+clearSearchBtn.addEventListener("click", () => {
+  searchTextInput.value = "";
+  searchCategorySelect.value = "";
+  searchDateFromInput.value = "";
+  searchDateToInput.value = "";
+  renderSearchResults();
+});
+
+searchResultsEl.addEventListener("click", (event) => {
   const btn = event.target.closest(".delete-btn");
   if (!btn) return;
   expenses = expenses.filter((e) => e.id !== btn.dataset.id);
