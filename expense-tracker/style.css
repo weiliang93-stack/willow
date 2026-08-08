@@ -133,6 +133,7 @@ h2 {
 }
 
 .inline-form input,
+.inline-form select,
 .expense-form input,
 .expense-form select {
   padding: 10px 12px;
@@ -210,6 +211,18 @@ button.secondary:hover {
   margin-right: 10px;
 }
 
+.expense-row .edit-expense-btn {
+  background: none;
+  color: #1e5f3a;
+  padding: 2px 6px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.expense-row .edit-expense-btn:hover {
+  background: #e4efe8;
+}
+
 .expense-row .delete-btn {
   background: none;
   color: #c0392b;
@@ -220,6 +233,10 @@ button.secondary:hover {
 
 .expense-row .delete-btn:hover {
   background: #fbe9e7;
+}
+
+.expense-edit-row {
+  display: block;
 }
 
 .export-btn {
