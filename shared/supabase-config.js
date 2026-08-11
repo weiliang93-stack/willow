@@ -8,5 +8,5 @@
 //
 // Until these are filled in, training-app and expense-tracker run in
 // local-only mode (same as before) and skip the sign-in screen.
-const SUPABASE_URL = "https://YOUR-PROJECT.supabase.co";
-const SUPABASE_ANON_KEY = "YOUR-ANON-PUBLIC-KEY";
+const SUPABASE_URL = "https://fozipnpmmjmmlthkdplf.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_r1Ui-0qgUIqhgwkghLkuNg_aLL9VQRU";
