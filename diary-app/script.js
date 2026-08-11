@@ -94,6 +94,10 @@ const selectedDayHeadingEl = document.getElementById("selected-day-heading");
 const selectedDayEntriesEl = document.getElementById("selected-day-entries");
 const writeForDayBtn = document.getElementById("write-for-day-btn");
 
+const dayOneFileInput = document.getElementById("dayone-file");
+const dayOneImportBtn = document.getElementById("dayone-import-btn");
+const dayOneImportStatusEl = document.getElementById("dayone-import-status");
+
 entryDateInput.value = todayStr();
 
 // Calendar month currently on screen, and the date whose entries are
@@ -491,6 +495,44 @@ function onEntryListClick(e) {
 }
 
 [selectedDayEntriesEl, searchResultsListEl, onThisDayContentEl].forEach((el) => el.addEventListener("click", onEntryListClick));
+
+// --- Day One import ---
+
+dayOneImportBtn.addEventListener("click", async () => {
+  const file = dayOneFileInput.files[0];
+  if (!file) {
+    dayOneImportStatusEl.textContent = "Choose a Day One export .zip file first.";
+    return;
+  }
+
+  dayOneImportBtn.disabled = true;
+  dayOneImportStatusEl.textContent = "Reading zip file…";
+
+  try {
+    const existingSourceIds = new Set(entries.filter((e) => e.sourceUuid).map((e) => e.sourceUuid));
+    const result = await DayOneImport.importZipFile(file, {
+      uidFn: uid,
+      existingSourceIds,
+      onProgress: (done, total) => {
+        dayOneImportStatusEl.textContent = `Importing entry ${done} of ${total}…`;
+      },
+    });
+
+    entries = entries.concat(result.entries);
+    save();
+    render();
+
+    const parts = [`Imported ${result.entries.length} ${result.entries.length === 1 ? "entry" : "entries"} (${result.mediaImported} photos/videos).`];
+    if (result.skipped) parts.push(`Skipped ${result.skipped} already-imported.`);
+    if (result.mediaMissing) parts.push(`${result.mediaMissing} attachment(s) referenced in the export weren't found in the zip.`);
+    dayOneImportStatusEl.textContent = parts.join(" ");
+  } catch (err) {
+    dayOneImportStatusEl.textContent = `Import failed: ${err.message}`;
+  } finally {
+    dayOneImportBtn.disabled = false;
+    dayOneFileInput.value = "";
+  }
+});
 
 // Pulls this user's cloud entries (if signed in) before the first render.
 // Attachment blobs never leave this device's IndexedDB, so a returning
