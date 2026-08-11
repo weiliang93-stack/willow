@@ -78,25 +78,52 @@ function todayIndex() {
   return jsDay === 0 ? 6 : jsDay - 1;
 }
 
+function todayStr() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function firstOfMonthStr() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}-01`;
+}
+
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { done: {}, actualWeight: {}, rpe: {} };
+    if (!raw) return { done: {}, actualWeight: {}, rpe: {}, restOverride: {}, log: [] };
     const parsed = JSON.parse(raw);
     return {
       done: parsed.done || {},
       actualWeight: parsed.actualWeight || {},
       rpe: parsed.rpe || {},
+      restOverride: parsed.restOverride || {},
+      log: parsed.log || [],
     };
   } catch {
-    return { done: {}, actualWeight: {}, rpe: {} };
+    return { done: {}, actualWeight: {}, rpe: {}, restOverride: {}, log: [] };
   }
 }
 
 function saveState() {
   localStorage.setItem(
     STORAGE_KEY,
-    JSON.stringify({ done: state.done, actualWeight: state.actualWeight, rpe: state.rpe })
+    JSON.stringify({
+      done: state.done,
+      actualWeight: state.actualWeight,
+      rpe: state.rpe,
+      restOverride: state.restOverride,
+      log: state.log,
+    })
   );
 }
 
@@ -114,6 +141,17 @@ function key(exIdx, setIdx) {
   return `${state.dayIdx}-${exIdx}-${setIdx}`;
 }
 
+function isRestDayFor(dayIdx) {
+  const defaultRest = WEEK[dayIdx].exercises.length === 0;
+  return Object.prototype.hasOwnProperty.call(state.restOverride, dayIdx)
+    ? state.restOverride[dayIdx]
+    : defaultRest;
+}
+
+function isRestOverridden(dayIdx) {
+  return Object.prototype.hasOwnProperty.call(state.restOverride, dayIdx);
+}
+
 function toggleSet(exIdx, setIdx) {
   const k = key(exIdx, setIdx);
   const nowDone = !state.done[k];
@@ -121,9 +159,51 @@ function toggleSet(exIdx, setIdx) {
   if (nowDone) {
     state.restRemaining = REST_SECONDS;
     startRest();
+    logSet(exIdx, setIdx);
+  } else {
+    unlogSet(exIdx, setIdx);
   }
   saveState();
   render();
+}
+
+function logSet(exIdx, setIdx) {
+  const day = WEEK[state.dayIdx];
+  const ex = day.exercises[exIdx];
+  const k = key(exIdx, setIdx);
+  state.log.push({
+    id: uid(),
+    date: todayStr(),
+    dayIdx: state.dayIdx,
+    day: day.day,
+    dayFull: day.full,
+    focus: day.focus,
+    exIdx,
+    exercise: ex.name,
+    setNumber: setIdx + 1,
+    weight: state.actualWeight[k] || "",
+    rpe: state.rpe[k] || "",
+  });
+}
+
+function unlogSet(exIdx, setIdx) {
+  for (let i = state.log.length - 1; i >= 0; i--) {
+    const e = state.log[i];
+    if (e.dayIdx === state.dayIdx && e.exIdx === exIdx && e.setNumber === setIdx + 1) {
+      state.log.splice(i, 1);
+      break;
+    }
+  }
+}
+
+function syncLogField(exIdx, setIdx, field, value) {
+  for (let i = state.log.length - 1; i >= 0; i--) {
+    const e = state.log[i];
+    if (e.dayIdx === state.dayIdx && e.exIdx === exIdx && e.setNumber === setIdx + 1) {
+      e[field] = value;
+      break;
+    }
+  }
 }
 
 function startRest() {
@@ -181,15 +261,17 @@ function escapeHtml(str) {
 
 function render() {
   const day = WEEK[state.dayIdx];
-  const isRestDay = day.exercises.length === 0;
+  const isRestDay = isRestDayFor(state.dayIdx);
+  const hasExercises = day.exercises.length > 0;
 
   document.getElementById("dayFull").textContent = day.full;
   document.getElementById("dayFocus").textContent = day.focus;
 
   renderTabs();
+  renderRestSwitch(isRestDay);
 
   document.getElementById("restDay").style.display = isRestDay ? "flex" : "none";
-  document.getElementById("progressWrap").style.display = isRestDay ? "none" : "block";
+  document.getElementById("progressWrap").style.display = !isRestDay && hasExercises ? "block" : "none";
   document.getElementById("exercises").style.display = isRestDay ? "none" : "flex";
 
   if (!isRestDay) {
@@ -200,13 +282,23 @@ function render() {
   renderRestBanner();
 }
 
+function renderRestSwitch(isRestDay) {
+  const switchInput = document.getElementById("restSwitch");
+  const label = document.getElementById("restSwitchLabel");
+  const resetBtn = document.getElementById("restSwitchReset");
+
+  switchInput.checked = isRestDay;
+  label.textContent = isRestDay ? "Rest day" : "Training day";
+  resetBtn.style.display = isRestOverridden(state.dayIdx) ? "inline" : "none";
+}
+
 function renderTabs() {
   const tabsEl = document.getElementById("dayTabs");
   tabsEl.innerHTML = "";
   WEEK.forEach((d, i) => {
     const btn = document.createElement("button");
     const active = i === state.dayIdx;
-    const isRest = d.exercises.length === 0;
+    const isRest = isRestDayFor(i);
     btn.className = "day-tab" + (active ? " active" : "") + (isRest && !active ? " rest" : "");
     btn.textContent = d.day;
     btn.addEventListener("click", () => setDay(i));
@@ -233,6 +325,14 @@ function renderExercises() {
   const day = WEEK[state.dayIdx];
   const container = document.getElementById("exercises");
   container.innerHTML = "";
+
+  if (day.exercises.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-day-msg";
+    empty.textContent = "No exercises scheduled for this day.";
+    container.appendChild(empty);
+    return;
+  }
 
   day.exercises.forEach((ex, exIdx) => {
     let exDone = 0;
@@ -295,6 +395,7 @@ function renderExercises() {
       weightInput.value = state.actualWeight[k] ?? "";
       weightInput.addEventListener("input", (e) => {
         state.actualWeight[k] = e.target.value;
+        if (state.done[k]) syncLogField(exIdx, i, "weight", e.target.value);
         saveState();
       });
 
@@ -309,6 +410,7 @@ function renderExercises() {
       rpeInput.value = state.rpe[k] ?? "";
       rpeInput.addEventListener("input", (e) => {
         state.rpe[k] = e.target.value;
+        if (state.done[k]) syncLogField(exIdx, i, "rpe", e.target.value);
         saveState();
       });
 
@@ -343,7 +445,57 @@ function renderRestBanner() {
   document.getElementById("restTime").textContent = `${mm}:${ss}`;
 }
 
+function csvEscape(value) {
+  const str = String(value);
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
+function exportCsv() {
+  const from = document.getElementById("exportFrom").value;
+  const to = document.getElementById("exportTo").value;
+
+  const rows = [["Date", "Day", "Focus", "Exercise", "Set", "Weight (kg)", "RPE"]];
+  const filtered = state.log
+    .filter((e) => (!from || e.date >= from) && (!to || e.date <= to))
+    .sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) ||
+        a.dayIdx - b.dayIdx ||
+        a.exIdx - b.exIdx ||
+        a.setNumber - b.setNumber
+    );
+  for (const e of filtered) {
+    rows.push([e.date, e.dayFull, e.focus, e.exercise, e.setNumber, e.weight, e.rpe]);
+  }
+
+  const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const suffix = from || to ? `${from || "start"}_to_${to || "now"}` : "all";
+  a.download = `training-log-${suffix}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 document.getElementById("resetBtn").addEventListener("click", resetDay);
 document.getElementById("restDismiss").addEventListener("click", stopRest);
+
+document.getElementById("restSwitch").addEventListener("change", (e) => {
+  state.restOverride[state.dayIdx] = e.target.checked;
+  saveState();
+  render();
+});
+
+document.getElementById("restSwitchReset").addEventListener("click", () => {
+  delete state.restOverride[state.dayIdx];
+  saveState();
+  render();
+});
+
+document.getElementById("exportFrom").value = firstOfMonthStr();
+document.getElementById("exportTo").value = todayStr();
+document.getElementById("exportBtn").addEventListener("click", exportCsv);
 
 render();
