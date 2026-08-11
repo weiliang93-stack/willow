@@ -402,7 +402,13 @@ button.secondary:hover {
   margin: 0 0 10px;
 }
 
-#export-download-link {
+#export-downloads {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#export-downloads a {
   display: block;
   margin-top: 6px;
   font-weight: 600;
