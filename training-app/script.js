@@ -108,6 +108,7 @@ function loadState() {
     order: [...DEFAULT_ORDER],
     log: [],
     exerciseOverrides: {},
+    customExercises: {},
   };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -121,6 +122,7 @@ function loadState() {
       order: Array.isArray(parsed.order) && parsed.order.length === 7 ? parsed.order : [...DEFAULT_ORDER],
       log: parsed.log || [],
       exerciseOverrides: parsed.exerciseOverrides || {},
+      customExercises: parsed.customExercises || {},
     };
   } catch {
     return empty;
@@ -138,6 +140,7 @@ function saveState() {
       order: state.order,
       log: state.log,
       exerciseOverrides: state.exerciseOverrides,
+      customExercises: state.customExercises,
     })
   );
 }
@@ -149,6 +152,7 @@ const state = {
   restActive: false,
   openCues: null,
   editingEx: null,
+  addingExercise: false,
 };
 
 let restInterval = null;
@@ -156,6 +160,12 @@ let restInterval = null;
 // The exercise template currently assigned to a calendar slot.
 function contentFor(slotIdx) {
   return TEMPLATES[state.order[slotIdx]];
+}
+
+// Base template exercises plus any custom ones added for that template,
+// appended in order so exIdx keeps addressing a stable position.
+function exercisesFor(templateIdx) {
+  return TEMPLATES[templateIdx].exercises.concat(state.customExercises[templateIdx] || []);
 }
 
 // Applies any saved name/sets/reps override on top of the base exercise.
@@ -166,6 +176,12 @@ function effectiveEx(templateIdx, exIdx, baseEx) {
 
 function isExOverridden(templateIdx, exIdx) {
   return Object.prototype.hasOwnProperty.call(state.exerciseOverrides, `${templateIdx}-${exIdx}`);
+}
+
+function addExercise(templateIdx, ex) {
+  if (!state.customExercises[templateIdx]) state.customExercises[templateIdx] = [];
+  state.customExercises[templateIdx].push(ex);
+  saveState();
 }
 
 function isOrderSwapped() {
@@ -198,7 +214,7 @@ function logSet(exIdx, setIdx) {
   const slotIdx = state.dayIdx;
   const cal = CALENDAR_DAYS[slotIdx];
   const content = contentFor(slotIdx);
-  const ex = content.exercises[exIdx];
+  const ex = exercisesFor(state.order[slotIdx])[exIdx];
   const k = key(exIdx, setIdx);
   state.log.push({
     id: uid(),
@@ -310,6 +326,7 @@ function setDay(idx) {
   state.dayIdx = idx;
   state.openCues = null;
   state.editingEx = null;
+  state.addingExercise = false;
   render();
 }
 
@@ -340,6 +357,10 @@ function svgPencil() {
   return `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
 }
 
+function svgPlus() {
+  return `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>`;
+}
+
 function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
@@ -350,7 +371,7 @@ function render() {
   const slotIdx = state.dayIdx;
   const cal = CALENDAR_DAYS[slotIdx];
   const content = contentFor(slotIdx);
-  const isRestDay = content.exercises.length === 0;
+  const isRestDay = exercisesFor(state.order[slotIdx]).length === 0;
 
   document.getElementById("dayFull").textContent = cal.full;
   document.getElementById("dayFocus").textContent = content.focus;
@@ -390,7 +411,7 @@ function renderTabs() {
   CALENDAR_DAYS.forEach((cal, i) => {
     const btn = document.createElement("button");
     const active = i === state.dayIdx;
-    const isRest = contentFor(i).exercises.length === 0;
+    const isRest = exercisesFor(state.order[i]).length === 0;
     btn.className = "day-tab" + (active ? " active" : "") + (isRest && !active ? " rest" : "");
     btn.textContent = cal.day;
     btn.addEventListener("click", () => setDay(i));
@@ -399,13 +420,13 @@ function renderTabs() {
 }
 
 function renderProgress() {
-  const content = contentFor(state.dayIdx);
   const templateIdx = state.order[state.dayIdx];
-  const totalSets = content.exercises.reduce(
+  const exercises = exercisesFor(templateIdx);
+  const totalSets = exercises.reduce(
     (s, baseEx, exIdx) => s + effectiveEx(templateIdx, exIdx, baseEx).sets,
     0
   );
-  const completedSets = content.exercises.reduce((s, baseEx, exIdx) => {
+  const completedSets = exercises.reduce((s, baseEx, exIdx) => {
     const e = effectiveEx(templateIdx, exIdx, baseEx);
     let c = 0;
     for (let i = 0; i < e.sets; i++) if (state.done[key(exIdx, i)]) c++;
@@ -518,12 +539,12 @@ function buildEditHeader(header, templateIdx, exIdx, baseEx, ex) {
 }
 
 function renderExercises() {
-  const content = contentFor(state.dayIdx);
   const templateIdx = state.order[state.dayIdx];
+  const exercises = exercisesFor(templateIdx);
   const container = document.getElementById("exercises");
   container.innerHTML = "";
 
-  content.exercises.forEach((baseEx, exIdx) => {
+  exercises.forEach((baseEx, exIdx) => {
     const ex = effectiveEx(templateIdx, exIdx, baseEx);
     const isEditing = state.editingEx === exIdx;
 
@@ -686,6 +707,109 @@ function renderExercises() {
   caption.className = "rest-caption";
   caption.textContent = "rest 2:00 between sets";
   container.appendChild(caption);
+
+  const addWrap = document.createElement("div");
+  if (state.addingExercise) {
+    addWrap.className = "add-exercise-form";
+    buildAddExerciseForm(addWrap, templateIdx);
+  } else {
+    addWrap.className = "add-exercise-row";
+    const addBtn = document.createElement("button");
+    addBtn.className = "add-exercise-btn";
+    addBtn.innerHTML = `${svgPlus()} Add exercise`;
+    addBtn.addEventListener("click", () => {
+      state.addingExercise = true;
+      renderExercises();
+    });
+    addWrap.appendChild(addBtn);
+  }
+  container.appendChild(addWrap);
+}
+
+function buildAddExerciseForm(container, templateIdx) {
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.className = "edit-name-input";
+  nameInput.placeholder = "Exercise name";
+
+  const subInput = document.createElement("input");
+  subInput.type = "text";
+  subInput.className = "add-sub-input";
+  subInput.placeholder = "Equipment (e.g. Barbell)";
+
+  const schemeRow = document.createElement("div");
+  schemeRow.className = "edit-scheme-row";
+
+  const setsInput = document.createElement("input");
+  setsInput.type = "number";
+  setsInput.min = "1";
+  setsInput.step = "1";
+  setsInput.className = "edit-scheme-input";
+  setsInput.value = "3";
+
+  const x = document.createElement("span");
+  x.className = "edit-x";
+  x.textContent = "×";
+
+  const repsInput = document.createElement("input");
+  repsInput.type = "number";
+  repsInput.min = "1";
+  repsInput.step = "1";
+  repsInput.className = "edit-scheme-input";
+  repsInput.value = "10";
+
+  schemeRow.appendChild(setsInput);
+  schemeRow.appendChild(x);
+  schemeRow.appendChild(repsInput);
+
+  const actions = document.createElement("div");
+  actions.className = "edit-actions";
+
+  const addBtn = document.createElement("button");
+  addBtn.className = "edit-save-btn";
+  addBtn.textContent = "Add";
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "edit-cancel-btn";
+  cancelBtn.textContent = "Cancel";
+
+  actions.appendChild(addBtn);
+  actions.appendChild(cancelBtn);
+
+  const submit = () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      nameInput.focus();
+      return;
+    }
+    const sub = subInput.value.trim() || "—";
+    const sets = parseInt(setsInput.value, 10);
+    const reps = parseInt(repsInput.value, 10);
+    addExercise(templateIdx, {
+      name,
+      sub,
+      sets: Number.isFinite(sets) && sets > 0 ? sets : 3,
+      reps: Number.isFinite(reps) && reps > 0 ? reps : 10,
+    });
+    state.addingExercise = false;
+    render();
+  };
+
+  addBtn.addEventListener("click", submit);
+  cancelBtn.addEventListener("click", () => {
+    state.addingExercise = false;
+    renderExercises();
+  });
+  [nameInput, subInput, setsInput, repsInput].forEach((input) => {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+    });
+  });
+
+  container.appendChild(nameInput);
+  container.appendChild(subInput);
+  container.appendChild(schemeRow);
+  container.appendChild(actions);
 }
 
 function renderRestBanner() {
