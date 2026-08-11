@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Diary</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="authGate" class="auth-gate"></div>
+  <div class="app" id="app-content" style="display:none">
+    <header>
+      <h1>Diary</h1>
+      <p class="subtitle">Write it down. Attach the photo or video that goes with it.</p>
+    </header>
+
+    <section class="entry-panel">
+      <h2 id="entry-form-heading">New entry</h2>
+      <form id="entry-form" class="entry-form">
+        <input id="entry-date" type="date" required>
+        <input id="entry-title" type="text" placeholder="Title (optional)">
+        <textarea id="entry-text" placeholder="What happened today?" rows="6" required></textarea>
+
+        <label class="attach-label" for="entry-files">
+          <span>+ Add photos / videos</span>
+          <input id="entry-files" type="file" accept="image/*,video/*" multiple hidden>
+        </label>
+        <div id="attachment-previews" class="attachment-previews"></div>
+
+        <div class="form-actions">
+          <button type="submit" id="save-entry-btn">Save entry</button>
+          <button type="button" id="cancel-edit-btn" class="secondary hidden">Cancel edit</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="search-panel">
+      <div class="panel-heading">
+        <h2>Search</h2>
+        <button type="button" id="clear-search-btn" class="link-btn">Clear</button>
+      </div>
+      <div class="search-form">
+        <input id="search-text" type="text" placeholder="Search title or text...">
+        <div class="date-range">
+          <input id="search-date-from" type="date" aria-label="From date">
+          <span>to</span>
+          <input id="search-date-to" type="date" aria-label="To date">
+        </div>
+      </div>
+    </section>
+
+    <section class="entries-panel">
+      <div class="panel-heading">
+        <h2>Entries</h2>
+        <span id="entry-count" class="hint"></span>
+      </div>
+      <div id="entries-list" class="entries-list"></div>
+    </section>
+  </div>
+
+  <script src="../shared/supabase-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="../shared/supabase-sync.js"></script>
+  <script src="media-store.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
