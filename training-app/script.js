@@ -929,6 +929,31 @@ function exportCsv() {
   URL.revokeObjectURL(url);
 }
 
+// Every exercise name worth offering in the history search dropdown:
+// currently-planned exercises (including renames/overrides and custom
+// additions) plus anything that's ever been logged, so a renamed or
+// removed exercise's past history is still reachable.
+function historyExerciseNames() {
+  const names = new Set();
+  TEMPLATES.forEach((t) => t.exercises.forEach((e) => names.add(e.name)));
+  Object.values(state.customExercises).forEach((arr) => arr.forEach((e) => names.add(e.name)));
+  Object.values(state.exerciseOverrides).forEach((o) => {
+    if (o.name) names.add(o.name);
+  });
+  state.log.forEach((e) => names.add(e.exercise));
+  return Array.from(names).sort((a, b) => a.localeCompare(b));
+}
+
+function populateHistorySearchOptions() {
+  const select = document.getElementById("historySearch");
+  const current = select.value;
+  const names = historyExerciseNames();
+  select.innerHTML =
+    '<option value="">All exercises</option>' +
+    names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+  if (names.includes(current)) select.value = current;
+}
+
 function renderHistory() {
   const toggleBtn = document.getElementById("historyToggle");
   const panel = document.getElementById("historyPanel");
@@ -936,12 +961,14 @@ function renderHistory() {
   panel.style.display = state.historyOpen ? "block" : "none";
   if (!state.historyOpen) return;
 
-  const searchTerm = document.getElementById("historySearch").value.trim().toLowerCase();
+  populateHistorySearchOptions();
+
+  const selectedExercise = document.getElementById("historySearch").value;
   const dateFilter = document.getElementById("historyDate").value;
 
   const filtered = state.log.filter((e) => {
     if (dateFilter && e.date !== dateFilter) return false;
-    if (searchTerm && !e.exercise.toLowerCase().includes(searchTerm)) return false;
+    if (selectedExercise && e.exercise !== selectedExercise) return false;
     return true;
   });
 
@@ -1025,7 +1052,7 @@ document.getElementById("historyToggle").addEventListener("click", () => {
   state.historyOpen = !state.historyOpen;
   renderHistory();
 });
-document.getElementById("historySearch").addEventListener("input", renderHistory);
+document.getElementById("historySearch").addEventListener("change", renderHistory);
 document.getElementById("historyDate").addEventListener("change", renderHistory);
 document.getElementById("historyClear").addEventListener("click", () => {
   document.getElementById("historySearch").value = "";
