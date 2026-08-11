@@ -34,6 +34,13 @@
       </form>
     </section>
 
+    <section class="on-this-day-panel">
+      <div class="panel-heading">
+        <h2 id="on-this-day-heading">On this day, 1 year ago</h2>
+      </div>
+      <div id="on-this-day-content"></div>
+    </section>
+
     <section class="search-panel">
       <div class="panel-heading">
         <h2>Search</h2>
@@ -41,20 +48,38 @@
       </div>
       <div class="search-form">
         <input id="search-text" type="text" placeholder="Search title or text...">
-        <div class="date-range">
-          <input id="search-date-from" type="date" aria-label="From date">
-          <span>to</span>
-          <input id="search-date-to" type="date" aria-label="To date">
-        </div>
       </div>
     </section>
 
-    <section class="entries-panel">
+    <section class="search-results-panel hidden" id="search-results-panel">
       <div class="panel-heading">
-        <h2>Entries</h2>
-        <span id="entry-count" class="hint"></span>
+        <h2>Search results</h2>
+        <span id="search-result-count" class="hint"></span>
       </div>
-      <div id="entries-list" class="entries-list"></div>
+      <div id="search-results-list" class="entries-list"></div>
+    </section>
+
+    <section class="calendar-panel" id="calendar-panel">
+      <div class="panel-heading">
+        <h2 id="calendar-month-label"></h2>
+        <div class="calendar-nav">
+          <button type="button" id="cal-prev-btn" class="secondary" aria-label="Previous month">&lsaquo;</button>
+          <button type="button" id="cal-today-btn" class="secondary">Today</button>
+          <button type="button" id="cal-next-btn" class="secondary" aria-label="Next month">&rsaquo;</button>
+        </div>
+      </div>
+      <div class="cal-weekdays">
+        <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+      </div>
+      <div id="calendar-grid" class="calendar-grid"></div>
+    </section>
+
+    <section class="selected-day-panel" id="selected-day-panel">
+      <div class="panel-heading">
+        <h2 id="selected-day-heading"></h2>
+        <button type="button" id="write-for-day-btn" class="link-btn">+ Write for this day</button>
+      </div>
+      <div id="selected-day-entries" class="entries-list"></div>
     </section>
   </div>
 
