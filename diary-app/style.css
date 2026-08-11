@@ -402,6 +402,12 @@ button.secondary:hover {
   margin: 0 0 10px;
 }
 
+#export-download-link {
+  display: block;
+  margin-top: 6px;
+  font-weight: 600;
+}
+
 .import-panel input[type="file"] {
   display: block;
   width: 100%;
