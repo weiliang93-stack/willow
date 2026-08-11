@@ -213,6 +213,36 @@ function syncLogField(exIdx, setIdx, field, value) {
   }
 }
 
+// Most recent logged entry for this set, excluding the entry for the
+// currently-checked box (if any) so it shows the *previous* result, not
+// what you just entered.
+function prevLogEntry(exIdx, setIdx) {
+  const templateIdx = state.order[state.dayIdx];
+  const matches = state.log.filter(
+    (e) => e.templateIdx === templateIdx && e.exIdx === exIdx && e.setNumber === setIdx + 1
+  );
+  if (matches.length === 0) return null;
+  const isDoneNow = !!state.done[key(exIdx, setIdx)];
+  if (isDoneNow) {
+    return matches.length >= 2 ? matches[matches.length - 2] : null;
+  }
+  return matches[matches.length - 1];
+}
+
+function lastExerciseDate(exIdx, numSets) {
+  let maxDate = null;
+  for (let i = 0; i < numSets; i++) {
+    const e = prevLogEntry(exIdx, i);
+    if (e && (!maxDate || e.date > maxDate)) maxDate = e.date;
+  }
+  return maxDate;
+}
+
+function formatDateShort(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 function startRest() {
   state.restActive = true;
   clearInterval(restInterval);
@@ -366,11 +396,17 @@ function renderExercises() {
       ? `<div class="exercise-weight">${escapeHtml(ex.weight)}</div>`
       : "";
 
+    const lastDate = lastExerciseDate(exIdx, ex.sets);
+    const lastHtml = lastDate
+      ? `<div class="exercise-last">Last: ${escapeHtml(formatDateShort(lastDate))}</div>`
+      : "";
+
     card.innerHTML = `
       <div class="exercise-top">
         <div>
           <div class="exercise-name">${escapeHtml(ex.name)}</div>
           <div class="exercise-sub">${escapeHtml(ex.sub)}</div>
+          ${lastHtml}
         </div>
         <div class="exercise-meta">
           <div class="exercise-scheme">${ex.sets}×${ex.reps}</div>
@@ -434,9 +470,19 @@ function renderExercises() {
         saveState();
       });
 
+      const prevEntry = prevLogEntry(exIdx, i);
+      const prevEl = document.createElement("div");
+      prevEl.className = "set-prev";
+      if (prevEntry) {
+        const weightLine = prevEntry.weight ? `<div>${escapeHtml(prevEntry.weight)}kg</div>` : "";
+        const rpeLine = prevEntry.rpe ? `<div>RPE ${escapeHtml(prevEntry.rpe)}</div>` : "";
+        prevEl.innerHTML = weightLine + rpeLine;
+      }
+
       col.appendChild(circle);
       col.appendChild(weightInput);
       col.appendChild(rpeInput);
+      col.appendChild(prevEl);
       setsRow.appendChild(col);
     }
 
