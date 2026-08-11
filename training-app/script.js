@@ -95,6 +95,23 @@ function firstOfMonthStr() {
   return `${y}-${m}-01`;
 }
 
+// Identifies a week by the date of its Monday, so the checklist can tell
+// when a new training week has started (weeks run Mon-Sun, matching the
+// day tabs).
+function weekKeyFor(d) {
+  const day = d.getDay(); // 0 = Sun
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() + diffToMonday);
+  const y = monday.getFullYear();
+  const m = String(monday.getMonth() + 1).padStart(2, "0");
+  const da = String(monday.getDate()).padStart(2, "0");
+  return `${y}-${m}-${da}`;
+}
+
+function currentWeekKey() {
+  return weekKeyFor(new Date());
+}
+
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
@@ -109,6 +126,7 @@ function loadState() {
     log: [],
     exerciseOverrides: {},
     customExercises: {},
+    weekKey: null,
   };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -123,6 +141,7 @@ function loadState() {
       log: parsed.log || [],
       exerciseOverrides: parsed.exerciseOverrides || {},
       customExercises: parsed.customExercises || {},
+      weekKey: parsed.weekKey || null,
     };
   } catch {
     return empty;
@@ -141,6 +160,7 @@ function saveState() {
       log: state.log,
       exerciseOverrides: state.exerciseOverrides,
       customExercises: state.customExercises,
+      weekKey: state.weekKey,
     })
   );
 }
@@ -344,6 +364,25 @@ function resetDay() {
   stopRest();
   saveState();
   render();
+}
+
+// Clears the whole week's checklist (all days) the first time the app is
+// opened in a new week, so it doesn't show last week's checked-off sets
+// as if they were today's. History, swaps, and exercise edits are
+// untouched — only the live done/weight/reps/RPE checklist resets.
+// A missing weekKey (first run, or upgrading from before this existed)
+// just records the current week without wiping anything, so it never
+// destroys in-progress data the first time it runs.
+function checkWeeklyRollover() {
+  const thisWeek = currentWeekKey();
+  if (state.weekKey && state.weekKey !== thisWeek) {
+    state.done = {};
+    state.actualWeight = {};
+    state.actualReps = {};
+    state.rpe = {};
+  }
+  state.weekKey = thisWeek;
+  saveState();
 }
 
 function setDay(idx) {
@@ -996,4 +1035,5 @@ document.getElementById("historyClear").addEventListener("click", () => {
   renderHistory();
 });
 
+checkWeeklyRollover();
 render();
