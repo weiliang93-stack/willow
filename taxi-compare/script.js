@@ -116,7 +116,7 @@ els.destInput.addEventListener('input', () => {
 });
 
 async function searchDestination(query) {
-  const url = `${NOMINATIM_URL}?format=json&limit=5&addressdetails=0&q=${encodeURIComponent(query)}`;
+  const url = `${NOMINATIM_URL}?format=json&limit=5&addressdetails=0&countrycodes=sg&viewbox=103.55,1.15,104.15,1.50&bounded=1&q=${encodeURIComponent(query)}`;
   let results = [];
   try {
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
