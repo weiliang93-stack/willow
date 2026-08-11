@@ -987,18 +987,16 @@ function renderHistory() {
       exGroup.appendChild(exTitle);
 
       const sets = byEx[exName].sort((a, b) => a.setNumber - b.setNumber);
-      const setsLine = document.createElement("div");
-      setsLine.className = "history-sets-line";
-      setsLine.textContent = sets
-        .map((s) => {
-          const parts = [];
-          if (s.weight) parts.push(`${s.weight}kg`);
-          if (s.reps) parts.push(`${s.reps} reps`);
-          if (s.rpe) parts.push(`RPE ${s.rpe}`);
-          return `Set ${s.setNumber}: ${parts.join(" · ") || "—"}`;
-        })
-        .join("   ");
-      exGroup.appendChild(setsLine);
+      sets.forEach((s) => {
+        const parts = [];
+        if (s.weight) parts.push(`${s.weight}kg`);
+        if (s.reps) parts.push(`${s.reps} reps`);
+        if (s.rpe) parts.push(`RPE ${s.rpe}`);
+        const setLine = document.createElement("div");
+        setLine.className = "history-sets-line";
+        setLine.textContent = `Set ${s.setNumber}: ${parts.join(" · ") || "—"}`;
+        exGroup.appendChild(setLine);
+      });
 
       group.appendChild(exGroup);
     });
