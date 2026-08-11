@@ -15,13 +15,12 @@
       <h1 id="dayFull" class="day-full"></h1>
       <div id="dayFocus" class="day-focus"></div>
 
-      <div class="rest-switch-row">
-        <label class="switch">
-          <input type="checkbox" id="restSwitch">
-          <span class="switch-track"><span class="switch-thumb"></span></span>
-        </label>
-        <span id="restSwitchLabel" class="rest-switch-label"></span>
-        <button id="restSwitchReset" class="rest-switch-reset">use default</button>
+      <div class="swap-row">
+        <label for="swapSelect" class="swap-label">Swap with</label>
+        <select id="swapSelect" class="swap-select">
+          <option value="">Swap with…</option>
+        </select>
+        <button id="swapReset" class="swap-reset">reset week order</button>
       </div>
     </header>
 

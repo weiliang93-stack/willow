@@ -1,7 +1,17 @@
-const WEEK = [
+const CALENDAR_DAYS = [
+  { day: "Mon", full: "Monday" },
+  { day: "Tue", full: "Tuesday" },
+  { day: "Wed", full: "Wednesday" },
+  { day: "Thu", full: "Thursday" },
+  { day: "Fri", full: "Friday" },
+  { day: "Sat", full: "Saturday" },
+  { day: "Sun", full: "Sunday" },
+];
+
+// Workout templates. state.order[calendarSlot] = index into this array,
+// so a template can be assigned to any calendar day via swapping.
+const TEMPLATES = [
   {
-    day: "Mon",
-    full: "Monday",
     focus: "Chest / Tricep",
     exercises: [
       { name: "Incline Bench Press", sub: "Cable", sets: 5, reps: 5 },
@@ -9,8 +19,6 @@ const WEEK = [
     ],
   },
   {
-    day: "Tue",
-    full: "Tuesday",
     focus: "Upper Back",
     exercises: [
       {
@@ -38,8 +46,6 @@ const WEEK = [
     ],
   },
   {
-    day: "Wed",
-    full: "Wednesday",
     focus: "Shoulder",
     exercises: [
       { name: "Overhead Press", sub: "Barbell", sets: 5, reps: 5 },
@@ -47,10 +53,8 @@ const WEEK = [
       { name: "Face Pull", sub: "Cable", sets: 5, reps: 12 },
     ],
   },
-  { day: "Thu", full: "Thursday", focus: "Rest — Clinic", exercises: [] },
+  { focus: "Rest — Clinic", exercises: [] },
   {
-    day: "Fri",
-    full: "Friday",
     focus: "Legs",
     exercises: [
       { name: "Squat", sub: "Barbell", sets: 5, reps: 5 },
@@ -60,15 +64,13 @@ const WEEK = [
     ],
   },
   {
-    day: "Sat",
-    full: "Saturday",
     focus: "Arm — short session",
-    exercises: [
-      { name: "Hammer Curl", sub: "Dumbbell", sets: 5, reps: 5 },
-    ],
+    exercises: [{ name: "Hammer Curl", sub: "Dumbbell", sets: 5, reps: 5 }],
   },
-  { day: "Sun", full: "Sunday", focus: "Rest — Clinic", exercises: [] },
+  { focus: "Rest — Clinic", exercises: [] },
 ];
+
+const DEFAULT_ORDER = TEMPLATES.map((_, i) => i);
 
 const REST_SECONDS = 120;
 const STORAGE_KEY = "trainingApp.state";
@@ -100,17 +102,17 @@ function uid() {
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { done: {}, actualWeight: {}, rpe: {}, restOverride: {}, log: [] };
+    if (!raw) return { done: {}, actualWeight: {}, rpe: {}, order: [...DEFAULT_ORDER], log: [] };
     const parsed = JSON.parse(raw);
     return {
       done: parsed.done || {},
       actualWeight: parsed.actualWeight || {},
       rpe: parsed.rpe || {},
-      restOverride: parsed.restOverride || {},
+      order: Array.isArray(parsed.order) && parsed.order.length === 7 ? parsed.order : [...DEFAULT_ORDER],
       log: parsed.log || [],
     };
   } catch {
-    return { done: {}, actualWeight: {}, rpe: {}, restOverride: {}, log: [] };
+    return { done: {}, actualWeight: {}, rpe: {}, order: [...DEFAULT_ORDER], log: [] };
   }
 }
 
@@ -121,7 +123,7 @@ function saveState() {
       done: state.done,
       actualWeight: state.actualWeight,
       rpe: state.rpe,
-      restOverride: state.restOverride,
+      order: state.order,
       log: state.log,
     })
   );
@@ -137,19 +139,20 @@ const state = {
 
 let restInterval = null;
 
+// The exercise template currently assigned to a calendar slot.
+function contentFor(slotIdx) {
+  return TEMPLATES[state.order[slotIdx]];
+}
+
+function isOrderSwapped() {
+  return state.order.some((v, i) => v !== i);
+}
+
+// Keyed by template id (not calendar slot) so logged progress follows the
+// workout when it's swapped to a different day.
 function key(exIdx, setIdx) {
-  return `${state.dayIdx}-${exIdx}-${setIdx}`;
-}
-
-function isRestDayFor(dayIdx) {
-  const defaultRest = WEEK[dayIdx].exercises.length === 0;
-  return Object.prototype.hasOwnProperty.call(state.restOverride, dayIdx)
-    ? state.restOverride[dayIdx]
-    : defaultRest;
-}
-
-function isRestOverridden(dayIdx) {
-  return Object.prototype.hasOwnProperty.call(state.restOverride, dayIdx);
+  const templateIdx = state.order[state.dayIdx];
+  return `${templateIdx}-${exIdx}-${setIdx}`;
 }
 
 function toggleSet(exIdx, setIdx) {
@@ -168,16 +171,18 @@ function toggleSet(exIdx, setIdx) {
 }
 
 function logSet(exIdx, setIdx) {
-  const day = WEEK[state.dayIdx];
-  const ex = day.exercises[exIdx];
+  const slotIdx = state.dayIdx;
+  const cal = CALENDAR_DAYS[slotIdx];
+  const content = contentFor(slotIdx);
+  const ex = content.exercises[exIdx];
   const k = key(exIdx, setIdx);
   state.log.push({
     id: uid(),
     date: todayStr(),
-    dayIdx: state.dayIdx,
-    day: day.day,
-    dayFull: day.full,
-    focus: day.focus,
+    templateIdx: state.order[slotIdx],
+    day: cal.day,
+    dayFull: cal.full,
+    focus: content.focus,
     exIdx,
     exercise: ex.name,
     setNumber: setIdx + 1,
@@ -187,9 +192,10 @@ function logSet(exIdx, setIdx) {
 }
 
 function unlogSet(exIdx, setIdx) {
+  const templateIdx = state.order[state.dayIdx];
   for (let i = state.log.length - 1; i >= 0; i--) {
     const e = state.log[i];
-    if (e.dayIdx === state.dayIdx && e.exIdx === exIdx && e.setNumber === setIdx + 1) {
+    if (e.templateIdx === templateIdx && e.exIdx === exIdx && e.setNumber === setIdx + 1) {
       state.log.splice(i, 1);
       break;
     }
@@ -197,9 +203,10 @@ function unlogSet(exIdx, setIdx) {
 }
 
 function syncLogField(exIdx, setIdx, field, value) {
+  const templateIdx = state.order[state.dayIdx];
   for (let i = state.log.length - 1; i >= 0; i--) {
     const e = state.log[i];
-    if (e.dayIdx === state.dayIdx && e.exIdx === exIdx && e.setNumber === setIdx + 1) {
+    if (e.templateIdx === templateIdx && e.exIdx === exIdx && e.setNumber === setIdx + 1) {
       e[field] = value;
       break;
     }
@@ -228,7 +235,8 @@ function stopRest() {
 }
 
 function resetDay() {
-  const prefix = `${state.dayIdx}-`;
+  const templateIdx = state.order[state.dayIdx];
+  const prefix = `${templateIdx}-`;
   [state.done, state.actualWeight, state.rpe].forEach((obj) => {
     Object.keys(obj).forEach((k) => {
       if (k.startsWith(prefix)) delete obj[k];
@@ -242,6 +250,21 @@ function resetDay() {
 function setDay(idx) {
   state.dayIdx = idx;
   state.openCues = null;
+  render();
+}
+
+function swapWith(otherSlotIdx) {
+  const a = state.dayIdx;
+  const tmp = state.order[a];
+  state.order[a] = state.order[otherSlotIdx];
+  state.order[otherSlotIdx] = tmp;
+  saveState();
+  render();
+}
+
+function resetOrder() {
+  state.order = [...DEFAULT_ORDER];
+  saveState();
   render();
 }
 
@@ -260,18 +283,19 @@ function escapeHtml(str) {
 }
 
 function render() {
-  const day = WEEK[state.dayIdx];
-  const isRestDay = isRestDayFor(state.dayIdx);
-  const hasExercises = day.exercises.length > 0;
+  const slotIdx = state.dayIdx;
+  const cal = CALENDAR_DAYS[slotIdx];
+  const content = contentFor(slotIdx);
+  const isRestDay = content.exercises.length === 0;
 
-  document.getElementById("dayFull").textContent = day.full;
-  document.getElementById("dayFocus").textContent = day.focus;
+  document.getElementById("dayFull").textContent = cal.full;
+  document.getElementById("dayFocus").textContent = content.focus;
 
   renderTabs();
-  renderRestSwitch(isRestDay);
+  renderSwapControl();
 
   document.getElementById("restDay").style.display = isRestDay ? "flex" : "none";
-  document.getElementById("progressWrap").style.display = !isRestDay && hasExercises ? "block" : "none";
+  document.getElementById("progressWrap").style.display = !isRestDay ? "block" : "none";
   document.getElementById("exercises").style.display = isRestDay ? "none" : "flex";
 
   if (!isRestDay) {
@@ -282,34 +306,38 @@ function render() {
   renderRestBanner();
 }
 
-function renderRestSwitch(isRestDay) {
-  const switchInput = document.getElementById("restSwitch");
-  const label = document.getElementById("restSwitchLabel");
-  const resetBtn = document.getElementById("restSwitchReset");
+function renderSwapControl() {
+  const select = document.getElementById("swapSelect");
+  select.innerHTML = '<option value="">Swap with…</option>';
+  CALENDAR_DAYS.forEach((cal, i) => {
+    if (i === state.dayIdx) return;
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = `${cal.full} — ${contentFor(i).focus}`;
+    select.appendChild(opt);
+  });
 
-  switchInput.checked = isRestDay;
-  label.textContent = isRestDay ? "Rest day" : "Training day";
-  resetBtn.style.display = isRestOverridden(state.dayIdx) ? "inline" : "none";
+  document.getElementById("swapReset").style.display = isOrderSwapped() ? "inline" : "none";
 }
 
 function renderTabs() {
   const tabsEl = document.getElementById("dayTabs");
   tabsEl.innerHTML = "";
-  WEEK.forEach((d, i) => {
+  CALENDAR_DAYS.forEach((cal, i) => {
     const btn = document.createElement("button");
     const active = i === state.dayIdx;
-    const isRest = isRestDayFor(i);
+    const isRest = contentFor(i).exercises.length === 0;
     btn.className = "day-tab" + (active ? " active" : "") + (isRest && !active ? " rest" : "");
-    btn.textContent = d.day;
+    btn.textContent = cal.day;
     btn.addEventListener("click", () => setDay(i));
     tabsEl.appendChild(btn);
   });
 }
 
 function renderProgress() {
-  const day = WEEK[state.dayIdx];
-  const totalSets = day.exercises.reduce((s, e) => s + e.sets, 0);
-  const completedSets = day.exercises.reduce((s, e, exIdx) => {
+  const content = contentFor(state.dayIdx);
+  const totalSets = content.exercises.reduce((s, e) => s + e.sets, 0);
+  const completedSets = content.exercises.reduce((s, e, exIdx) => {
     let c = 0;
     for (let i = 0; i < e.sets; i++) if (state.done[key(exIdx, i)]) c++;
     return s + c;
@@ -322,19 +350,11 @@ function renderProgress() {
 }
 
 function renderExercises() {
-  const day = WEEK[state.dayIdx];
+  const content = contentFor(state.dayIdx);
   const container = document.getElementById("exercises");
   container.innerHTML = "";
 
-  if (day.exercises.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "empty-day-msg";
-    empty.textContent = "No exercises scheduled for this day.";
-    container.appendChild(empty);
-    return;
-  }
-
-  day.exercises.forEach((ex, exIdx) => {
+  content.exercises.forEach((ex, exIdx) => {
     let exDone = 0;
     for (let i = 0; i < ex.sets; i++) if (state.done[key(exIdx, i)]) exDone++;
     const allDone = exDone === ex.sets;
@@ -460,7 +480,7 @@ function exportCsv() {
     .sort(
       (a, b) =>
         a.date.localeCompare(b.date) ||
-        a.dayIdx - b.dayIdx ||
+        a.templateIdx - b.templateIdx ||
         a.exIdx - b.exIdx ||
         a.setNumber - b.setNumber
     );
@@ -482,17 +502,14 @@ function exportCsv() {
 document.getElementById("resetBtn").addEventListener("click", resetDay);
 document.getElementById("restDismiss").addEventListener("click", stopRest);
 
-document.getElementById("restSwitch").addEventListener("change", (e) => {
-  state.restOverride[state.dayIdx] = e.target.checked;
-  saveState();
-  render();
+document.getElementById("swapSelect").addEventListener("change", (e) => {
+  const other = e.target.value;
+  if (other === "") return;
+  swapWith(parseInt(other, 10));
+  e.target.value = "";
 });
 
-document.getElementById("restSwitchReset").addEventListener("click", () => {
-  delete state.restOverride[state.dayIdx];
-  saveState();
-  render();
-});
+document.getElementById("swapReset").addEventListener("click", resetOrder);
 
 document.getElementById("exportFrom").value = firstOfMonthStr();
 document.getElementById("exportTo").value = todayStr();
