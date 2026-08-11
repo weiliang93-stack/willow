@@ -81,12 +81,29 @@
       </div>
       <div id="search-results-list" class="entries-list"></div>
     </section>
+
+    <section class="import-panel">
+      <div class="panel-heading">
+        <h2>Import from Day One</h2>
+      </div>
+      <p class="hint">
+        One-time import of a Day One JSON (.zip) export. Photos and videos are extracted into this browser's
+        storage only — they won't appear on other devices unless re-imported there. This is a plain-text diary,
+        so Day One's markdown formatting (**bold**, # headings, etc.) will show up as raw characters. Re-importing
+        the same file skips entries already imported.
+      </p>
+      <input id="dayone-file" type="file" accept=".zip">
+      <button type="button" id="dayone-import-btn">Import</button>
+      <p id="dayone-import-status" class="hint"></p>
+    </section>
   </div>
 
   <script src="../shared/supabase-config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script src="../shared/supabase-sync.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="media-store.js"></script>
+  <script src="dayone-import.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
