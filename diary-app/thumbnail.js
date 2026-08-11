@@ -10,17 +10,39 @@
 // MediaStore — export and anything needing full fidelity still reads
 // those directly. Videos aren't thumbnailed here.
 (function () {
-  const MAX_DIMENSION = 360;
-  const QUALITY = 0.8;
+  // All thumbnail display boxes in this app are 92 CSS px, cropped to a
+  // square via object-fit: cover — meaning it's the SHORTER edge of the
+  // source image that actually fills the box, and on a 3x retina phone
+  // that needs ~276 real pixels to look crisp. Capping the *longer* edge
+  // (the original approach) starves the shorter edge for anything wider
+  // than roughly 4:3, which is exactly what read as "pixelated" for
+  // widescreen photos. So: guarantee the shorter edge, then cap the
+  // longer edge separately so an extreme aspect ratio (a panorama, say)
+  // doesn't balloon back up toward original size.
+  const MIN_SHORT_EDGE = 400;
+  const MAX_LONG_EDGE = 1000;
+  const QUALITY = 0.85;
+
+  // Bumping either constant above should also bump this suffix, so
+  // thumbnails cached under the old, smaller sizing get regenerated
+  // instead of silently staying blurry forever.
+  const THUMB_KEY_SUFFIX = "::thumb:v2";
+  const LEGACY_THUMB_KEY_SUFFIX = "::thumb";
 
   function thumbKey(id) {
-    return `${id}::thumb`;
+    return `${id}${THUMB_KEY_SUFFIX}`;
   }
 
   async function generateThumbnail(sourceBlob) {
     const bitmap = await createImageBitmap(sourceBlob);
     try {
-      const scale = Math.min(1, MAX_DIMENSION / Math.max(bitmap.width, bitmap.height));
+      const shortEdge = Math.min(bitmap.width, bitmap.height);
+      const longEdge = Math.max(bitmap.width, bitmap.height);
+
+      let scale = MIN_SHORT_EDGE / shortEdge;
+      if (longEdge * scale > MAX_LONG_EDGE) scale = MAX_LONG_EDGE / longEdge;
+      scale = Math.min(scale, 1); // never upscale a source smaller than our targets
+
       const w = Math.max(1, Math.round(bitmap.width * scale));
       const h = Math.max(1, Math.round(bitmap.height * scale));
 
@@ -59,6 +81,7 @@
   }
 
   function deleteDisplayBlob(id) {
+    MediaStore.deleteBlob(`${id}${LEGACY_THUMB_KEY_SUFFIX}`);
     return MediaStore.deleteBlob(thumbKey(id));
   }
 
