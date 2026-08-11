@@ -49,8 +49,8 @@ const TEMPLATES = [
     focus: "Shoulder",
     exercises: [
       { name: "Overhead Press", sub: "Barbell", sets: 5, reps: 5 },
-      { name: "Lateral Raise", sub: "Cable", sets: 5, reps: 5 },
-      { name: "Face Pull", sub: "Cable", sets: 5, reps: 12 },
+      { name: "Lateral Raise", sub: "Cable", sets: 3, reps: 10 },
+      { name: "Face Pull", sub: "Cable", sets: 3, reps: 10 },
     ],
   },
   { focus: "Rest — Clinic", exercises: [] },
