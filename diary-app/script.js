@@ -94,6 +94,9 @@ const selectedDayHeadingEl = document.getElementById("selected-day-heading");
 const selectedDayEntriesEl = document.getElementById("selected-day-entries");
 const writeForDayBtn = document.getElementById("write-for-day-btn");
 
+const exportBtn = document.getElementById("export-btn");
+const exportStatusEl = document.getElementById("export-status");
+
 const dayOneFileInput = document.getElementById("dayone-file");
 const dayOneImportBtn = document.getElementById("dayone-import-btn");
 const dayOneImportStatusEl = document.getElementById("dayone-import-status");
@@ -495,6 +498,75 @@ function onEntryListClick(e) {
 }
 
 [selectedDayEntriesEl, searchResultsListEl, onThisDayContentEl].forEach((el) => el.addEventListener("click", onEntryListClick));
+
+// --- export ---
+
+const EXTENSION_BY_MIME = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "image/webp": "webp",
+  "image/tiff": "tiff",
+  "video/mp4": "mp4",
+  "video/quicktime": "mov",
+  "video/x-msvideo": "avi",
+};
+
+function extensionForMime(mimeType) {
+  return EXTENSION_BY_MIME[mimeType] || (mimeType || "").split("/")[1] || "bin";
+}
+
+exportBtn.addEventListener("click", async () => {
+  if (entries.length === 0) {
+    exportStatusEl.textContent = "No entries to export yet.";
+    return;
+  }
+
+  exportBtn.disabled = true;
+  exportStatusEl.textContent = "Gathering entries…";
+
+  try {
+    const zip = new JSZip();
+    zip.file("entries.json", JSON.stringify(entries, null, 2));
+
+    const mediaFolder = zip.folder("media");
+    const allAttachments = entries.flatMap((e) => e.attachments);
+    let mediaCount = 0;
+    let missingCount = 0;
+
+    for (let i = 0; i < allAttachments.length; i++) {
+      const att = allAttachments[i];
+      exportStatusEl.textContent = `Packing attachment ${i + 1} of ${allAttachments.length}…`;
+      const blob = await MediaStore.getBlob(att.id);
+      if (!blob) {
+        missingCount++;
+        continue;
+      }
+      mediaFolder.file(`${att.id}.${extensionForMime(att.mimeType)}`, blob);
+      mediaCount++;
+    }
+
+    exportStatusEl.textContent = "Zipping…";
+    const zipBlob = await zip.generateAsync({ type: "blob" });
+
+    const url = URL.createObjectURL(zipBlob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `diary-export-${todayStr()}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    const parts = [`Exported ${entries.length} ${entries.length === 1 ? "entry" : "entries"} and ${mediaCount} attachment(s).`];
+    if (missingCount) parts.push(`${missingCount} attachment(s) weren't on this device and were skipped.`);
+    exportStatusEl.textContent = parts.join(" ");
+  } catch (err) {
+    exportStatusEl.textContent = `Export failed: ${err.message}`;
+  } finally {
+    exportBtn.disabled = false;
+  }
+});
 
 // --- Day One import ---
 
