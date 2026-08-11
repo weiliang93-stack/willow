@@ -19,7 +19,6 @@ const WEEK = [
         sets: 5,
         reps: 5,
         weight: "51–52kg",
-        note: "Jumped from 48kg — was under-loaded, not plateaued.",
       },
       {
         name: "Lat Pulldown",
@@ -27,7 +26,6 @@ const WEEK = [
         sets: 5,
         reps: 5,
         weight: "~65kg",
-        note: "Deload from 71kg — rebuild clean bar path, push back up over 2–3 weeks.",
         cues: [
           "Elbows down and back — not hands to chest",
           "Bar finishes at upper chest, slight arc",
@@ -44,21 +42,9 @@ const WEEK = [
     full: "Wednesday",
     focus: "Shoulder",
     exercises: [
-      {
-        name: "Overhead Press",
-        sub: "Barbell",
-        sets: 5,
-        reps: 5,
-        note: "Watch: dropped to 2 reps on last set (Aug 4) after 9 clean sessions.",
-      },
+      { name: "Overhead Press", sub: "Barbell", sets: 5, reps: 5 },
       { name: "Lateral Raise", sub: "Cable", sets: 5, reps: 5 },
-      {
-        name: "Face Pull",
-        sub: "Cable",
-        sets: 5,
-        reps: 12,
-        note: "Restore full volume — dropped to 1 set on Aug 4.",
-      },
+      { name: "Face Pull", sub: "Cable", sets: 5, reps: 12 },
     ],
   },
   { day: "Thu", full: "Thursday", focus: "Rest — Clinic", exercises: [] },
@@ -69,13 +55,7 @@ const WEEK = [
     exercises: [
       { name: "Squat", sub: "Barbell", sets: 5, reps: 5 },
       { name: "Deadlift", sub: "Barbell", sets: 5, reps: 5 },
-      {
-        name: "Romanian Deadlift",
-        sub: "Barbell",
-        sets: 3,
-        reps: 9,
-        note: "Direct hamstring work — conventional Deadlift trains full hip+knee extension, not isolated hip-hinge.",
-      },
+      { name: "Lunges", sub: "Dumbbell", sets: 5, reps: 10 },
       { name: "Standing Calf Raise", sub: "Dumbbell", sets: 5, reps: 10 },
     ],
   },
@@ -84,13 +64,7 @@ const WEEK = [
     full: "Saturday",
     focus: "Arm — short session",
     exercises: [
-      {
-        name: "Hammer Curl",
-        sub: "Dumbbell",
-        sets: 5,
-        reps: 5,
-        note: "Hits biceps, brachialis, and brachioradialis via neutral grip.",
-      },
+      { name: "Hammer Curl", sub: "Dumbbell", sets: 5, reps: 5 },
     ],
   },
   { day: "Sun", full: "Sunday", focus: "Rest — Clinic", exercises: [] },
