@@ -727,6 +727,108 @@ button {
   font-size: 0.8rem;
 }
 
+/* Cloud sync */
+.auth-gate {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.auth-gate-signedin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.6rem 1.25rem;
+}
+
+.auth-signedin-label {
+  color: var(--chalk-dim);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.7rem;
+}
+
+.auth-signout-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.72rem;
+  padding: 0;
+}
+
+.auth-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.auth-box h2 {
+  color: var(--chalk);
+  font-family: 'Oswald', sans-serif;
+  font-size: 1.1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin: 0;
+}
+
+.auth-hint {
+  color: var(--chalk-dim);
+  font-size: 0.78rem;
+  margin: 0;
+}
+
+.auth-box input {
+  background: var(--surface-alt);
+  color: var(--chalk);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  padding: 0.55rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.auth-actions {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.auth-actions button {
+  background: var(--accent);
+  color: var(--chalk);
+  border: 1px solid var(--accent);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.auth-actions button.secondary {
+  background: none;
+  color: var(--accent);
+}
+
+.auth-error {
+  color: var(--warn);
+  font-size: 0.75rem;
+  min-height: 1em;
+}
+
+/* Progress chart */
+.progress-chart-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.progress-chart-labels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--chalk-dim);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.68rem;
+  margin-top: 0.4rem;
+}
+
 /* Rest timer banner */
 .rest-banner {
   display: none;

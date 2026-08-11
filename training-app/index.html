@@ -9,7 +9,8 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="app" class="app">
+  <div id="authGate" class="auth-gate"></div>
+  <div id="app" class="app" style="display:none">
     <header class="header">
       <div class="eyebrow">Weekly Split</div>
       <h1 id="dayFull" class="day-full"></h1>
@@ -39,6 +40,10 @@
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
         History
       </button>
+      <button id="progressToggle" class="history-toggle-btn">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 7-7"/><path d="M14 8h7v7"/></svg>
+        Progress
+      </button>
     </div>
 
     <div id="historyPanel" class="history-panel">
@@ -50,6 +55,15 @@
         <button id="historyClear" class="history-clear-btn">Clear</button>
       </div>
       <div id="historyResults" class="history-results"></div>
+    </div>
+
+    <div id="progressPanel" class="history-panel">
+      <div class="history-filters">
+        <select id="progressExercise" class="history-search-input">
+          <option value="">Select an exercise…</option>
+        </select>
+      </div>
+      <div id="progressChart" class="progress-chart"></div>
     </div>
 
     <div id="progressWrap" class="progress-wrap">
@@ -91,6 +105,9 @@
     </div>
   </div>
 
+  <script src="../shared/supabase-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="../shared/supabase-sync.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

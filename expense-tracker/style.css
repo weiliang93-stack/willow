@@ -381,3 +381,94 @@ button.secondary:hover {
   opacity: 0.3;
   cursor: default;
 }
+
+/* Cloud sync */
+.auth-gate {
+  max-width: 480px;
+  margin: 0 auto 16px;
+  background: white;
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.auth-gate-signedin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+}
+
+.auth-signedin-label {
+  color: #667;
+  font-size: 13px;
+}
+
+.auth-signout-btn {
+  background: none;
+  color: #1e5f3a;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.auth-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auth-box h2 {
+  font-size: 15px;
+  margin: 0;
+  color: #33463b;
+}
+
+.auth-hint {
+  color: #667;
+  font-size: 13px;
+  margin: 0 0 4px;
+}
+
+.auth-box input {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+  font-size: 14px;
+  width: 100%;
+}
+
+.auth-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-error {
+  color: #c0392b;
+  font-size: 12px;
+  min-height: 1em;
+}
+
+/* Category chart */
+.category-bar-row {
+  margin-bottom: 12px;
+}
+
+.category-bar-row:last-child {
+  margin-bottom: 0;
+}
+
+.category-bar-top {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.category-bar-name {
+  font-weight: 600;
+}
+
+.category-bar-amount {
+  color: #556;
+}
