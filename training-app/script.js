@@ -497,6 +497,12 @@ function buildEditHeader(header, templateIdx, exIdx, baseEx, ex) {
   schemeRow.appendChild(x);
   schemeRow.appendChild(repsInput);
 
+  const weightInput = document.createElement("input");
+  weightInput.type = "text";
+  weightInput.className = "add-sub-input";
+  weightInput.placeholder = "Planned weight (e.g. 51–52kg)";
+  weightInput.value = ex.weight || "";
+
   const actions = document.createElement("div");
   actions.className = "edit-actions";
 
@@ -529,11 +535,13 @@ function buildEditHeader(header, templateIdx, exIdx, baseEx, ex) {
     const nameVal = nameInput.value.trim();
     const setsVal = parseInt(setsInput.value, 10);
     const repsVal = parseInt(repsInput.value, 10);
+    const weightVal = weightInput.value.trim();
 
     const override = {};
     if (nameVal && nameVal !== baseEx.name) override.name = nameVal;
     if (Number.isFinite(setsVal) && setsVal > 0 && setsVal !== baseEx.sets) override.sets = setsVal;
     if (Number.isFinite(repsVal) && repsVal > 0 && repsVal !== baseEx.reps) override.reps = repsVal;
+    if (weightVal !== (baseEx.weight || "")) override.weight = weightVal;
 
     const k = `${templateIdx}-${exIdx}`;
     if (Object.keys(override).length > 0) {
@@ -552,7 +560,7 @@ function buildEditHeader(header, templateIdx, exIdx, baseEx, ex) {
     state.editingEx = null;
     renderExercises();
   });
-  [nameInput, setsInput, repsInput].forEach((input) => {
+  [nameInput, setsInput, repsInput, weightInput].forEach((input) => {
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") save();
     });
@@ -560,6 +568,7 @@ function buildEditHeader(header, templateIdx, exIdx, baseEx, ex) {
 
   header.appendChild(nameInput);
   header.appendChild(schemeRow);
+  header.appendChild(weightInput);
   header.appendChild(actions);
 }
 
