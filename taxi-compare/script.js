@@ -1,5 +1,6 @@
 const RECENTS_KEY = 'taxiCompare.recents';
 const MAX_RECENTS = 6;
+const ONEMAP_SEARCH_URL = 'https://www.onemap.gov.sg/api/common/elastic/search';
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 
 const STORE_LINKS = {
@@ -10,10 +11,6 @@ const STORE_LINKS = {
   gojek: {
     ios: 'https://apps.apple.com/us/app/gojek/id944875099',
     android: 'https://play.google.com/store/apps/details?id=com.gojek.app',
-  },
-  zig: {
-    ios: 'https://apps.apple.com/sg/app/cdg-zig-taxis-cars/id954951647',
-    android: 'https://play.google.com/store/apps/details?id=com.codigo.comfort',
   },
 };
 
@@ -115,16 +112,46 @@ els.destInput.addEventListener('input', () => {
   state.searchTimer = setTimeout(() => searchDestination(query), 350);
 });
 
-async function searchDestination(query) {
+// OneMap is Singapore Land Authority's own geocoder — it knows HDB
+// blocks, MRT stations and building names the way Google Maps would,
+// which OpenStreetMap's data for Singapore does not cover as well.
+async function searchOneMap(query) {
+  const url = `${ONEMAP_SEARCH_URL}?searchVal=${encodeURIComponent(query)}&returnGeom=Y&getAddrDetails=Y&pageNum=1`;
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`OneMap ${res.status}`);
+  const data = await res.json();
+  return (data.results || []).map((r) => ({
+    label: r.BUILDING && r.BUILDING !== 'NIL' ? `${r.BUILDING}, ${r.ADDRESS}` : r.ADDRESS,
+    lat: parseFloat(r.LATITUDE),
+    lon: parseFloat(r.LONGITUDE),
+  })).filter((r) => r.label && !Number.isNaN(r.lat) && !Number.isNaN(r.lon));
+}
+
+async function searchNominatim(query) {
   const url = `${NOMINATIM_URL}?format=json&limit=5&addressdetails=0&countrycodes=sg&viewbox=103.55,1.15,104.15,1.50&bounded=1&q=${encodeURIComponent(query)}`;
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`Nominatim ${res.status}`);
+  const data = await res.json();
+  return data.map((r) => ({
+    label: r.display_name,
+    lat: parseFloat(r.lat),
+    lon: parseFloat(r.lon),
+  }));
+}
+
+async function searchDestination(query) {
   let results = [];
   try {
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (res.ok) {
-      results = await res.json();
-    }
+    results = await searchOneMap(query);
   } catch (e) {
-    // network/geocoding failure — show empty state below
+    // OneMap unreachable — fall through to Nominatim below
+  }
+  if (!results.length) {
+    try {
+      results = await searchNominatim(query);
+    } catch (e) {
+      // both sources failed — show empty state below
+    }
   }
   renderSuggestions(results);
 }
@@ -142,12 +169,8 @@ function renderSuggestions(results) {
   results.forEach((r) => {
     const item = document.createElement('div');
     item.className = 'suggestion-item';
-    item.textContent = r.display_name;
-    item.addEventListener('click', () => selectDestination({
-      label: r.display_name,
-      lat: parseFloat(r.lat),
-      lon: parseFloat(r.lon),
-    }));
+    item.textContent = r.label;
+    item.addEventListener('click', () => selectDestination(r));
     els.suggestions.appendChild(item);
   });
   els.suggestions.classList.add('open');
@@ -240,17 +263,15 @@ function buildGojekLink() {
   return `gojek://transport?${params.toString()}`;
 }
 
-// ComfortDelGro's own smart link: opens the Zig app if it's installed,
-// otherwise sends the user to the right app/play store listing. There's
-// no known way to prefill a destination through it.
-function buildZigLink() {
-  return 'https://comfortdelgro.onelink.me/1fTR/4b218de6';
-}
-
 const SERVICES = {
-  grab: { build: buildGrabLink, copyNote: null, useStoreFallback: true },
-  gojek: { build: buildGojekLink, copyNote: 'Destination copied — paste it if Gojek didn’t carry it over', useStoreFallback: true },
-  zig: { build: buildZigLink, copyNote: 'Destination copied — paste it into Zig', useStoreFallback: false },
+  grab: { build: buildGrabLink, copyNote: null, navigate: true, useStoreFallback: true },
+  gojek: { build: buildGojekLink, copyNote: 'Destination copied — paste it if Gojek didn’t carry it over', navigate: true, useStoreFallback: true },
+  // No verified way to deep-link or even reliably open Zig from a web
+  // page — two different attempts (a custom scheme, then ComfortDelGro's
+  // own onelink.me link) both ended up bouncing to the app/play store
+  // instead of opening the installed app. Rather than guess again, just
+  // copy the address and let the user switch to Zig themselves.
+  zig: { build: null, copyNote: 'Destination copied — switch to Zig and paste it in', navigate: false, useStoreFallback: false },
 };
 
 function openService(service) {
@@ -259,6 +280,8 @@ function openService(service) {
   copyToClipboard(state.destination.label);
   const note = SERVICES[service].copyNote;
   if (note) showToast(note);
+
+  if (!SERVICES[service].navigate) return;
 
   const deepLink = SERVICES[service].build();
 
