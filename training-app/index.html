@@ -14,9 +14,29 @@
       <div class="eyebrow">Weekly Split</div>
       <h1 id="dayFull" class="day-full"></h1>
       <div id="dayFocus" class="day-focus"></div>
+
+      <div class="rest-switch-row">
+        <label class="switch">
+          <input type="checkbox" id="restSwitch">
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </label>
+        <span id="restSwitchLabel" class="rest-switch-label"></span>
+        <button id="restSwitchReset" class="rest-switch-reset">use default</button>
+      </div>
     </header>
 
     <nav id="dayTabs" class="day-tabs"></nav>
+
+    <div class="export-bar">
+      <span class="export-label">Export</span>
+      <input type="date" id="exportFrom" class="export-date">
+      <span class="export-sep">to</span>
+      <input type="date" id="exportTo" class="export-date">
+      <button id="exportBtn" class="export-btn">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+        CSV
+      </button>
+    </div>
 
     <div id="progressWrap" class="progress-wrap">
       <div class="progress-row">
