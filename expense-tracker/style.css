@@ -277,6 +277,17 @@ button.secondary:hover {
   min-width: 0;
 }
 
+.quick-filters {
+  display: flex;
+  gap: 8px;
+}
+
+.quick-filters button {
+  flex: 1;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
 .cycle-label {
   display: block;
   color: #778;

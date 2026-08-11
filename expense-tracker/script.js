@@ -148,6 +148,8 @@ const searchCategorySelect = document.getElementById("search-category");
 const searchDateFromInput = document.getElementById("search-date-from");
 const searchDateToInput = document.getElementById("search-date-to");
 const clearSearchBtn = document.getElementById("clear-search-btn");
+const filterThisMonthBtn = document.getElementById("filter-this-month-btn");
+const filterLastMonthBtn = document.getElementById("filter-last-month-btn");
 const searchResultsEl = document.getElementById("search-results");
 const searchResultSummaryEl = document.getElementById("search-result-summary");
 const searchTotalEl = document.getElementById("search-total");
@@ -784,6 +786,27 @@ clearSearchBtn.addEventListener("click", () => {
   searchCategorySelect.value = "";
   searchDateFromInput.value = "";
   searchDateToInput.value = "";
+  renderSearchResults();
+});
+
+function monthRange(monthOffset) {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
+  const end = new Date(now.getFullYear(), now.getMonth() + monthOffset + 1, 0);
+  return { start: formatDateStr(start), end: formatDateStr(end) };
+}
+
+filterThisMonthBtn.addEventListener("click", () => {
+  const { start, end } = monthRange(0);
+  searchDateFromInput.value = start;
+  searchDateToInput.value = end;
+  renderSearchResults();
+});
+
+filterLastMonthBtn.addEventListener("click", () => {
+  const { start, end } = monthRange(-1);
+  searchDateFromInput.value = start;
+  searchDateToInput.value = end;
   renderSearchResults();
 });
 
