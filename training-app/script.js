@@ -102,17 +102,19 @@ function uid() {
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { done: {}, actualWeight: {}, rpe: {}, order: [...DEFAULT_ORDER], log: [] };
+    if (!raw)
+      return { done: {}, actualWeight: {}, actualReps: {}, rpe: {}, order: [...DEFAULT_ORDER], log: [] };
     const parsed = JSON.parse(raw);
     return {
       done: parsed.done || {},
       actualWeight: parsed.actualWeight || {},
+      actualReps: parsed.actualReps || {},
       rpe: parsed.rpe || {},
       order: Array.isArray(parsed.order) && parsed.order.length === 7 ? parsed.order : [...DEFAULT_ORDER],
       log: parsed.log || [],
     };
   } catch {
-    return { done: {}, actualWeight: {}, rpe: {}, order: [...DEFAULT_ORDER], log: [] };
+    return { done: {}, actualWeight: {}, actualReps: {}, rpe: {}, order: [...DEFAULT_ORDER], log: [] };
   }
 }
 
@@ -122,6 +124,7 @@ function saveState() {
     JSON.stringify({
       done: state.done,
       actualWeight: state.actualWeight,
+      actualReps: state.actualReps,
       rpe: state.rpe,
       order: state.order,
       log: state.log,
@@ -187,6 +190,7 @@ function logSet(exIdx, setIdx) {
     exercise: ex.name,
     setNumber: setIdx + 1,
     weight: state.actualWeight[k] || "",
+    reps: state.actualReps[k] || "",
     rpe: state.rpe[k] || "",
   });
 }
@@ -267,7 +271,7 @@ function stopRest() {
 function resetDay() {
   const templateIdx = state.order[state.dayIdx];
   const prefix = `${templateIdx}-`;
-  [state.done, state.actualWeight, state.rpe].forEach((obj) => {
+  [state.done, state.actualWeight, state.actualReps, state.rpe].forEach((obj) => {
     Object.keys(obj).forEach((k) => {
       if (k.startsWith(prefix)) delete obj[k];
     });
@@ -414,7 +418,7 @@ function renderExercises() {
         </div>
       </div>
       <div class="sets-row" data-role="sets-row"></div>
-      <div class="sets-caption">kg · RPE (1–10)</div>
+      <div class="sets-caption">kg · reps · RPE (1–10)</div>
       ${ex.note ? `<div class="exercise-note">${escapeHtml(ex.note)}</div>` : ""}
       ${
         ex.cues
@@ -455,6 +459,20 @@ function renderExercises() {
         saveState();
       });
 
+      const repsInput = document.createElement("input");
+      repsInput.type = "number";
+      repsInput.inputMode = "numeric";
+      repsInput.min = "0";
+      repsInput.step = "1";
+      repsInput.placeholder = "reps";
+      repsInput.className = "set-input";
+      repsInput.value = state.actualReps[k] ?? "";
+      repsInput.addEventListener("input", (e) => {
+        state.actualReps[k] = e.target.value;
+        if (state.done[k]) syncLogField(exIdx, i, "reps", e.target.value);
+        saveState();
+      });
+
       const rpeInput = document.createElement("input");
       rpeInput.type = "number";
       rpeInput.inputMode = "decimal";
@@ -475,12 +493,14 @@ function renderExercises() {
       prevEl.className = "set-prev";
       if (prevEntry) {
         const weightLine = prevEntry.weight ? `<div>${escapeHtml(prevEntry.weight)}kg</div>` : "";
+        const repsLine = prevEntry.reps ? `<div>${escapeHtml(prevEntry.reps)} reps</div>` : "";
         const rpeLine = prevEntry.rpe ? `<div>RPE ${escapeHtml(prevEntry.rpe)}</div>` : "";
-        prevEl.innerHTML = weightLine + rpeLine;
+        prevEl.innerHTML = weightLine + repsLine + rpeLine;
       }
 
       col.appendChild(circle);
       col.appendChild(weightInput);
+      col.appendChild(repsInput);
       col.appendChild(rpeInput);
       col.appendChild(prevEl);
       setsRow.appendChild(col);
@@ -520,7 +540,7 @@ function exportCsv() {
   const from = document.getElementById("exportFrom").value;
   const to = document.getElementById("exportTo").value;
 
-  const rows = [["Date", "Day", "Focus", "Exercise", "Set", "Weight (kg)", "RPE"]];
+  const rows = [["Date", "Day", "Focus", "Exercise", "Set", "Weight (kg)", "Reps", "RPE"]];
   const filtered = state.log
     .filter((e) => (!from || e.date >= from) && (!to || e.date <= to))
     .sort(
@@ -531,7 +551,7 @@ function exportCsv() {
         a.setNumber - b.setNumber
     );
   for (const e of filtered) {
-    rows.push([e.date, e.dayFull, e.focus, e.exercise, e.setNumber, e.weight, e.rpe]);
+    rows.push([e.date, e.dayFull, e.focus, e.exercise, e.setNumber, e.weight, e.reps || "", e.rpe]);
   }
 
   const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
