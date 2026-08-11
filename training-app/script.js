@@ -255,6 +255,29 @@ function syncLogField(exIdx, setIdx, field, value) {
   }
 }
 
+// Pre-fills weight/reps from the previous session the first time a set is
+// shown untouched this session, so today's numbers start from last time
+// instead of blank. RPE is left for manual entry since it varies day to day.
+// Only fills fields that have never been touched (key absent), so a
+// deliberately cleared field stays cleared.
+function autofillFromPrev(k, exIdx, setIdx, prevEntry) {
+  if (!prevEntry) return;
+  let changed = false;
+
+  if (!(k in state.actualWeight) && prevEntry.weight) {
+    state.actualWeight[k] = prevEntry.weight;
+    if (state.done[k]) syncLogField(exIdx, setIdx, "weight", prevEntry.weight);
+    changed = true;
+  }
+  if (!(k in state.actualReps) && prevEntry.reps) {
+    state.actualReps[k] = prevEntry.reps;
+    if (state.done[k]) syncLogField(exIdx, setIdx, "reps", prevEntry.reps);
+    changed = true;
+  }
+
+  if (changed) saveState();
+}
+
 // Most recent logged entry for this set, excluding the entry for the
 // currently-checked box (if any) so it shows the *previous* result, not
 // what you just entered.
@@ -624,6 +647,9 @@ function renderExercises() {
     for (let i = 0; i < ex.sets; i++) {
       const k = key(exIdx, i);
       const isDone = !!state.done[k];
+      const prevEntry = prevLogEntry(exIdx, i, ex.name);
+
+      autofillFromPrev(k, exIdx, i, prevEntry);
 
       const col = document.createElement("div");
       col.className = "set-col";
@@ -676,7 +702,6 @@ function renderExercises() {
         saveState();
       });
 
-      const prevEntry = prevLogEntry(exIdx, i, ex.name);
       const prevEl = document.createElement("div");
       prevEl.className = "set-prev";
       if (prevEntry) {
