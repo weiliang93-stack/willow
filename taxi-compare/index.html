@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Taxi Compare</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="header">
+      <div class="eyebrow">Taxi Compare</div>
+      <h1 class="title">Where to?</h1>
+      <div class="pickup-row">
+        <span id="pickupStatus" class="pickup-status">Locating you…</span>
+        <button id="pickupRefresh" class="pickup-refresh" title="Refresh location">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="search-wrap">
+      <input
+        id="destInput"
+        class="dest-input"
+        type="text"
+        placeholder="Type a destination…"
+        autocomplete="off"
+      >
+      <div id="suggestions" class="suggestions"></div>
+    </div>
+
+    <div id="recentWrap" class="recent-wrap">
+      <div class="recent-label">Recent</div>
+      <div id="recentList" class="recent-list"></div>
+    </div>
+
+    <div id="selectedDest" class="selected-dest"></div>
+
+    <div class="services">
+      <button class="service-btn service-grab" id="btnGrab" disabled>
+        <span class="service-name">Grab</span>
+        <span class="service-note">pickup + destination prefilled</span>
+      </button>
+      <button class="service-btn service-gojek" id="btnGojek" disabled>
+        <span class="service-name">Gojek</span>
+        <span class="service-note">best-effort destination prefill</span>
+      </button>
+      <button class="service-btn service-zig" id="btnZig" disabled>
+        <span class="service-name">CDG Zig</span>
+        <span class="service-note">address copied — paste it in</span>
+      </button>
+    </div>
+
+    <div class="hint">
+      Pick a destination once, then tap each app to compare prices. Grab
+      should open with both pickup and destination filled in. Gojek and
+      Zig don't publish a way to do that reliably, so the destination is
+      copied to your clipboard automatically — paste it if the app
+      doesn't carry it over.
+    </div>
+
+    <div id="toast" class="toast"></div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
