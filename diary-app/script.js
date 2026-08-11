@@ -327,14 +327,27 @@ async function hydrateThumbnails(rootEl) {
   }
 }
 
+// Object URLs for the calendar's own photo tiles, tracked separately from
+// activeListObjectUrls since renderCalendar() can be called on its own
+// (month nav) without going through the full render() pass.
+let activeCalendarObjectUrls = [];
+function revokeActiveCalendarObjectUrls() {
+  activeCalendarObjectUrls.forEach((u) => URL.revokeObjectURL(u));
+  activeCalendarObjectUrls = [];
+}
+
 function renderCalendar() {
+  revokeActiveCalendarObjectUrls();
   const firstOfMonth = new Date(calendarYear, calendarMonth, 1);
   const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
   const startWeekday = firstOfMonth.getDay(); // 0 = Sun
   const today = todayStr();
 
-  const entryCountByDate = new Map();
-  for (const entry of entries) entryCountByDate.set(entry.date, (entryCountByDate.get(entry.date) || 0) + 1);
+  const entriesByDate = new Map();
+  for (const entry of entries) {
+    if (!entriesByDate.has(entry.date)) entriesByDate.set(entry.date, []);
+    entriesByDate.get(entry.date).push(entry);
+  }
 
   calendarMonthLabelEl.textContent = firstOfMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
 
@@ -342,17 +355,45 @@ function renderCalendar() {
   for (let i = 0; i < startWeekday; i++) cells += `<div class="cal-cell cal-empty"></div>`;
   for (let day = 1; day <= daysInMonth; day++) {
     const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const dayEntries = entriesByDate.get(dateStr);
     const classes = ["cal-cell"];
-    if (entryCountByDate.has(dateStr)) classes.push("has-entry");
+    if (dayEntries) classes.push("has-entry");
     if (dateStr === today) classes.push("is-today");
     if (dateStr === selectedDate) classes.push("is-selected");
+
+    // Days with a photo attachment get it as a filling thumbnail (most
+    // recent entry that day, first image on it); days with only text (or
+    // only video, or a photo not available on this device) fall back to
+    // a plain solid-color tile — still visually distinct from empty days.
+    let thumbHtml = "";
+    if (dayEntries) {
+      const photo = dayEntries
+        .slice()
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .flatMap((e) => e.attachments)
+        .find((a) => a.kind === "image");
+      if (photo) thumbHtml = `<div class="cal-thumb" data-media-id="${photo.id}"></div>`;
+    }
+
     cells += `<button type="button" class="${classes.join(" ")}" data-date="${dateStr}">
+        ${thumbHtml}
         <span class="cal-day-num">${day}</span>
-        <span class="cal-dot"></span>
       </button>`;
   }
 
   calendarGridEl.innerHTML = cells;
+  hydrateCalendarThumbnails();
+}
+
+async function hydrateCalendarThumbnails() {
+  const nodes = calendarGridEl.querySelectorAll(".cal-thumb[data-media-id]");
+  for (const node of nodes) {
+    const blob = await MediaStore.getBlob(node.dataset.mediaId);
+    if (!blob) continue; // leave the solid-color fallback in place
+    const url = URL.createObjectURL(blob);
+    activeCalendarObjectUrls.push(url);
+    node.style.backgroundImage = `url("${url}")`;
+  }
 }
 
 function renderSelectedDay() {

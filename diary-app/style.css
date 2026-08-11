@@ -221,24 +221,24 @@ button.secondary:hover {
 }
 
 .cal-cell {
+  position: relative;
   aspect-ratio: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  overflow: hidden;
   background: white;
   border: 1px solid #e5e9e6;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 14px;
   font-family: inherit;
-  color: inherit;
+  color: #1a2b22;
   cursor: pointer;
   padding: 0;
 }
 
 .cal-cell:hover {
-  border-color: #b7c6bc;
+  filter: brightness(0.95);
 }
 
 .cal-cell.cal-empty {
@@ -247,30 +247,38 @@ button.secondary:hover {
   cursor: default;
 }
 
-.cal-cell.is-today {
-  border-color: #1e5f3a;
+/* Solid fill for entries without a photo (or one not on this device);
+   .cal-thumb, once hydrated, layers a photo over this and hides it. */
+.cal-cell.has-entry {
+  background: #2f9e58;
+  border-color: #2f9e58;
+}
+
+.cal-thumb {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+}
+
+.cal-day-num {
+  position: relative;
+  z-index: 1;
+  font-weight: 600;
+}
+
+.cal-cell.has-entry .cal-day-num {
+  color: white;
   font-weight: 700;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+.cal-cell.is-today {
+  box-shadow: inset 0 0 0 2px #17492c;
 }
 
 .cal-cell.is-selected {
-  background: #1e5f3a;
-  border-color: #1e5f3a;
-  color: white;
-}
-
-.cal-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: transparent;
-}
-
-.cal-cell.has-entry .cal-dot {
-  background: #2f9e58;
-}
-
-.cal-cell.is-selected.has-entry .cal-dot {
-  background: white;
+  box-shadow: inset 0 0 0 2px white, inset 0 0 0 4px #17492c;
 }
 
 /* On this day */
