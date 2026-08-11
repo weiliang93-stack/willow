@@ -286,6 +286,23 @@ button.secondary:hover {
   background: #eef6f0;
 }
 
+.on-this-day-year {
+  margin-bottom: 14px;
+}
+
+.on-this-day-year:last-child {
+  margin-bottom: 0;
+}
+
+.on-this-day-year-heading {
+  font-size: 12px;
+  font-weight: 700;
+  color: #33463b;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin: 0 0 8px;
+}
+
 /* Entries list */
 .entries-list {
   display: flex;
