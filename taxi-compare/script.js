@@ -240,14 +240,17 @@ function buildGojekLink() {
   return `gojek://transport?${params.toString()}`;
 }
 
+// ComfortDelGro's own smart link: opens the Zig app if it's installed,
+// otherwise sends the user to the right app/play store listing. There's
+// no known way to prefill a destination through it.
 function buildZigLink() {
-  return 'zig://';
+  return 'https://comfortdelgro.onelink.me/1fTR/4b218de6';
 }
 
 const SERVICES = {
-  grab: { build: buildGrabLink, copyNote: null },
-  gojek: { build: buildGojekLink, copyNote: 'Destination copied — paste it if Gojek didn’t carry it over' },
-  zig: { build: buildZigLink, copyNote: 'Destination copied — paste it into Zig' },
+  grab: { build: buildGrabLink, copyNote: null, useStoreFallback: true },
+  gojek: { build: buildGojekLink, copyNote: 'Destination copied — paste it if Gojek didn’t carry it over', useStoreFallback: true },
+  zig: { build: buildZigLink, copyNote: 'Destination copied — paste it into Zig', useStoreFallback: false },
 };
 
 function openService(service) {
@@ -258,20 +261,22 @@ function openService(service) {
   if (note) showToast(note);
 
   const deepLink = SERVICES[service].build();
-  const storeUrl = STORE_LINKS[service][platform()] || STORE_LINKS[service].android;
 
-  const fallbackTimer = setTimeout(() => {
-    if (!document.hidden) {
-      window.location.href = storeUrl;
-    }
-  }, 1500);
+  if (SERVICES[service].useStoreFallback) {
+    const storeUrl = STORE_LINKS[service][platform()] || STORE_LINKS[service].android;
+    const fallbackTimer = setTimeout(() => {
+      if (!document.hidden) {
+        window.location.href = storeUrl;
+      }
+    }, 1500);
 
-  document.addEventListener('visibilitychange', function onHide() {
-    if (document.hidden) {
-      clearTimeout(fallbackTimer);
-      document.removeEventListener('visibilitychange', onHide);
-    }
-  });
+    document.addEventListener('visibilitychange', function onHide() {
+      if (document.hidden) {
+        clearTimeout(fallbackTimer);
+        document.removeEventListener('visibilitychange', onHide);
+      }
+    });
+  }
 
   window.location.href = deepLink;
 }
