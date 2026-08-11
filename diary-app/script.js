@@ -414,15 +414,35 @@ function renderSelectedDay() {
   hydrateThumbnails(selectedDayEntriesEl);
 }
 
+// Walks back one year at a time from the selected date (as far as the
+// oldest entry goes) and stacks a section for every past year that has
+// a matching entry, rather than stopping at exactly one year back.
 function renderOnThisDay() {
-  const targetDate = shiftYears(selectedDate, -1);
-  onThisDayHeadingEl.textContent = `On this day, 1 year ago — ${formatDateLong(targetDate)}`;
-  const matches = entries.filter((entry) => entry.date === targetDate);
-  if (matches.length === 0) {
-    onThisDayContentEl.innerHTML = `<p class="hint empty-state">No entry from this day last year.</p>`;
+  onThisDayHeadingEl.textContent = "On this day";
+
+  const selectedYear = Number(selectedDate.slice(0, 4));
+  const oldestYear = entries.length ? Math.min(...entries.map((e) => Number(e.date.slice(0, 4)))) : selectedYear;
+
+  let sectionsHtml = "";
+  for (let yearsAgo = 1; selectedYear - yearsAgo >= oldestYear; yearsAgo++) {
+    const targetDate = shiftYears(selectedDate, -yearsAgo);
+    const matches = entries.filter((entry) => entry.date === targetDate);
+    if (matches.length === 0) continue;
+
+    sectionsHtml += `
+      <div class="on-this-day-year">
+        <h3 class="on-this-day-year-heading">${yearsAgo === 1 ? "One year ago" : `${yearsAgo} years ago`} — ${formatDateLong(targetDate)}</h3>
+        <div class="entries-list">${matches.map(entryCardHtml).join("")}</div>
+      </div>
+    `;
+  }
+
+  if (!sectionsHtml) {
+    onThisDayContentEl.innerHTML = `<p class="hint empty-state">No entries from this day in past years.</p>`;
     return;
   }
-  onThisDayContentEl.innerHTML = matches.map(entryCardHtml).join("");
+
+  onThisDayContentEl.innerHTML = sectionsHtml;
   hydrateThumbnails(onThisDayContentEl);
 }
 
