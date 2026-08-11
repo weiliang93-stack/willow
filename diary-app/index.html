@@ -89,10 +89,12 @@
       <p class="hint">
         Downloads every entry as a .zip: a JSON file with all your entries, plus a media/ folder with the actual
         photos/videos. Since attachments only live in this browser's storage, this is the way to back them up.
+        Large libraries are split into multiple zip files so no single download has to hold everything in memory
+        at once — tap each link below as it appears.
       </p>
       <button type="button" id="export-btn">Export all entries (.zip)</button>
       <p id="export-status" class="hint"></p>
-      <a id="export-download-link" class="link-btn hidden" download></a>
+      <div id="export-downloads"></div>
     </section>
 
     <section class="import-panel">

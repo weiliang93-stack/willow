@@ -96,8 +96,8 @@ const writeForDayBtn = document.getElementById("write-for-day-btn");
 
 const exportBtn = document.getElementById("export-btn");
 const exportStatusEl = document.getElementById("export-status");
-const exportDownloadLinkEl = document.getElementById("export-download-link");
-let lastExportObjectUrl = null;
+const exportDownloadsEl = document.getElementById("export-downloads");
+let lastExportObjectUrls = [];
 
 const dayOneFileInput = document.getElementById("dayone-file");
 const dayOneImportBtn = document.getElementById("dayone-import-btn");
@@ -556,6 +556,15 @@ function extensionForMime(mimeType) {
   return EXTENSION_BY_MIME[mimeType] || (mimeType || "").split("/")[1] || "bin";
 }
 
+// Cap on how much media (by original file size) goes into a single zip.
+// Building one giant zip with everything means JSZip has to hold that
+// whole assembled file in memory at once to produce a downloadable blob
+// — for a large library (hundreds of photos/videos, easily hundreds of
+// MB to multiple GB total) that alone is enough to exceed mobile
+// Safari's per-tab memory budget and crash the page. Splitting into
+// capped batches keeps every single zip's peak memory bounded.
+const EXPORT_BATCH_MAX_BYTES = 100 * 1024 * 1024;
+
 exportBtn.addEventListener("click", async () => {
   if (entries.length === 0) {
     exportStatusEl.textContent = "No entries to export yet.";
@@ -564,60 +573,94 @@ exportBtn.addEventListener("click", async () => {
 
   exportBtn.disabled = true;
   exportStatusEl.textContent = "Gathering entries…";
-  exportDownloadLinkEl.classList.add("hidden");
-  if (lastExportObjectUrl) {
-    URL.revokeObjectURL(lastExportObjectUrl);
-    lastExportObjectUrl = null;
-  }
+  exportDownloadsEl.innerHTML = "";
+  lastExportObjectUrls.forEach((u) => URL.revokeObjectURL(u));
+  lastExportObjectUrls = [];
 
   try {
-    const zip = new JSZip();
-    zip.file("entries.json", JSON.stringify(entries, null, 2));
+    const today = todayStr();
+    const downloads = []; // { url, filename, entryCount }
 
-    const mediaFolder = zip.folder("media");
-    const allAttachments = entries.flatMap((e) => e.attachments);
+    let batchZip = new JSZip();
+    let batchMediaFolder = batchZip.folder("media");
+    let batchEntries = [];
+    let batchBytes = 0;
     let mediaCount = 0;
     let missingCount = 0;
 
-    for (let i = 0; i < allAttachments.length; i++) {
-      const att = allAttachments[i];
-      exportStatusEl.textContent = `Packing attachment ${i + 1} of ${allAttachments.length}…`;
-      const blob = await MediaStore.getBlob(att.id);
-      if (!blob) {
-        missingCount++;
-        continue;
-      }
-      mediaFolder.file(`${att.id}.${extensionForMime(att.mimeType)}`, blob);
-      mediaCount++;
+    async function finalizeBatch() {
+      if (batchEntries.length === 0) return;
+      const partNum = downloads.length + 1;
+      exportStatusEl.textContent = `Zipping part ${partNum}…`;
+      batchZip.file("entries.json", JSON.stringify(batchEntries, null, 2));
+      const blob = await batchZip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      lastExportObjectUrls.push(url);
+      downloads.push({ url, filename: `diary-export-${today}-part${partNum}.zip`, entryCount: batchEntries.length });
+
+      batchZip = new JSZip();
+      batchMediaFolder = batchZip.folder("media");
+      batchEntries = [];
+      batchBytes = 0;
     }
 
-    exportStatusEl.textContent = "Zipping…";
-    const zipBlob = await zip.generateAsync({ type: "blob" });
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      exportStatusEl.textContent = `Packing entry ${i + 1} of ${entries.length}…`;
 
-    const url = URL.createObjectURL(zipBlob);
-    lastExportObjectUrl = url;
-    const filename = `diary-export-${todayStr()}.zip`;
+      // Fetch this entry's own attachments (and total their size) before
+      // deciding which batch it lands in, so an entry's media never gets
+      // split across two different zips.
+      const fetched = [];
+      let entryBytes = 0;
+      for (const att of entry.attachments) {
+        const blob = await MediaStore.getBlob(att.id);
+        if (!blob) {
+          missingCount++;
+          continue;
+        }
+        fetched.push({ att, blob });
+        entryBytes += blob.size;
+      }
 
-    // Try triggering the download automatically — works on most desktop
-    // browsers. But this is well past the original click's synchronous
-    // window (there's a run of awaits above), and some browsers — iOS
-    // Safari especially — silently ignore a programmatic anchor click at
-    // that point rather than downloading anything. So always also leave
-    // behind a real link the user can tap themselves, which is honored
-    // regardless of how long ago the original tap happened.
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
+      if (batchEntries.length > 0 && batchBytes + entryBytes > EXPORT_BATCH_MAX_BYTES) {
+        await finalizeBatch();
+      }
 
-    exportDownloadLinkEl.href = url;
-    exportDownloadLinkEl.download = filename;
-    exportDownloadLinkEl.textContent = `Download ${filename}`;
-    exportDownloadLinkEl.classList.remove("hidden");
+      for (const { att, blob } of fetched) {
+        batchMediaFolder.file(`${att.id}.${extensionForMime(att.mimeType)}`, blob);
+        mediaCount++;
+      }
+      batchBytes += entryBytes;
+      batchEntries.push(entry);
+    }
+    await finalizeBatch();
 
-    const parts = [`Exported ${entries.length} ${entries.length === 1 ? "entry" : "entries"} and ${mediaCount} attachment(s).`];
+    for (const dl of downloads) {
+      const a = document.createElement("a");
+      a.href = dl.url;
+      a.download = dl.filename;
+      a.className = "link-btn";
+      a.textContent = `Download ${dl.filename} (${dl.entryCount} ${dl.entryCount === 1 ? "entry" : "entries"})`;
+      exportDownloadsEl.appendChild(a);
+    }
+
+    // Auto-triggering a click is only attempted when there's a single
+    // file to avoid several downloads firing back-to-back (browsers tend
+    // to block that as spam) — and even then it may silently do nothing
+    // on iOS Safari since this runs well past the original tap's
+    // synchronous window. The links above are the reliable path either way.
+    if (downloads.length === 1) {
+      const a = document.createElement("a");
+      a.href = downloads[0].url;
+      a.download = downloads[0].filename;
+      a.click();
+    }
+
+    const parts = [`Exported ${entries.length} ${entries.length === 1 ? "entry" : "entries"} and ${mediaCount} attachment(s)`];
+    parts[0] += downloads.length > 1 ? ` across ${downloads.length} zip files.` : " as a zip file.";
     if (missingCount) parts.push(`${missingCount} attachment(s) weren't on this device and were skipped.`);
-    parts.push("If nothing downloaded automatically, use the link below.");
+    parts.push("Tap each link below to download.");
     exportStatusEl.textContent = parts.join(" ");
   } catch (err) {
     exportStatusEl.textContent = `Export failed: ${err.message}`;
