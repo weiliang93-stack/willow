@@ -407,6 +407,7 @@ function buildExpenseEditForm(expense) {
 
   const amountInput = document.createElement("input");
   amountInput.type = "number";
+  amountInput.inputMode = "decimal";
   amountInput.min = "0";
   amountInput.step = "0.01";
   amountInput.value = expense.amount;
