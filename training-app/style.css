@@ -311,6 +311,21 @@ button {
   line-height: 1.2;
 }
 
+.exercise-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.exercise-edit-btn {
+  flex-shrink: 0;
+  color: var(--chalk-dim);
+  background: none;
+  border: none;
+  padding: 0.15rem;
+  display: flex;
+}
+
 .exercise-sub {
   color: var(--chalk-dim);
   font-size: 0.72rem;
@@ -343,6 +358,80 @@ button {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.72rem;
   font-weight: 600;
+}
+
+.exercise-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.edit-name-input {
+  background: var(--surface-alt);
+  color: var(--chalk);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  padding: 0.5rem 0.6rem;
+  font-family: 'Oswald', sans-serif;
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.edit-scheme-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.edit-scheme-input {
+  width: 4rem;
+  background: var(--surface-alt);
+  color: var(--chalk);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  padding: 0.4rem 0.5rem;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.edit-x {
+  color: var(--chalk-dim);
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.edit-save-btn {
+  background: var(--accent);
+  color: var(--chalk);
+  border: 1px solid var(--accent);
+  border-radius: 0.375rem;
+  padding: 0.4rem 0.8rem;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.edit-cancel-btn {
+  background: none;
+  color: var(--chalk-dim);
+  border: none;
+  font-size: 0.72rem;
+}
+
+.edit-reset-btn {
+  background: none;
+  color: var(--accent);
+  border: none;
+  font-size: 0.72rem;
+  margin-left: auto;
 }
 
 .sets-row {
