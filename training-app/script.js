@@ -126,6 +126,7 @@ function loadState() {
     log: [],
     exerciseOverrides: {},
     customExercises: {},
+    deletedExercises: {},
     weekKey: null,
   };
   try {
@@ -141,6 +142,7 @@ function loadState() {
       log: parsed.log || [],
       exerciseOverrides: parsed.exerciseOverrides || {},
       customExercises: parsed.customExercises || {},
+      deletedExercises: parsed.deletedExercises || {},
       weekKey: parsed.weekKey || null,
     };
   } catch {
@@ -160,6 +162,7 @@ function saveState() {
       log: state.log,
       exerciseOverrides: state.exerciseOverrides,
       customExercises: state.customExercises,
+      deletedExercises: state.deletedExercises,
       weekKey: state.weekKey,
     })
   );
@@ -203,6 +206,40 @@ function addExercise(templateIdx, ex) {
   if (!state.customExercises[templateIdx]) state.customExercises[templateIdx] = [];
   state.customExercises[templateIdx].push(ex);
   saveState();
+}
+
+// Deletion hides an exercise rather than removing it from the underlying
+// array, so exIdx positions never shift and don't corrupt the log,
+// overrides, or checklist keyed to other exercises.
+function isExDeleted(templateIdx, exIdx) {
+  return !!state.deletedExercises[`${templateIdx}-${exIdx}`];
+}
+
+function deleteExercise(templateIdx, exIdx) {
+  state.deletedExercises[`${templateIdx}-${exIdx}`] = true;
+  saveState();
+}
+
+function hasDeletedExercises(templateIdx) {
+  const prefix = `${templateIdx}-`;
+  return Object.keys(state.deletedExercises).some((k) => k.startsWith(prefix));
+}
+
+function restoreDeletedExercises(templateIdx) {
+  const prefix = `${templateIdx}-`;
+  Object.keys(state.deletedExercises).forEach((k) => {
+    if (k.startsWith(prefix)) delete state.deletedExercises[k];
+  });
+  saveState();
+  render();
+}
+
+// The exercises to actually show for a template: base + custom, minus any
+// deleted, but each paired with its original (stable) exIdx.
+function visibleExercises(templateIdx) {
+  return exercisesFor(templateIdx)
+    .map((ex, exIdx) => ({ ex, exIdx }))
+    .filter(({ exIdx }) => !isExDeleted(templateIdx, exIdx));
 }
 
 function isOrderSwapped() {
@@ -424,6 +461,10 @@ function svgPlus() {
   return `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>`;
 }
 
+function svgTrash() {
+  return `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`;
+}
+
 function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
@@ -434,7 +475,8 @@ function render() {
   const slotIdx = state.dayIdx;
   const cal = CALENDAR_DAYS[slotIdx];
   const content = contentFor(slotIdx);
-  const isRestDay = exercisesFor(state.order[slotIdx]).length === 0;
+  const templateIdx = state.order[slotIdx];
+  const isRestDay = visibleExercises(templateIdx).length === 0;
 
   document.getElementById("dayFull").textContent = cal.full;
   document.getElementById("dayFocus").textContent = content.focus;
@@ -451,6 +493,7 @@ function render() {
     renderExercises();
   }
 
+  renderExerciseControls();
   renderRestBanner();
   renderHistory();
 }
@@ -475,7 +518,7 @@ function renderTabs() {
   CALENDAR_DAYS.forEach((cal, i) => {
     const btn = document.createElement("button");
     const active = i === state.dayIdx;
-    const isRest = exercisesFor(state.order[i]).length === 0;
+    const isRest = visibleExercises(state.order[i]).length === 0;
     btn.className = "day-tab" + (active ? " active" : "") + (isRest && !active ? " rest" : "");
     btn.textContent = cal.day;
     btn.addEventListener("click", () => setDay(i));
@@ -485,12 +528,12 @@ function renderTabs() {
 
 function renderProgress() {
   const templateIdx = state.order[state.dayIdx];
-  const exercises = exercisesFor(templateIdx);
+  const exercises = visibleExercises(templateIdx);
   const totalSets = exercises.reduce(
-    (s, baseEx, exIdx) => s + effectiveEx(templateIdx, exIdx, baseEx).sets,
+    (s, { ex: baseEx, exIdx }) => s + effectiveEx(templateIdx, exIdx, baseEx).sets,
     0
   );
-  const completedSets = exercises.reduce((s, baseEx, exIdx) => {
+  const completedSets = exercises.reduce((s, { ex: baseEx, exIdx }) => {
     const e = effectiveEx(templateIdx, exIdx, baseEx);
     let c = 0;
     for (let i = 0; i < e.sets; i++) if (state.done[key(exIdx, i)]) c++;
@@ -613,11 +656,11 @@ function buildEditHeader(header, templateIdx, exIdx, baseEx, ex) {
 
 function renderExercises() {
   const templateIdx = state.order[state.dayIdx];
-  const exercises = exercisesFor(templateIdx);
+  const exercises = visibleExercises(templateIdx);
   const container = document.getElementById("exercises");
   container.innerHTML = "";
 
-  exercises.forEach((baseEx, exIdx) => {
+  exercises.forEach(({ ex: baseEx, exIdx }) => {
     const ex = effectiveEx(templateIdx, exIdx, baseEx);
     const isEditing = state.editingEx === exIdx;
 
@@ -670,6 +713,7 @@ function renderExercises() {
             <div class="exercise-name-row">
               <div class="exercise-name">${escapeHtml(ex.name)}</div>
               <button class="exercise-edit-btn" data-role="exercise-edit-btn" aria-label="Edit exercise">${svgPencil()}</button>
+              <button class="exercise-delete-btn" data-role="exercise-delete-btn" aria-label="Delete exercise">${svgTrash()}</button>
             </div>
             <div class="exercise-sub">${escapeHtml(ex.sub)}</div>
             ${lastHtml}
@@ -683,6 +727,10 @@ function renderExercises() {
       header.querySelector('[data-role="exercise-edit-btn"]').addEventListener("click", () => {
         state.editingEx = exIdx;
         renderExercises();
+      });
+      header.querySelector('[data-role="exercise-delete-btn"]').addEventListener("click", () => {
+        deleteExercise(templateIdx, exIdx);
+        render();
       });
     }
 
@@ -782,6 +830,15 @@ function renderExercises() {
   caption.className = "rest-caption";
   caption.textContent = "rest 2:00 between sets";
   container.appendChild(caption);
+}
+
+// Add-exercise button/form and the "restore deleted" undo link. Rendered
+// unconditionally (not just on training days) so exercises can be added
+// on a rest day too, which is what turns it into a training day.
+function renderExerciseControls() {
+  const templateIdx = state.order[state.dayIdx];
+  const container = document.getElementById("exerciseControls");
+  container.innerHTML = "";
 
   const addWrap = document.createElement("div");
   if (state.addingExercise) {
@@ -794,11 +851,19 @@ function renderExercises() {
     addBtn.innerHTML = `${svgPlus()} Add exercise`;
     addBtn.addEventListener("click", () => {
       state.addingExercise = true;
-      renderExercises();
+      renderExerciseControls();
     });
     addWrap.appendChild(addBtn);
   }
   container.appendChild(addWrap);
+
+  if (hasDeletedExercises(templateIdx)) {
+    const restoreBtn = document.createElement("button");
+    restoreBtn.className = "restore-deleted-btn";
+    restoreBtn.textContent = "restore deleted exercises";
+    restoreBtn.addEventListener("click", () => restoreDeletedExercises(templateIdx));
+    container.appendChild(restoreBtn);
+  }
 }
 
 function buildAddExerciseForm(container, templateIdx) {
@@ -873,7 +938,7 @@ function buildAddExerciseForm(container, templateIdx) {
   addBtn.addEventListener("click", submit);
   cancelBtn.addEventListener("click", () => {
     state.addingExercise = false;
-    renderExercises();
+    renderExerciseControls();
   });
   [nameInput, subInput, setsInput, repsInput].forEach((input) => {
     input.addEventListener("keydown", (e) => {

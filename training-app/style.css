@@ -431,7 +431,8 @@ button {
   gap: 0.4rem;
 }
 
-.exercise-edit-btn {
+.exercise-edit-btn,
+.exercise-delete-btn {
   flex-shrink: 0;
   color: var(--chalk-dim);
   background: none;
@@ -673,10 +674,24 @@ button {
   padding-top: 0.5rem;
 }
 
+.exercise-controls {
+  padding: 0.5rem 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.restore-deleted-btn {
+  align-self: center;
+  color: var(--accent);
+  background: none;
+  border: none;
+  font-size: 0.72rem;
+}
+
 .add-exercise-row {
   display: flex;
   justify-content: center;
-  padding-bottom: 1rem;
 }
 
 .add-exercise-btn {
