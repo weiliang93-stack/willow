@@ -35,6 +35,19 @@
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
         CSV
       </button>
+      <button id="historyToggle" class="history-toggle-btn">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+        History
+      </button>
+    </div>
+
+    <div id="historyPanel" class="history-panel">
+      <div class="history-filters">
+        <input type="text" id="historySearch" class="history-search-input" placeholder="Search exercise…">
+        <input type="date" id="historyDate" class="history-date-input">
+        <button id="historyClear" class="history-clear-btn">Clear</button>
+      </div>
+      <div id="historyResults" class="history-results"></div>
     </div>
 
     <div id="progressWrap" class="progress-wrap">

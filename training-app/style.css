@@ -154,6 +154,119 @@ button {
   font-weight: 600;
 }
 
+.history-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--surface-alt);
+  color: var(--chalk);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  padding: 0.35rem 0.65rem;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.history-toggle-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.history-panel {
+  display: none;
+  padding: 0.75rem 1.25rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.history-filters {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.history-search-input {
+  flex: 1;
+  min-width: 8rem;
+  background: var(--surface-alt);
+  color: var(--chalk);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+}
+
+.history-date-input {
+  background: var(--surface-alt);
+  color: var(--chalk);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  padding: 0.3rem 0.4rem;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.72rem;
+  color-scheme: dark;
+}
+
+.history-clear-btn {
+  color: var(--chalk-dim);
+  background: none;
+  border: none;
+  font-size: 0.72rem;
+}
+
+.history-results {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
+.history-empty {
+  color: var(--chalk-dim);
+  font-size: 0.8rem;
+  text-align: center;
+  padding: 1rem 0;
+}
+
+.history-date-group {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.history-date-heading {
+  color: var(--chalk);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+}
+
+.history-ex-group {
+  margin-top: 0.4rem;
+}
+
+.history-ex-group:first-of-type {
+  margin-top: 0;
+}
+
+.history-ex-title {
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.history-sets-line {
+  color: var(--chalk-dim);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.7rem;
+  line-height: 1.5;
+  margin-top: 0.15rem;
+}
+
 /* Day tabs */
 .day-tabs {
   display: flex;
