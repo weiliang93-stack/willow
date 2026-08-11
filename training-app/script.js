@@ -153,6 +153,7 @@ const state = {
   openCues: null,
   editingEx: null,
   addingExercise: false,
+  historyOpen: false,
 };
 
 let restInterval = null;
@@ -389,6 +390,7 @@ function render() {
   }
 
   renderRestBanner();
+  renderHistory();
 }
 
 function renderSwapControl() {
@@ -854,6 +856,84 @@ function exportCsv() {
   URL.revokeObjectURL(url);
 }
 
+function renderHistory() {
+  const toggleBtn = document.getElementById("historyToggle");
+  const panel = document.getElementById("historyPanel");
+  toggleBtn.classList.toggle("active", state.historyOpen);
+  panel.style.display = state.historyOpen ? "block" : "none";
+  if (!state.historyOpen) return;
+
+  const searchTerm = document.getElementById("historySearch").value.trim().toLowerCase();
+  const dateFilter = document.getElementById("historyDate").value;
+
+  const filtered = state.log.filter((e) => {
+    if (dateFilter && e.date !== dateFilter) return false;
+    if (searchTerm && !e.exercise.toLowerCase().includes(searchTerm)) return false;
+    return true;
+  });
+
+  const resultsEl = document.getElementById("historyResults");
+  resultsEl.innerHTML = "";
+
+  if (filtered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "history-empty";
+    empty.textContent = "No matching sets logged.";
+    resultsEl.appendChild(empty);
+    return;
+  }
+
+  const byDate = {};
+  filtered.forEach((e) => {
+    (byDate[e.date] = byDate[e.date] || []).push(e);
+  });
+  const dates = Object.keys(byDate).sort((a, b) => b.localeCompare(a));
+
+  dates.forEach((date) => {
+    const entries = byDate[date];
+    const group = document.createElement("div");
+    group.className = "history-date-group";
+
+    const heading = document.createElement("div");
+    heading.className = "history-date-heading";
+    heading.textContent = `${formatDateShort(date)} — ${entries[0].dayFull} (${entries[0].focus})`;
+    group.appendChild(heading);
+
+    const byEx = {};
+    entries.forEach((e) => {
+      (byEx[e.exercise] = byEx[e.exercise] || []).push(e);
+    });
+
+    Object.keys(byEx).forEach((exName) => {
+      const exGroup = document.createElement("div");
+      exGroup.className = "history-ex-group";
+
+      const exTitle = document.createElement("div");
+      exTitle.className = "history-ex-title";
+      exTitle.textContent = exName;
+      exGroup.appendChild(exTitle);
+
+      const sets = byEx[exName].sort((a, b) => a.setNumber - b.setNumber);
+      const setsLine = document.createElement("div");
+      setsLine.className = "history-sets-line";
+      setsLine.textContent = sets
+        .map((s) => {
+          const parts = [];
+          if (s.weight) parts.push(`${s.weight}kg`);
+          if (s.reps) parts.push(`${s.reps} reps`);
+          if (s.rpe) parts.push(`RPE ${s.rpe}`);
+          return `Set ${s.setNumber}: ${parts.join(" · ") || "—"}`;
+        })
+        .join("   ");
+      exGroup.appendChild(setsLine);
+
+      group.appendChild(exGroup);
+    });
+
+    resultsEl.appendChild(group);
+  });
+}
+
 document.getElementById("resetBtn").addEventListener("click", resetDay);
 document.getElementById("restDismiss").addEventListener("click", stopRest);
 
@@ -869,5 +949,17 @@ document.getElementById("swapReset").addEventListener("click", resetOrder);
 document.getElementById("exportFrom").value = firstOfMonthStr();
 document.getElementById("exportTo").value = todayStr();
 document.getElementById("exportBtn").addEventListener("click", exportCsv);
+
+document.getElementById("historyToggle").addEventListener("click", () => {
+  state.historyOpen = !state.historyOpen;
+  renderHistory();
+});
+document.getElementById("historySearch").addEventListener("input", renderHistory);
+document.getElementById("historyDate").addEventListener("change", renderHistory);
+document.getElementById("historyClear").addEventListener("click", () => {
+  document.getElementById("historySearch").value = "";
+  document.getElementById("historyDate").value = "";
+  renderHistory();
+});
 
 render();
