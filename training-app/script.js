@@ -42,7 +42,7 @@ const TEMPLATES = [
           "Controlled eccentric, no swing to start the pull",
         ],
       },
-      { name: "Torso Rotation", sub: "Machine", sets: 3, reps: 10 },
+      { name: "Standing Cable External Rotation", sub: "Cable", sets: 5, reps: 5 },
     ],
   },
   {
@@ -220,10 +220,14 @@ function syncLogField(exIdx, setIdx, field, value) {
 // Most recent logged entry for this set, excluding the entry for the
 // currently-checked box (if any) so it shows the *previous* result, not
 // what you just entered.
-function prevLogEntry(exIdx, setIdx) {
+function prevLogEntry(exIdx, setIdx, exerciseName) {
   const templateIdx = state.order[state.dayIdx];
   const matches = state.log.filter(
-    (e) => e.templateIdx === templateIdx && e.exIdx === exIdx && e.setNumber === setIdx + 1
+    (e) =>
+      e.templateIdx === templateIdx &&
+      e.exIdx === exIdx &&
+      e.setNumber === setIdx + 1 &&
+      e.exercise === exerciseName
   );
   if (matches.length === 0) return null;
   const isDoneNow = !!state.done[key(exIdx, setIdx)];
@@ -233,10 +237,10 @@ function prevLogEntry(exIdx, setIdx) {
   return matches[matches.length - 1];
 }
 
-function lastExerciseDate(exIdx, numSets) {
+function lastExerciseDate(exIdx, numSets, exerciseName) {
   let maxDate = null;
   for (let i = 0; i < numSets; i++) {
-    const e = prevLogEntry(exIdx, i);
+    const e = prevLogEntry(exIdx, i, exerciseName);
     if (e && (!maxDate || e.date > maxDate)) maxDate = e.date;
   }
   return maxDate;
@@ -400,7 +404,7 @@ function renderExercises() {
       ? `<div class="exercise-weight">${escapeHtml(ex.weight)}</div>`
       : "";
 
-    const lastDate = lastExerciseDate(exIdx, ex.sets);
+    const lastDate = lastExerciseDate(exIdx, ex.sets, ex.name);
     const lastHtml = lastDate
       ? `<div class="exercise-last">Last: ${escapeHtml(formatDateShort(lastDate))}</div>`
       : "";
@@ -488,7 +492,7 @@ function renderExercises() {
         saveState();
       });
 
-      const prevEntry = prevLogEntry(exIdx, i);
+      const prevEntry = prevLogEntry(exIdx, i, ex.name);
       const prevEl = document.createElement("div");
       prevEl.className = "set-prev";
       if (prevEntry) {
