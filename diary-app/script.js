@@ -96,6 +96,8 @@ const writeForDayBtn = document.getElementById("write-for-day-btn");
 
 const exportBtn = document.getElementById("export-btn");
 const exportStatusEl = document.getElementById("export-status");
+const exportDownloadLinkEl = document.getElementById("export-download-link");
+let lastExportObjectUrl = null;
 
 const dayOneFileInput = document.getElementById("dayone-file");
 const dayOneImportBtn = document.getElementById("dayone-import-btn");
@@ -546,6 +548,11 @@ exportBtn.addEventListener("click", async () => {
 
   exportBtn.disabled = true;
   exportStatusEl.textContent = "Gathering entries…";
+  exportDownloadLinkEl.classList.add("hidden");
+  if (lastExportObjectUrl) {
+    URL.revokeObjectURL(lastExportObjectUrl);
+    lastExportObjectUrl = null;
+  }
 
   try {
     const zip = new JSZip();
@@ -572,14 +579,29 @@ exportBtn.addEventListener("click", async () => {
     const zipBlob = await zip.generateAsync({ type: "blob" });
 
     const url = URL.createObjectURL(zipBlob);
+    lastExportObjectUrl = url;
+    const filename = `diary-export-${todayStr()}.zip`;
+
+    // Try triggering the download automatically — works on most desktop
+    // browsers. But this is well past the original click's synchronous
+    // window (there's a run of awaits above), and some browsers — iOS
+    // Safari especially — silently ignore a programmatic anchor click at
+    // that point rather than downloading anything. So always also leave
+    // behind a real link the user can tap themselves, which is honored
+    // regardless of how long ago the original tap happened.
     const a = document.createElement("a");
     a.href = url;
-    a.download = `diary-export-${todayStr()}.zip`;
+    a.download = filename;
     a.click();
-    URL.revokeObjectURL(url);
+
+    exportDownloadLinkEl.href = url;
+    exportDownloadLinkEl.download = filename;
+    exportDownloadLinkEl.textContent = `Download ${filename}`;
+    exportDownloadLinkEl.classList.remove("hidden");
 
     const parts = [`Exported ${entries.length} ${entries.length === 1 ? "entry" : "entries"} and ${mediaCount} attachment(s).`];
     if (missingCount) parts.push(`${missingCount} attachment(s) weren't on this device and were skipped.`);
+    parts.push("If nothing downloaded automatically, use the link below.");
     exportStatusEl.textContent = parts.join(" ");
   } catch (err) {
     exportStatusEl.textContent = `Export failed: ${err.message}`;
