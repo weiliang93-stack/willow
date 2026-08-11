@@ -42,7 +42,7 @@ const TEMPLATES = [
           "Controlled eccentric, no swing to start the pull",
         ],
       },
-      { name: "Standing Cable External Rotation", sub: "Cable", sets: 5, reps: 5 },
+      { name: "Standing Cable External Rotation", sub: "Cable", sets: 3, reps: 10 },
     ],
   },
   {
