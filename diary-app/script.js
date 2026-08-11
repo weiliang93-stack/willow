@@ -139,6 +139,7 @@ function removeFormAttachment(id) {
   if (newlyAddedIds.has(id)) {
     newlyAddedIds.delete(id);
     MediaStore.deleteBlob(id);
+    Thumbnail.deleteDisplayBlob(id);
   }
   renderAttachmentPreviews();
 }
@@ -202,7 +203,10 @@ entryForm.addEventListener("submit", (e) => {
   if (editingEntryId) {
     const keptIds = new Set(attachments.map((a) => a.id));
     for (const origId of editingOriginalAttachmentIds) {
-      if (!keptIds.has(origId)) MediaStore.deleteBlob(origId);
+      if (!keptIds.has(origId)) {
+        MediaStore.deleteBlob(origId);
+        Thumbnail.deleteDisplayBlob(origId);
+      }
     }
     const entry = entries.find((en) => en.id === editingEntryId);
     entry.date = date;
@@ -230,7 +234,10 @@ entryForm.addEventListener("submit", (e) => {
 });
 
 cancelEditBtn.addEventListener("click", () => {
-  for (const id of newlyAddedIds) MediaStore.deleteBlob(id);
+  for (const id of newlyAddedIds) {
+    MediaStore.deleteBlob(id);
+    Thumbnail.deleteDisplayBlob(id);
+  }
   resetForm();
 });
 
@@ -251,7 +258,7 @@ async function startEdit(id) {
   cancelEditBtn.classList.remove("hidden");
 
   for (const att of entry.attachments) {
-    const blob = await MediaStore.getBlob(att.id);
+    const blob = att.kind === "video" ? await MediaStore.getBlob(att.id) : await Thumbnail.getDisplayBlob(att.id);
     formAttachments.push({
       ...att,
       previewUrl: blob ? URL.createObjectURL(blob) : null,
@@ -266,7 +273,10 @@ async function deleteEntry(id) {
   const entry = entries.find((en) => en.id === id);
   if (!entry) return;
   if (!confirm("Delete this entry and its attachments?")) return;
-  for (const att of entry.attachments) MediaStore.deleteBlob(att.id);
+  for (const att of entry.attachments) {
+    MediaStore.deleteBlob(att.id);
+    Thumbnail.deleteDisplayBlob(att.id);
+  }
   entries = entries.filter((en) => en.id !== id);
   if (editingEntryId === id) resetForm();
   save();
@@ -324,7 +334,11 @@ async function hydrateThumbnails(rootEl) {
   for (const node of nodes) {
     const id = node.dataset.mediaId;
     const kind = node.dataset.kind;
-    const blob = await MediaStore.getBlob(id);
+    // Images render from a small cached thumbnail rather than the
+    // full-resolution original — decoding several full-size phone photos
+    // at once just to paint 92px boxes is enough to crash mobile Safari.
+    // Video still needs the real file to play, so that's unaffected.
+    const blob = kind === "video" ? await MediaStore.getBlob(id) : await Thumbnail.getDisplayBlob(id);
     if (!blob) {
       node.classList.add("thumb-missing");
       node.innerHTML = `${kind === "video" ? "🎬" : "🖼"}<br>not on this device`;
@@ -397,7 +411,9 @@ function renderCalendar() {
 async function hydrateCalendarThumbnails() {
   const nodes = calendarGridEl.querySelectorAll(".cal-thumb[data-media-id]");
   for (const node of nodes) {
-    const blob = await MediaStore.getBlob(node.dataset.mediaId);
+    // Same reasoning as hydrateThumbnails: a month can show up to 31 of
+    // these at once, so this must never be the full-resolution original.
+    const blob = await Thumbnail.getDisplayBlob(node.dataset.mediaId);
     if (!blob) continue; // leave the solid-color fallback in place
     const url = URL.createObjectURL(blob);
     activeCalendarObjectUrls.push(url);
