@@ -44,6 +44,18 @@ function formatDateLong(dateStr) {
   return d.toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 }
 
+function toDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// Same month/day, `years` earlier. Falls back to how the JS Date engine
+// normalizes invalid dates (Feb 29 in a non-leap year rolls to Mar 1).
+function shiftYears(dateStr, years) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setFullYear(d.getFullYear() + years);
+  return toDateStr(d);
+}
+
 function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
@@ -62,14 +74,34 @@ const attachmentPreviewsEl = document.getElementById("attachment-previews");
 const cancelEditBtn = document.getElementById("cancel-edit-btn");
 
 const searchTextInput = document.getElementById("search-text");
-const searchDateFromInput = document.getElementById("search-date-from");
-const searchDateToInput = document.getElementById("search-date-to");
 const clearSearchBtn = document.getElementById("clear-search-btn");
+const searchResultsPanelEl = document.getElementById("search-results-panel");
+const searchResultsListEl = document.getElementById("search-results-list");
+const searchResultCountEl = document.getElementById("search-result-count");
 
-const entriesListEl = document.getElementById("entries-list");
-const entryCountEl = document.getElementById("entry-count");
+const onThisDayHeadingEl = document.getElementById("on-this-day-heading");
+const onThisDayContentEl = document.getElementById("on-this-day-content");
+
+const calendarPanelEl = document.getElementById("calendar-panel");
+const calendarMonthLabelEl = document.getElementById("calendar-month-label");
+const calendarGridEl = document.getElementById("calendar-grid");
+const calPrevBtn = document.getElementById("cal-prev-btn");
+const calNextBtn = document.getElementById("cal-next-btn");
+const calTodayBtn = document.getElementById("cal-today-btn");
+
+const selectedDayPanelEl = document.getElementById("selected-day-panel");
+const selectedDayHeadingEl = document.getElementById("selected-day-heading");
+const selectedDayEntriesEl = document.getElementById("selected-day-entries");
+const writeForDayBtn = document.getElementById("write-for-day-btn");
 
 entryDateInput.value = todayStr();
+
+// Calendar month currently on screen, and the date whose entries are
+// shown in the selected-day panel — independent of each other so paging
+// through months doesn't lose the selection.
+let calendarYear = new Date().getFullYear();
+let calendarMonth = new Date().getMonth();
+let selectedDate = todayStr();
 
 // --- attachment handling in the form ---
 
@@ -182,6 +214,9 @@ entryForm.addEventListener("submit", (e) => {
 
   save();
   resetForm();
+  selectedDate = date;
+  calendarYear = Number(date.slice(0, 4));
+  calendarMonth = Number(date.slice(5, 7)) - 1;
   render();
 });
 
@@ -229,28 +264,19 @@ async function deleteEntry(id) {
   render();
 }
 
-// --- search / filter ---
+// --- search ---
 
-function filteredEntries() {
-  const text = searchTextInput.value.trim().toLowerCase();
-  const from = searchDateFromInput.value;
-  const to = searchDateToInput.value;
-  return entries.filter((entry) => {
-    if (text && !entry.text.toLowerCase().includes(text) && !(entry.title || "").toLowerCase().includes(text)) {
-      return false;
-    }
-    if (from && entry.date < from) return false;
-    if (to && entry.date > to) return false;
-    return true;
-  });
+function matchingEntries(query) {
+  const text = query.trim().toLowerCase();
+  return entries
+    .filter((entry) => entry.text.toLowerCase().includes(text) || (entry.title || "").toLowerCase().includes(text))
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.createdAt.localeCompare(a.createdAt)));
 }
 
-[searchTextInput, searchDateFromInput, searchDateToInput].forEach((el) => el.addEventListener("input", render));
+searchTextInput.addEventListener("input", render);
 
 clearSearchBtn.addEventListener("click", () => {
   searchTextInput.value = "";
-  searchDateFromInput.value = "";
-  searchDateToInput.value = "";
   render();
 });
 
@@ -301,27 +327,129 @@ async function hydrateThumbnails(rootEl) {
   }
 }
 
+function renderCalendar() {
+  const firstOfMonth = new Date(calendarYear, calendarMonth, 1);
+  const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+  const startWeekday = firstOfMonth.getDay(); // 0 = Sun
+  const today = todayStr();
+
+  const entryCountByDate = new Map();
+  for (const entry of entries) entryCountByDate.set(entry.date, (entryCountByDate.get(entry.date) || 0) + 1);
+
+  calendarMonthLabelEl.textContent = firstOfMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+  let cells = "";
+  for (let i = 0; i < startWeekday; i++) cells += `<div class="cal-cell cal-empty"></div>`;
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const classes = ["cal-cell"];
+    if (entryCountByDate.has(dateStr)) classes.push("has-entry");
+    if (dateStr === today) classes.push("is-today");
+    if (dateStr === selectedDate) classes.push("is-selected");
+    cells += `<button type="button" class="${classes.join(" ")}" data-date="${dateStr}">
+        <span class="cal-day-num">${day}</span>
+        <span class="cal-dot"></span>
+      </button>`;
+  }
+
+  calendarGridEl.innerHTML = cells;
+}
+
+function renderSelectedDay() {
+  selectedDayHeadingEl.textContent = formatDateLong(selectedDate);
+  const dayEntries = entries.filter((entry) => entry.date === selectedDate).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (dayEntries.length === 0) {
+    selectedDayEntriesEl.innerHTML = `<p class="hint empty-state">No entry for this day yet.</p>`;
+    return;
+  }
+  selectedDayEntriesEl.innerHTML = dayEntries.map(entryCardHtml).join("");
+  hydrateThumbnails(selectedDayEntriesEl);
+}
+
+function renderOnThisDay() {
+  const targetDate = shiftYears(selectedDate, -1);
+  onThisDayHeadingEl.textContent = `On this day, 1 year ago — ${formatDateLong(targetDate)}`;
+  const matches = entries.filter((entry) => entry.date === targetDate);
+  if (matches.length === 0) {
+    onThisDayContentEl.innerHTML = `<p class="hint empty-state">No entry from this day last year.</p>`;
+    return;
+  }
+  onThisDayContentEl.innerHTML = matches.map(entryCardHtml).join("");
+  hydrateThumbnails(onThisDayContentEl);
+}
+
 function render() {
   revokeActiveListObjectUrls();
-  const filtered = filteredEntries().sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.createdAt.localeCompare(a.createdAt)));
+  renderOnThisDay();
 
-  entryCountEl.textContent = `${filtered.length} ${filtered.length === 1 ? "entry" : "entries"}`;
+  const query = searchTextInput.value.trim();
+  if (query) {
+    calendarPanelEl.classList.add("hidden");
+    selectedDayPanelEl.classList.add("hidden");
+    searchResultsPanelEl.classList.remove("hidden");
 
-  if (filtered.length === 0) {
-    entriesListEl.innerHTML = `<p class="hint empty-state">${entries.length === 0 ? "No entries yet — write your first one above." : "No entries match your search."}</p>`;
+    const matches = matchingEntries(query);
+    searchResultCountEl.textContent = `${matches.length} ${matches.length === 1 ? "match" : "matches"}`;
+    searchResultsListEl.innerHTML =
+      matches.length === 0 ? `<p class="hint empty-state">No entries match your search.</p>` : matches.map(entryCardHtml).join("");
+    hydrateThumbnails(searchResultsListEl);
     return;
   }
 
-  entriesListEl.innerHTML = filtered.map(entryCardHtml).join("");
-  hydrateThumbnails(entriesListEl);
+  searchResultsPanelEl.classList.add("hidden");
+  calendarPanelEl.classList.remove("hidden");
+  selectedDayPanelEl.classList.remove("hidden");
+  renderCalendar();
+  renderSelectedDay();
 }
 
-entriesListEl.addEventListener("click", (e) => {
+function goToMonth(delta) {
+  calendarMonth += delta;
+  if (calendarMonth < 0) {
+    calendarMonth = 11;
+    calendarYear -= 1;
+  } else if (calendarMonth > 11) {
+    calendarMonth = 0;
+    calendarYear += 1;
+  }
+  renderCalendar();
+}
+
+calPrevBtn.addEventListener("click", () => goToMonth(-1));
+calNextBtn.addEventListener("click", () => goToMonth(1));
+calTodayBtn.addEventListener("click", () => {
+  const today = new Date();
+  calendarYear = today.getFullYear();
+  calendarMonth = today.getMonth();
+  selectedDate = todayStr();
+  renderCalendar();
+  renderSelectedDay();
+  renderOnThisDay();
+});
+
+calendarGridEl.addEventListener("click", (e) => {
+  const cell = e.target.closest(".cal-cell[data-date]");
+  if (!cell) return;
+  selectedDate = cell.dataset.date;
+  renderCalendar();
+  renderSelectedDay();
+  renderOnThisDay();
+});
+
+writeForDayBtn.addEventListener("click", () => {
+  entryDateInput.value = selectedDate;
+  entryForm.scrollIntoView({ behavior: "smooth", block: "start" });
+  entryTextInput.focus();
+});
+
+function onEntryListClick(e) {
   const editBtn = e.target.closest(".edit-entry-btn");
   if (editBtn) return startEdit(editBtn.dataset.id);
   const deleteBtn = e.target.closest(".delete-entry-btn");
   if (deleteBtn) return deleteEntry(deleteBtn.dataset.id);
-});
+}
+
+[selectedDayEntriesEl, searchResultsListEl, onThisDayContentEl].forEach((el) => el.addEventListener("click", onEntryListClick));
 
 // Pulls this user's cloud entries (if signed in) before the first render.
 // Attachment blobs never leave this device's IndexedDB, so a returning
