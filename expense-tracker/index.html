@@ -7,7 +7,8 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="app">
+  <div id="authGate" class="auth-gate"></div>
+  <div class="app" id="app-content" style="display:none">
     <header>
       <h1>Budget Tracker</h1>
       <p class="subtitle" id="month-label"></p>
@@ -84,6 +85,13 @@
       </form>
     </section>
 
+    <section class="chart-panel">
+      <div class="panel-heading">
+        <h2>Spending by Category</h2>
+      </div>
+      <div id="category-chart" class="category-chart"></div>
+    </section>
+
     <section class="history-panel">
       <div class="panel-heading">
         <h2>This month's expenses</h2>
@@ -122,6 +130,9 @@
     </section>
   </div>
 
+  <script src="../shared/supabase-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="../shared/supabase-sync.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

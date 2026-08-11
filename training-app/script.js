@@ -151,34 +151,23 @@ function loadState() {
 }
 
 function saveState() {
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      done: state.done,
-      actualWeight: state.actualWeight,
-      actualReps: state.actualReps,
-      rpe: state.rpe,
-      order: state.order,
-      log: state.log,
-      exerciseOverrides: state.exerciseOverrides,
-      customExercises: state.customExercises,
-      deletedExercises: state.deletedExercises,
-      weekKey: state.weekKey,
-    })
-  );
+  const payload = {
+    done: state.done,
+    actualWeight: state.actualWeight,
+    actualReps: state.actualReps,
+    rpe: state.rpe,
+    order: state.order,
+    log: state.log,
+    exerciseOverrides: state.exerciseOverrides,
+    customExercises: state.customExercises,
+    deletedExercises: state.deletedExercises,
+    weekKey: state.weekKey,
+  };
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  SupaSync.pushState("training", payload);
 }
 
-const state = {
-  dayIdx: todayIndex(),
-  ...loadState(),
-  restRemaining: 0,
-  restActive: false,
-  openCues: null,
-  editingEx: null,
-  addingExercise: false,
-  historyOpen: false,
-};
-
+let state;
 let restInterval = null;
 
 // The exercise template currently assigned to a calendar slot.
@@ -496,6 +485,7 @@ function render() {
   renderExerciseControls();
   renderRestBanner();
   renderHistory();
+  renderProgressPanel();
 }
 
 function renderSwapControl() {
@@ -1097,33 +1087,159 @@ function renderHistory() {
   });
 }
 
-document.getElementById("resetBtn").addEventListener("click", resetDay);
-document.getElementById("restDismiss").addEventListener("click", stopRest);
+// Chart data for an exercise: the best (max) weight logged per date, so a
+// day with multiple sets contributes one point instead of a jagged cluster.
+function exerciseLogPoints(exerciseName) {
+  const byDate = {};
+  state.log.forEach((e) => {
+    if (e.exercise !== exerciseName || !e.weight) return;
+    const w = parseFloat(e.weight);
+    if (!Number.isFinite(w)) return;
+    const existing = byDate[e.date];
+    if (!existing || w > existing.weight) {
+      byDate[e.date] = { date: e.date, weight: w, reps: e.reps, rpe: e.rpe };
+    }
+  });
+  return Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date));
+}
 
-document.getElementById("swapSelect").addEventListener("change", (e) => {
-  const other = e.target.value;
-  if (other === "") return;
-  swapWith(parseInt(other, 10));
-  e.target.value = "";
+function populateProgressExerciseOptions() {
+  const select = document.getElementById("progressExercise");
+  const current = select.value || state.progressExercise;
+  const names = historyExerciseNames().filter((n) => exerciseLogPoints(n).length > 0);
+  select.innerHTML =
+    '<option value="">Select an exercise…</option>' +
+    names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+  if (names.includes(current)) select.value = current;
+}
+
+function renderProgressChart(exerciseName) {
+  const container = document.getElementById("progressChart");
+  container.innerHTML = "";
+
+  if (!exerciseName) {
+    container.innerHTML = '<div class="history-empty">Pick an exercise to see its weight trend.</div>';
+    return;
+  }
+
+  const points = exerciseLogPoints(exerciseName);
+  if (points.length < 2) {
+    container.innerHTML = '<div class="history-empty">Need at least two logged sessions with a weight to chart a trend.</div>';
+    return;
+  }
+
+  const width = 600;
+  const height = 200;
+  const padX = 20;
+  const padY = 20;
+  const weights = points.map((p) => p.weight);
+  const minW = Math.min(...weights);
+  const maxW = Math.max(...weights);
+  const spanW = maxW - minW || 1;
+
+  const xFor = (i) => padX + (i * (width - padX * 2)) / (points.length - 1);
+  const yFor = (w) => height - padY - ((w - minW) / spanW) * (height - padY * 2);
+
+  const linePoints = points.map((p, i) => `${xFor(i)},${yFor(p.weight)}`).join(" ");
+  const circles = points
+    .map((p, i) => {
+      const title = `${formatDateShort(p.date)}: ${p.weight}kg${p.reps ? ` × ${p.reps}` : ""}${p.rpe ? ` · RPE ${p.rpe}` : ""}`;
+      return `<circle cx="${xFor(i)}" cy="${yFor(p.weight)}" r="4" fill="var(--accent)"><title>${escapeHtml(title)}</title></circle>`;
+    })
+    .join("");
+
+  container.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" class="progress-chart-svg">
+      <polyline points="${linePoints}" fill="none" stroke="var(--accent)" stroke-width="2" />
+      ${circles}
+    </svg>
+    <div class="progress-chart-labels">
+      <span>${formatDateShort(points[0].date)} · ${points[0].weight}kg</span>
+      <span>${formatDateShort(points[points.length - 1].date)} · ${points[points.length - 1].weight}kg</span>
+    </div>
+  `;
+}
+
+function renderProgressPanel() {
+  const toggleBtn = document.getElementById("progressToggle");
+  const panel = document.getElementById("progressPanel");
+  toggleBtn.classList.toggle("active", state.progressOpen);
+  panel.style.display = state.progressOpen ? "block" : "none";
+  if (!state.progressOpen) return;
+
+  populateProgressExerciseOptions();
+  state.progressExercise = document.getElementById("progressExercise").value;
+  renderProgressChart(state.progressExercise);
+}
+
+function bindEvents() {
+  document.getElementById("resetBtn").addEventListener("click", resetDay);
+  document.getElementById("restDismiss").addEventListener("click", stopRest);
+
+  document.getElementById("swapSelect").addEventListener("change", (e) => {
+    const other = e.target.value;
+    if (other === "") return;
+    swapWith(parseInt(other, 10));
+    e.target.value = "";
+  });
+
+  document.getElementById("swapReset").addEventListener("click", resetOrder);
+
+  document.getElementById("exportFrom").value = firstOfMonthStr();
+  document.getElementById("exportTo").value = todayStr();
+  document.getElementById("exportBtn").addEventListener("click", exportCsv);
+
+  document.getElementById("historyToggle").addEventListener("click", () => {
+    state.historyOpen = !state.historyOpen;
+    renderHistory();
+  });
+  document.getElementById("historySearch").addEventListener("change", renderHistory);
+  document.getElementById("historyDate").addEventListener("change", renderHistory);
+  document.getElementById("historyClear").addEventListener("click", () => {
+    document.getElementById("historySearch").value = "";
+    document.getElementById("historyDate").value = "";
+    renderHistory();
+  });
+
+  document.getElementById("progressToggle").addEventListener("click", () => {
+    state.progressOpen = !state.progressOpen;
+    renderProgressPanel();
+  });
+  document.getElementById("progressExercise").addEventListener("change", renderProgressPanel);
+}
+
+// Pulls this user's cloud state (if signed in and any exists) before the
+// app's own state is built, so a returning device starts from the synced
+// data instead of whatever was last saved locally.
+async function bootTrainingApp() {
+  const remote = await SupaSync.pullState("training");
+  if (remote) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(remote));
+  }
+
+  state = {
+    dayIdx: todayIndex(),
+    ...loadState(),
+    restRemaining: 0,
+    restActive: false,
+    openCues: null,
+    editingEx: null,
+    addingExercise: false,
+    historyOpen: false,
+    progressOpen: false,
+    progressExercise: "",
+  };
+
+  bindEvents();
+  checkWeeklyRollover();
+  render();
+
+  // First time this account syncs, seed the cloud with whatever was
+  // already on this device instead of leaving it empty.
+  if (!remote) saveState();
+}
+
+SupaSync.mountAuthGate(document.getElementById("authGate"), () => {
+  document.getElementById("app").style.display = "";
+  bootTrainingApp();
 });
-
-document.getElementById("swapReset").addEventListener("click", resetOrder);
-
-document.getElementById("exportFrom").value = firstOfMonthStr();
-document.getElementById("exportTo").value = todayStr();
-document.getElementById("exportBtn").addEventListener("click", exportCsv);
-
-document.getElementById("historyToggle").addEventListener("click", () => {
-  state.historyOpen = !state.historyOpen;
-  renderHistory();
-});
-document.getElementById("historySearch").addEventListener("change", renderHistory);
-document.getElementById("historyDate").addEventListener("change", renderHistory);
-document.getElementById("historyClear").addEventListener("click", () => {
-  document.getElementById("historySearch").value = "";
-  document.getElementById("historyDate").value = "";
-  renderHistory();
-});
-
-checkWeeklyRollover();
-render();

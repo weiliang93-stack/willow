@@ -28,6 +28,7 @@ function save() {
   localStorage.setItem(STORAGE_KEYS.expenses, JSON.stringify(expenses));
   localStorage.setItem(STORAGE_KEYS.categories, JSON.stringify(categories));
   localStorage.setItem(STORAGE_KEYS.monthlyBudget, JSON.stringify(monthlyBudget));
+  SupaSync.pushState("expenses", { cards, expenses, categories, monthlyBudget });
 }
 
 function uid() {
@@ -170,9 +171,48 @@ function render() {
   renderCardSelect();
   renderCategories();
   renderCategorySelect();
+  renderCategoryChart();
   renderExpenses();
   renderSearchCategorySelect();
   renderSearchResults();
+}
+
+function renderCategoryChart() {
+  const container = document.getElementById("category-chart");
+  const monthExpenses = expenses.filter((e) => currentMonthKey(e.date) === thisMonth);
+
+  if (monthExpenses.length === 0) {
+    container.innerHTML = '<p class="empty-state">No expenses logged this month yet.</p>';
+    return;
+  }
+
+  const totals = {};
+  let total = 0;
+  for (const e of monthExpenses) {
+    totals[e.category] = (totals[e.category] || 0) + e.amount;
+    total += e.amount;
+  }
+
+  const rows = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+  const maxAmount = rows[0][1];
+
+  container.innerHTML = rows
+    .map(([category, amount]) => {
+      const pct = total > 0 ? Math.round((amount / total) * 100) : 0;
+      const widthPct = maxAmount > 0 ? (amount / maxAmount) * 100 : 0;
+      return `
+        <div class="category-bar-row">
+          <div class="category-bar-top">
+            <span class="category-bar-name">${escapeHtml(category)}</span>
+            <span class="category-bar-amount">${formatMoney(amount)} · ${pct}%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" style="width: ${widthPct}%"></div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
 }
 
 function monthlyTotalSpent() {
@@ -843,4 +883,30 @@ function csvEscape(value) {
   return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
 }
 
-render();
+// Pulls this user's cloud state (if signed in and any exists) before the
+// first render, so a returning device starts from the synced data instead
+// of whatever was last saved locally.
+async function bootExpenseApp() {
+  const remote = await SupaSync.pullState("expenses");
+  if (remote) {
+    cards = remote.cards || [];
+    expenses = remote.expenses || [];
+    categories = remote.categories || DEFAULT_CATEGORIES;
+    monthlyBudget = remote.monthlyBudget ?? null;
+    localStorage.setItem(STORAGE_KEYS.cards, JSON.stringify(cards));
+    localStorage.setItem(STORAGE_KEYS.expenses, JSON.stringify(expenses));
+    localStorage.setItem(STORAGE_KEYS.categories, JSON.stringify(categories));
+    localStorage.setItem(STORAGE_KEYS.monthlyBudget, JSON.stringify(monthlyBudget));
+  }
+
+  render();
+
+  // First time this account syncs, seed the cloud with whatever was
+  // already on this device instead of leaving it empty.
+  if (!remote) save();
+}
+
+SupaSync.mountAuthGate(document.getElementById("authGate"), () => {
+  document.getElementById("app-content").style.display = "";
+  bootExpenseApp();
+});
