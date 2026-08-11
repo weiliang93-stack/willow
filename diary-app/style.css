@@ -379,16 +379,17 @@ button.secondary:hover {
   padding: 8px 0;
 }
 
-/* Import */
+/* Export / Import */
+.export-panel .hint,
+.import-panel .hint {
+  margin: 0 0 10px;
+}
+
 .import-panel input[type="file"] {
   display: block;
   width: 100%;
   margin: 4px 0 10px;
   font-size: 13px;
-}
-
-.import-panel .hint {
-  margin: 0 0 10px;
 }
 
 /* Cloud sync */
