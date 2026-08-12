@@ -74,6 +74,7 @@ const DEFAULT_ORDER = TEMPLATES.map((_, i) => i);
 
 const REST_SECONDS = 120;
 const STORAGE_KEY = "trainingApp.state";
+const UPDATED_AT_KEY = "trainingApp.state.updatedAt";
 
 function todayIndex() {
   const jsDay = new Date().getDay(); // 0 = Sun
@@ -167,6 +168,7 @@ function saveState() {
     restEndTime: state.restEndTime,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  localStorage.setItem(UPDATED_AT_KEY, new Date().toISOString());
   SupaSync.pushState("training", payload);
 }
 
@@ -1306,11 +1308,18 @@ function bindEvents() {
 
 // Pulls this user's cloud state (if signed in and any exists) before the
 // app's own state is built, so a returning device starts from the synced
-// data instead of whatever was last saved locally.
+// data instead of whatever was last saved locally. Only adopts the remote
+// copy if it's actually newer than this device's last local edit — so an
+// entry made offline (saved locally, but not yet pushed) survives a
+// reload instead of being silently overwritten by the older cloud copy.
 async function bootTrainingApp() {
   const remote = await SupaSync.pullState("training");
-  if (remote) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(remote));
+  const localUpdatedAt = localStorage.getItem(UPDATED_AT_KEY);
+  const remoteIsNewer = remote && (!localUpdatedAt || new Date(remote.updatedAt) > new Date(localUpdatedAt));
+
+  if (remoteIsNewer) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(remote.state));
+    localStorage.setItem(UPDATED_AT_KEY, remote.updatedAt);
   }
 
   state = {
@@ -1345,8 +1354,10 @@ async function bootTrainingApp() {
   render();
 
   // First time this account syncs, seed the cloud with whatever was
-  // already on this device instead of leaving it empty.
-  if (!remote) saveState();
+  // already on this device. Also covers the offline case: if this
+  // device's local edit was newer than the cloud (so we kept it above
+  // instead of overwriting), push it up now that we're booting again.
+  if (!remoteIsNewer) saveState();
 }
 
 SupaSync.mountAuthGate(document.getElementById("authGate"), () => {
