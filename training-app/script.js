@@ -128,6 +128,7 @@ function loadState() {
     customExercises: {},
     deletedExercises: {},
     weekKey: null,
+    restEndTime: null,
   };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -144,6 +145,7 @@ function loadState() {
       customExercises: parsed.customExercises || {},
       deletedExercises: parsed.deletedExercises || {},
       weekKey: parsed.weekKey || null,
+      restEndTime: parsed.restEndTime || null,
     };
   } catch {
     return empty;
@@ -162,6 +164,7 @@ function saveState() {
     customExercises: state.customExercises,
     deletedExercises: state.deletedExercises,
     weekKey: state.weekKey,
+    restEndTime: state.restEndTime,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   SupaSync.pushState("training", payload);
@@ -358,25 +361,85 @@ function formatDateShort(dateStr) {
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+// The rest timer is wall-clock based (an end timestamp, not a tick count)
+// so it self-corrects for throttled/suspended background tabs: whatever
+// the OS did to setInterval while the screen was off, the moment the page
+// is looked at again the remaining time is recomputed from real elapsed
+// time rather than trusting how many ticks actually fired.
 function startRest() {
+  state.restEndTime = Date.now() + REST_SECONDS * 1000;
+  state.restRemaining = REST_SECONDS;
   state.restActive = true;
+  ensureAudioCtx(); // unlock audio now, inside this click's user gesture
+  saveState();
+  runRestInterval();
+}
+
+function runRestInterval() {
   clearInterval(restInterval);
-  restInterval = setInterval(() => {
-    state.restRemaining -= 1;
-    if (state.restRemaining <= 0) {
-      state.restRemaining = 0;
-      state.restActive = false;
-      clearInterval(restInterval);
-    }
+  restInterval = setInterval(tickRest, 1000);
+}
+
+function tickRest() {
+  if (!state.restEndTime) {
+    clearInterval(restInterval);
+    return;
+  }
+  const remaining = Math.max(0, Math.ceil((state.restEndTime - Date.now()) / 1000));
+  state.restRemaining = remaining;
+  if (remaining <= 0) {
+    finishRest();
+  } else {
     renderRestBanner();
-  }, 1000);
+  }
+}
+
+function finishRest() {
+  clearInterval(restInterval);
+  state.restActive = false;
+  state.restRemaining = 0;
+  state.restEndTime = null;
+  saveState();
+  playChime();
+  renderRestBanner();
 }
 
 function stopRest() {
+  clearInterval(restInterval);
   state.restActive = false;
   state.restRemaining = 0;
-  clearInterval(restInterval);
+  state.restEndTime = null;
+  saveState();
   renderRestBanner();
+}
+
+let audioCtx = null;
+function ensureAudioCtx() {
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) return null;
+  if (!audioCtx) audioCtx = new AudioCtor();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  return audioCtx;
+}
+
+// Three short beeps when the rest timer hits zero.
+function playChime() {
+  const ctx = ensureAudioCtx();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  [0, 0.22, 0.44].forEach((offset) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0, now + offset);
+    gain.gain.linearRampToValueAtTime(0.3, now + offset + 0.02);
+    gain.gain.linearRampToValueAtTime(0, now + offset + 0.18);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now + offset);
+    osc.stop(now + offset + 0.2);
+  });
 }
 
 function resetDay() {
@@ -1206,6 +1269,21 @@ function bindEvents() {
     renderProgressPanel();
   });
   document.getElementById("progressExercise").addEventListener("change", renderProgressPanel);
+
+  // Recompute the rest timer from wall-clock time the moment the tab
+  // becomes visible again, so a throttled/suspended background tab
+  // snaps to the correct remaining time (or fires the completion chime
+  // late) instead of showing whatever it was frozen at.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && state.restEndTime) {
+      tickRest();
+    }
+  });
+
+  // Unlocks audio playback on the first tap after a fresh page load, so
+  // a rest timer resumed from persisted state (no fresh click of its own)
+  // can still play the completion chime.
+  document.addEventListener("pointerdown", ensureAudioCtx, { once: true });
 }
 
 // Pulls this user's cloud state (if signed in and any exists) before the
@@ -1229,6 +1307,20 @@ async function bootTrainingApp() {
     progressOpen: false,
     progressExercise: "",
   };
+
+  // Resume an in-progress rest timer (e.g. the tab was fully reloaded by
+  // the OS while backgrounded) from the persisted end time, rather than
+  // always starting fresh at 0.
+  if (state.restEndTime) {
+    const remaining = Math.ceil((state.restEndTime - Date.now()) / 1000);
+    if (remaining > 0) {
+      state.restRemaining = remaining;
+      state.restActive = true;
+      runRestInterval();
+    } else {
+      state.restEndTime = null;
+    }
+  }
 
   bindEvents();
   checkWeeklyRollover();
