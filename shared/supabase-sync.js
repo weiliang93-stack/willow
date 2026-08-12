@@ -6,9 +6,11 @@
 // read and write that user's state as a single JSON blob, keyed by an
 // app name ("training", "expenses").
 //
-// If shared/supabase-config.js hasn't been filled in yet, everything here
-// becomes a no-op and mountAuthGate calls onReady(null) immediately, so
-// both apps keep working exactly as they did before (local-only).
+// If shared/supabase-config.js hasn't been filled in yet, or the Supabase
+// library itself failed to load (e.g. opened offline, before the CDN
+// script has ever been cached), everything here becomes a no-op and
+// mountAuthGate calls onReady(null) immediately, so both apps keep working
+// exactly as they did before (local-only).
 (function () {
   function isConfigured() {
     return (
@@ -19,8 +21,22 @@
     );
   }
 
-  const configured = isConfigured();
-  const client = configured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+  function createClient() {
+    if (!isConfigured()) return null;
+    if (typeof window.supabase === "undefined") {
+      console.warn("SupaSync: Supabase library failed to load (offline?) — falling back to local-only mode.");
+      return null;
+    }
+    try {
+      return window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    } catch (err) {
+      console.error("SupaSync: failed to create Supabase client — falling back to local-only mode.", err);
+      return null;
+    }
+  }
+
+  const client = createClient();
+  const configured = client !== null;
 
   async function pullState(app) {
     if (!client) return null;
