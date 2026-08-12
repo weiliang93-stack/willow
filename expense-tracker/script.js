@@ -148,6 +148,7 @@ const budgetInput = document.getElementById("budget-input");
 
 const searchTextInput = document.getElementById("search-text");
 const searchCategorySelect = document.getElementById("search-category");
+const searchCardSelect = document.getElementById("search-card");
 const searchDateFromInput = document.getElementById("search-date-from");
 const searchDateToInput = document.getElementById("search-date-to");
 const clearSearchBtn = document.getElementById("clear-search-btn");
@@ -176,6 +177,7 @@ function render() {
   renderCategoryChart();
   renderExpenses();
   renderSearchCategorySelect();
+  renderSearchCardSelect();
   renderSearchResults();
 }
 
@@ -549,17 +551,34 @@ function renderSearchCategorySelect() {
   }
 }
 
+function renderSearchCardSelect() {
+  const currentValue = searchCardSelect.value;
+  searchCardSelect.innerHTML =
+    '<option value="">All payment methods</option><option value="cash">Cash / Other</option>';
+  for (const card of cards) {
+    const opt = document.createElement("option");
+    opt.value = card.id;
+    opt.textContent = card.name;
+    searchCardSelect.appendChild(opt);
+  }
+  if (currentValue === "cash" || cards.some((c) => c.id === currentValue)) {
+    searchCardSelect.value = currentValue;
+  }
+}
+
 function getSearchFilterResults() {
   const text = searchTextInput.value.trim().toLowerCase();
   const category = searchCategorySelect.value;
+  const cardId = searchCardSelect.value;
   const dateFrom = searchDateFromInput.value;
   const dateTo = searchDateToInput.value;
-  const hasFilter = Boolean(text || category || dateFrom || dateTo);
+  const hasFilter = Boolean(text || category || cardId || dateFrom || dateTo);
 
   const results = expenses
     .filter((e) => {
       if (text && !(e.note || "").toLowerCase().includes(text)) return false;
       if (category && e.category !== category) return false;
+      if (cardId && e.cardId !== cardId) return false;
       if (dateFrom && e.date < dateFrom) return false;
       if (dateTo && e.date > dateTo) return false;
       return true;
@@ -820,12 +839,14 @@ expenseListEl.addEventListener("click", onExpenseRowClick);
 
 searchTextInput.addEventListener("input", renderSearchResults);
 searchCategorySelect.addEventListener("change", renderSearchResults);
+searchCardSelect.addEventListener("change", renderSearchResults);
 searchDateFromInput.addEventListener("change", renderSearchResults);
 searchDateToInput.addEventListener("change", renderSearchResults);
 
 clearSearchBtn.addEventListener("click", () => {
   searchTextInput.value = "";
   searchCategorySelect.value = "";
+  searchCardSelect.value = "";
   searchDateFromInput.value = "";
   searchDateToInput.value = "";
   renderSearchResults();
