@@ -370,7 +370,7 @@ function startRest() {
   state.restEndTime = Date.now() + REST_SECONDS * 1000;
   state.restRemaining = REST_SECONDS;
   state.restActive = true;
-  ensureAudioCtx(); // unlock audio now, inside this click's user gesture
+  primeAudio(); // unlock audio now, inside this click's user gesture
   saveState();
   runRestInterval();
 }
@@ -418,8 +418,26 @@ function ensureAudioCtx() {
   const AudioCtor = window.AudioContext || window.webkitAudioContext;
   if (!AudioCtor) return null;
   if (!audioCtx) audioCtx = new AudioCtor();
-  if (audioCtx.state === "suspended") audioCtx.resume();
+  if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
   return audioCtx;
+}
+
+// Resuming an AudioContext during a tap isn't reliably enough to unlock
+// *later*, gesture-less playback on several mobile browsers (notably iOS
+// Safari) — they only fully unlock audio if actual sound output happens
+// within the gesture itself. So play a silent (zero-gain) blip right now,
+// during the click that starts the timer, to unlock the completion chime
+// that will fire on its own ~2 minutes later.
+function primeAudio() {
+  const ctx = ensureAudioCtx();
+  if (!ctx) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  gain.gain.value = 0;
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + 0.01);
 }
 
 // Three short beeps when the rest timer hits zero.
@@ -1283,7 +1301,7 @@ function bindEvents() {
   // Unlocks audio playback on the first tap after a fresh page load, so
   // a rest timer resumed from persisted state (no fresh click of its own)
   // can still play the completion chime.
-  document.addEventListener("pointerdown", ensureAudioCtx, { once: true });
+  document.addEventListener("pointerdown", primeAudio, { once: true });
 }
 
 // Pulls this user's cloud state (if signed in and any exists) before the
