@@ -215,13 +215,15 @@ entryForm.addEventListener("submit", (e) => {
     entry.attachments = attachments;
     entry.updatedAt = new Date().toISOString();
   } else {
+    const now = new Date().toISOString();
     entries.unshift({
       id: uid(),
       date,
       title,
       text,
       attachments,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     });
   }
 
@@ -707,15 +709,57 @@ dayOneImportBtn.addEventListener("click", async () => {
   }
 });
 
-// Pulls this user's cloud entries (if signed in) before the first render.
-// Attachment blobs never leave this device's IndexedDB, so a returning
-// device gets entry text/metadata but shows "not on this device" for any
-// attachment made elsewhere.
+function entryTimestamp(entry) {
+  return entry.updatedAt || entry.createdAt || "";
+}
+
+// Merges the cloud's entries with whatever's already on this device by
+// id, keeping whichever side of each entry was touched more recently
+// rather than blindly replacing local with remote. Without this, entries
+// written while offline (or written just before a reload, before the
+// background sync push had a chance to reach the cloud) would silently
+// vanish the next time the app booted and pulled an older cloud copy.
+//
+// Trade-off: this is a union merge with no deletion tracking, so an
+// entry deleted on one device can reappear if another device merges in
+// an older copy of it before that deletion has synced. An entry
+// unexpectedly coming back is a far smaller problem for a diary than
+// newly written entries silently disappearing, which is what this
+// exists to prevent — so the merge favors keeping content over
+// respecting a not-yet-synced deletion.
+function mergeEntries(remoteEntries, localEntries) {
+  const byId = new Map();
+  for (const entry of remoteEntries) byId.set(entry.id, entry);
+  for (const entry of localEntries) {
+    const existing = byId.get(entry.id);
+    if (!existing || entryTimestamp(entry) > entryTimestamp(existing)) {
+      byId.set(entry.id, entry);
+    }
+  }
+  return Array.from(byId.values());
+}
+
+// Pulls this user's cloud entries (if signed in) before the first render
+// and merges them with whatever's already on this device (see
+// mergeEntries above). Attachment blobs never leave this device's
+// IndexedDB, so a returning device gets entry text/metadata but shows
+// "not on this device" for any attachment made elsewhere.
 async function bootDiaryApp() {
+  const localEntriesAtBoot = entries;
   const remote = await SupaSync.pullState("diary");
+
   if (remote) {
-    entries = remote.entries || [];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    const remoteEntries = remote.entries || [];
+    const merged = mergeEntries(remoteEntries, localEntriesAtBoot);
+    entries = merged;
+    if (JSON.stringify(merged) !== JSON.stringify(remoteEntries)) {
+      // Merge surfaced something the cloud didn't have yet (an offline
+      // write, or a newer local edit) — push the merged result back up
+      // instead of leaving the cloud stale until some unrelated edit.
+      save();
+    } else {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+    }
   }
 
   render();
