@@ -6,6 +6,15 @@
 // read and write that user's state as a single JSON blob, keyed by an
 // app name ("training", "expenses").
 //
+// Sync is whole-state, last-write-wins by timestamp — not a field-level
+// merge. pullState returns the state's server-side updated_at alongside
+// it so callers can compare against their own last-local-edit timestamp
+// before deciding whether to adopt the remote copy or keep (and re-push)
+// their own newer local changes. This is what stops a page reload from
+// silently discarding an edit made while offline that hadn't synced yet.
+// Failed pushes (e.g. made while offline) are retried once the browser
+// reports it's back online.
+//
 // If shared/supabase-config.js hasn't been filled in yet, or the Supabase
 // library itself failed to load (e.g. opened offline, before the CDN
 // script has ever been cached), everything here becomes a no-op and
@@ -38,28 +47,46 @@
   const client = createClient();
   const configured = client !== null;
 
+  // Returns { state, updatedAt } (the server's last-write timestamp) so
+  // the caller can decide whether the remote copy is actually newer than
+  // whatever it has locally — or null if there's nothing synced yet.
   async function pullState(app) {
     if (!client) return null;
-    const { data, error } = await client.from("app_state").select("state").eq("app", app).maybeSingle();
+    const { data, error } = await client.from("app_state").select("state, updated_at").eq("app", app).maybeSingle();
     if (error) {
       console.error("SupaSync pull failed:", error.message);
       return null;
     }
-    return data ? data.state : null;
+    return data ? { state: data.state, updatedAt: data.updated_at } : null;
   }
 
+  async function doPush(app, state) {
+    if (!client) return;
+    const { data } = await client.auth.getUser();
+    if (!data.user) return;
+    const { error } = await client
+      .from("app_state")
+      .upsert({ user_id: data.user.id, app, state, updated_at: new Date().toISOString() });
+    if (error) console.error("SupaSync push failed:", error.message);
+  }
+
+  // Remembers the latest state each app has asked to sync, so a failed
+  // push (e.g. made while offline) can be retried once connectivity
+  // returns, without the app having to track that itself.
+  const lastPushState = {};
   let pushTimer = null;
+
   function pushState(app, state) {
     if (!client) return;
+    lastPushState[app] = state;
     clearTimeout(pushTimer);
-    pushTimer = setTimeout(async () => {
-      const { data } = await client.auth.getUser();
-      if (!data.user) return;
-      const { error } = await client
-        .from("app_state")
-        .upsert({ user_id: data.user.id, app, state, updated_at: new Date().toISOString() });
-      if (error) console.error("SupaSync push failed:", error.message);
-    }, 800);
+    pushTimer = setTimeout(() => doPush(app, state), 800);
+  }
+
+  if (client) {
+    window.addEventListener("online", () => {
+      Object.keys(lastPushState).forEach((app) => doPush(app, lastPushState[app]));
+    });
   }
 
   function signOut() {

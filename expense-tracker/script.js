@@ -3,6 +3,7 @@ const STORAGE_KEYS = {
   expenses: "budgetTracker.expenses",
   categories: "budgetTracker.categories",
   monthlyBudget: "budgetTracker.monthlyBudget",
+  updatedAt: "budgetTracker.updatedAt",
 };
 
 const DEFAULT_CATEGORIES = ["Food", "Transport", "Shopping", "Bills", "Entertainment", "Other"];
@@ -28,6 +29,7 @@ function save() {
   localStorage.setItem(STORAGE_KEYS.expenses, JSON.stringify(expenses));
   localStorage.setItem(STORAGE_KEYS.categories, JSON.stringify(categories));
   localStorage.setItem(STORAGE_KEYS.monthlyBudget, JSON.stringify(monthlyBudget));
+  localStorage.setItem(STORAGE_KEYS.updatedAt, new Date().toISOString());
   SupaSync.pushState("expenses", { cards, expenses, categories, monthlyBudget });
 }
 
@@ -885,25 +887,34 @@ function csvEscape(value) {
 
 // Pulls this user's cloud state (if signed in and any exists) before the
 // first render, so a returning device starts from the synced data instead
-// of whatever was last saved locally.
+// of whatever was last saved locally. Only adopts the remote copy if it's
+// actually newer than this device's last local edit — so an expense added
+// offline (saved locally, but not yet pushed) survives a reload instead
+// of being silently overwritten by the older cloud copy.
 async function bootExpenseApp() {
   const remote = await SupaSync.pullState("expenses");
-  if (remote) {
-    cards = remote.cards || [];
-    expenses = remote.expenses || [];
-    categories = remote.categories || DEFAULT_CATEGORIES;
-    monthlyBudget = remote.monthlyBudget ?? null;
+  const localUpdatedAt = localStorage.getItem(STORAGE_KEYS.updatedAt);
+  const remoteIsNewer = remote && (!localUpdatedAt || new Date(remote.updatedAt) > new Date(localUpdatedAt));
+
+  if (remoteIsNewer) {
+    cards = remote.state.cards || [];
+    expenses = remote.state.expenses || [];
+    categories = remote.state.categories || DEFAULT_CATEGORIES;
+    monthlyBudget = remote.state.monthlyBudget ?? null;
     localStorage.setItem(STORAGE_KEYS.cards, JSON.stringify(cards));
     localStorage.setItem(STORAGE_KEYS.expenses, JSON.stringify(expenses));
     localStorage.setItem(STORAGE_KEYS.categories, JSON.stringify(categories));
     localStorage.setItem(STORAGE_KEYS.monthlyBudget, JSON.stringify(monthlyBudget));
+    localStorage.setItem(STORAGE_KEYS.updatedAt, remote.updatedAt);
   }
 
   render();
 
   // First time this account syncs, seed the cloud with whatever was
-  // already on this device instead of leaving it empty.
-  if (!remote) save();
+  // already on this device. Also covers the offline case: if this
+  // device's local edit was newer than the cloud (so we kept it above
+  // instead of overwriting), push it up now that we're booting again.
+  if (!remoteIsNewer) save();
 }
 
 SupaSync.mountAuthGate(document.getElementById("authGate"), () => {
