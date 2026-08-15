@@ -654,6 +654,7 @@ function buildEditHeader(header, templateIdx, exIdx, baseEx, ex) {
 
   const weightInput = document.createElement("input");
   weightInput.type = "text";
+  weightInput.inputMode = "decimal";
   weightInput.className = "add-sub-input";
   weightInput.placeholder = "Planned weight (e.g. 51–52kg)";
   weightInput.value = ex.weight || "";
