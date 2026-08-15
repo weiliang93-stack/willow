@@ -306,23 +306,37 @@ function syncLogField(exIdx, setIdx, field, value) {
   }
 }
 
-// Pre-fills weight/reps from the previous session the first time a set is
-// shown untouched this session, so today's numbers start from last time
-// instead of blank. RPE is left for manual entry since it varies day to day.
-// Only fills fields that have never been touched (key absent), so a
-// deliberately cleared field stays cleared.
-function autofillFromPrev(k, exIdx, setIdx, prevEntry) {
-  if (!prevEntry) return;
+// Pulls a leading number out of a planned-weight string like "51–52kg" or
+// "~65kg" so it can seed the actual-weight field, which only holds plain
+// numbers.
+function parsePlannedWeight(weightStr) {
+  if (!weightStr) return "";
+  const match = weightStr.match(/\d+(\.\d+)?/);
+  return match ? match[0] : "";
+}
+
+// Pre-fills weight/reps the first time a set is shown untouched this
+// session: from the previous session's logged numbers when available
+// (more useful once you have real history), falling back to the planned
+// weight/reps when there's none yet (e.g. a brand-new exercise) so the
+// field still starts from something sensible instead of blank. RPE is
+// left for manual entry since it varies day to day. Only fills fields
+// that have never been touched (key absent), so a deliberately cleared
+// field stays cleared.
+function autofillFromPrev(k, exIdx, setIdx, prevEntry, ex) {
   let changed = false;
 
-  if (!(k in state.actualWeight) && prevEntry.weight) {
-    state.actualWeight[k] = prevEntry.weight;
-    if (state.done[k]) syncLogField(exIdx, setIdx, "weight", prevEntry.weight);
+  const fallbackWeight = (prevEntry && prevEntry.weight) || parsePlannedWeight(ex.weight);
+  const fallbackReps = (prevEntry && prevEntry.reps) || String(ex.reps);
+
+  if (!(k in state.actualWeight) && fallbackWeight) {
+    state.actualWeight[k] = fallbackWeight;
+    if (state.done[k]) syncLogField(exIdx, setIdx, "weight", fallbackWeight);
     changed = true;
   }
-  if (!(k in state.actualReps) && prevEntry.reps) {
-    state.actualReps[k] = prevEntry.reps;
-    if (state.done[k]) syncLogField(exIdx, setIdx, "reps", prevEntry.reps);
+  if (!(k in state.actualReps) && fallbackReps) {
+    state.actualReps[k] = fallbackReps;
+    if (state.done[k]) syncLogField(exIdx, setIdx, "reps", fallbackReps);
     changed = true;
   }
 
@@ -819,7 +833,7 @@ function renderExercises() {
       const isDone = !!state.done[k];
       const prevEntry = prevLogEntry(exIdx, i, ex.name);
 
-      autofillFromPrev(k, exIdx, i, prevEntry);
+      autofillFromPrev(k, exIdx, i, prevEntry, ex);
 
       const col = document.createElement("div");
       col.className = "set-col";
