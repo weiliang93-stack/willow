@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FIRE Planner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="authGate" class="auth-gate"></div>
+  <div class="app" id="app-content" style="display:none">
+    <header>
+      <h1>FIRE Planner</h1>
+      <p class="subtitle">Project your path to financial independence</p>
+    </header>
+
+    <section class="fire-target-panel">
+      <h2>FIRE target</h2>
+      <div class="field-row">
+        <label for="expenses-input">Annual expenses in retirement</label>
+        <input id="expenses-input" type="number" inputmode="decimal" min="0" step="100" placeholder="$0">
+      </div>
+      <div class="field-row">
+        <label for="withdrawal-rate-input">Safe withdrawal rate</label>
+        <input id="withdrawal-rate-input" type="number" inputmode="decimal" min="0.1" max="20" step="0.1" placeholder="4">
+      </div>
+
+      <div class="hero-figure">
+        <div class="hero-label">Your FIRE number</div>
+        <div class="hero-value" id="fire-number-value">$0</div>
+        <div class="hero-hint" id="fire-number-hint"></div>
+      </div>
+    </section>
+
+    <section class="accounts-panel">
+      <div class="panel-heading">
+        <h2>Investment accounts</h2>
+        <button id="add-account-btn" class="link-btn" type="button">+ Add account</button>
+      </div>
+      <div id="accounts-list" class="accounts-list"></div>
+      <p class="hint empty-hint hidden" id="accounts-empty-hint">No accounts yet. Add one to start projecting your growth.</p>
+
+      <form id="add-account-form" class="inline-form hidden">
+        <input id="account-name" type="text" placeholder="Account name (e.g. Brokerage)" required>
+        <input id="account-balance" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Current balance ($)" required>
+        <input id="account-contribution" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Monthly contribution ($)" required>
+        <input id="account-return" type="number" inputmode="decimal" min="0" max="30" step="0.1" placeholder="Expected annual return (%)" required>
+        <p class="hint">Use an inflation-adjusted (real) return for a more accurate projection.</p>
+        <div class="form-actions">
+          <button type="submit" id="account-submit-btn">Save account</button>
+          <button type="button" id="cancel-account-btn" class="secondary">Cancel</button>
+        </div>
+      </form>
+
+      <div class="stat-row">
+        <div class="stat-tile">
+          <div class="stat-label">Total balance</div>
+          <div class="stat-value" id="stat-total-balance">$0</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Monthly contributions</div>
+          <div class="stat-value" id="stat-total-contrib">$0</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="path-panel hidden" id="path-panel">
+      <div class="panel-heading">
+        <h2>Path to FI</h2>
+        <div class="horizon-picker" id="horizon-picker">
+          <button type="button" data-mode="auto">Auto</button>
+          <button type="button" data-mode="10">10y</button>
+          <button type="button" data-mode="20">20y</button>
+          <button type="button" data-mode="30">30y</button>
+        </div>
+      </div>
+
+      <div class="progress-track">
+        <div class="progress-fill" id="fi-progress-fill"></div>
+      </div>
+      <div class="account-card-meta">
+        <span id="fi-progress-label"></span>
+        <span id="fi-progress-pct"></span>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat-tile">
+          <div class="stat-label">Net worth today</div>
+          <div class="stat-value" id="stat-networth-today">$0</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Time to FI</div>
+          <div class="stat-value" id="stat-time-to-fi">--</div>
+        </div>
+      </div>
+
+      <div class="chart-wrap" id="path-chart"></div>
+    </section>
+
+    <section class="allocation-panel hidden" id="allocation-panel">
+      <h2>Where your contributions go</h2>
+      <div class="chart-wrap" id="allocation-chart"></div>
+    </section>
+  </div>
+
+  <div id="tooltip" class="chart-tooltip hidden" role="tooltip"></div>
+
+  <script src="../shared/supabase-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="../shared/supabase-sync.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
