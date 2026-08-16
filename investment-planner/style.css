@@ -119,45 +119,32 @@ h3 {
   width: 100%;
 }
 
-.expenses-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.hero-figure {
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--accent-wash);
+  text-align: center;
 }
 
-.expense-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  border: 1px solid #e5e9e6;
-  border-radius: 10px;
-  padding: 8px 10px;
-  font-size: 13px;
-}
-
-.expense-item .name {
+.hero-label {
+  font-size: 12px;
+  color: var(--ink-secondary);
   font-weight: 600;
 }
 
-.expense-item .amount {
-  color: var(--ink-secondary);
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.hero-value {
+  font-size: 34px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-top: 4px;
+  line-height: 1.1;
 }
 
-.remove-btn {
-  background: none;
-  border: none;
+.hero-hint {
+  font-size: 12px;
   color: var(--ink-muted);
-  cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
-  padding: 2px 4px;
-}
-
-.remove-btn:hover {
-  color: #e34948;
+  margin-top: 6px;
 }
 
 .inline-form {
@@ -278,36 +265,36 @@ button[type="submit"] {
   overflow: visible;
 }
 
-.goals-list {
+.accounts-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.goal-card {
+.account-card {
   border: 1px solid var(--gridline);
   border-radius: 12px;
   padding: 12px 14px;
 }
 
-.goal-card-top {
+.account-card-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
 }
 
-.goal-card-top .name {
+.account-card-top .name {
   font-weight: 700;
   font-size: 14px;
 }
 
-.goal-card-actions {
+.account-card-actions {
   display: flex;
   gap: 10px;
 }
 
-.goal-card-actions button {
+.account-card-actions button {
   background: none;
   border: none;
   color: var(--ink-muted);
@@ -317,11 +304,11 @@ button[type="submit"] {
   padding: 0;
 }
 
-.goal-card-actions button:hover {
+.account-card-actions button:hover {
   color: var(--accent);
 }
 
-.goal-card-actions .remove-goal-btn:hover {
+.account-card-actions .remove-account-btn:hover {
   color: #e34948;
 }
 
@@ -338,7 +325,7 @@ button[type="submit"] {
   border-radius: 8px;
 }
 
-.goal-card-meta {
+.account-card-meta {
   display: flex;
   justify-content: space-between;
   font-size: 12px;
@@ -346,18 +333,18 @@ button[type="submit"] {
   margin-top: 6px;
 }
 
-.goal-card-body {
+.account-card-body {
   display: flex;
   align-items: center;
   gap: 14px;
   margin-top: 10px;
 }
 
-.goal-card-body .sparkline {
+.account-card-body .sparkline {
   flex: 0 0 90px;
 }
 
-.goal-card-stats {
+.account-card-stats {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -366,7 +353,7 @@ button[type="submit"] {
   color: var(--ink-secondary);
 }
 
-.goal-card-stats strong {
+.account-card-stats strong {
   color: var(--ink-primary);
 }
 

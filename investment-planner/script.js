@@ -1,8 +1,8 @@
 const STORAGE_KEYS = {
-  income: "investmentPlanner.income",
-  expenses: "investmentPlanner.expenses",
-  goals: "investmentPlanner.goals",
-  horizonYears: "investmentPlanner.horizonYears",
+  annualExpenses: "investmentPlanner.annualExpenses",
+  withdrawalRate: "investmentPlanner.withdrawalRate",
+  accounts: "investmentPlanner.accounts",
+  horizonMode: "investmentPlanner.horizonMode",
 };
 
 const CATEGORICAL = [
@@ -10,13 +10,15 @@ const CATEGORICAL = [
   "#e87ba4", "#008300", "#4a3aa7", "#e34948",
 ];
 const OTHER_COLOR = "#898781";
+const GOOD_COLOR = "#0ca30c";
+const CAP_MONTHS = 720; // 60 years
 
-let monthlyIncome = load(STORAGE_KEYS.income, 0);
-let expenses = load(STORAGE_KEYS.expenses, []);
-let goals = load(STORAGE_KEYS.goals, []);
-let horizonYears = load(STORAGE_KEYS.horizonYears, 10);
+let annualExpenses = load(STORAGE_KEYS.annualExpenses, 0);
+let withdrawalRate = load(STORAGE_KEYS.withdrawalRate, 4);
+let accounts = load(STORAGE_KEYS.accounts, []);
+let horizonMode = load(STORAGE_KEYS.horizonMode, "auto");
 
-let editingGoalId = null;
+let editingAccountId = null;
 
 function load(key, fallback) {
   try {
@@ -28,10 +30,10 @@ function load(key, fallback) {
 }
 
 function save() {
-  localStorage.setItem(STORAGE_KEYS.income, JSON.stringify(monthlyIncome));
-  localStorage.setItem(STORAGE_KEYS.expenses, JSON.stringify(expenses));
-  localStorage.setItem(STORAGE_KEYS.goals, JSON.stringify(goals));
-  localStorage.setItem(STORAGE_KEYS.horizonYears, JSON.stringify(horizonYears));
+  localStorage.setItem(STORAGE_KEYS.annualExpenses, JSON.stringify(annualExpenses));
+  localStorage.setItem(STORAGE_KEYS.withdrawalRate, JSON.stringify(withdrawalRate));
+  localStorage.setItem(STORAGE_KEYS.accounts, JSON.stringify(accounts));
+  localStorage.setItem(STORAGE_KEYS.horizonMode, JSON.stringify(horizonMode));
 }
 
 function uid() {
@@ -58,8 +60,8 @@ function formatCompactMoney(n) {
 }
 
 function formatMonths(m) {
-  if (m === null) return "50+ yrs";
-  if (m <= 0) return "Goal reached";
+  if (m === null) return "60+ yrs";
+  if (m <= 0) return "Already there";
   const years = Math.floor(m / 12);
   const months = m % 12;
   if (years === 0) return `${months} mo`;
@@ -85,16 +87,26 @@ function simulateSeries(current, contribution, annualPct, months) {
   return series;
 }
 
-function monthsToReachGoal(goal, capMonths = 600) {
-  if (goal.currentAmount >= goal.targetAmount) return 0;
-  if (goal.monthlyContribution <= 0 && goal.annualReturnPct <= 0) return null;
-  const r = monthlyRate(goal.annualReturnPct);
-  let balance = goal.currentAmount;
-  for (let m = 1; m <= capMonths; m++) {
-    balance = balance * (1 + r) + goal.monthlyContribution;
-    if (balance >= goal.targetAmount) return m;
+function simulateCombinedSeries(accts, months) {
+  const series = new Array(months + 1).fill(0);
+  accts.forEach((acc) => {
+    const s = simulateSeries(acc.currentBalance, acc.monthlyContribution, acc.annualReturnPct, months);
+    for (let i = 0; i <= months; i++) series[i] += s[i];
+  });
+  return series;
+}
+
+function findCrossingMonth(series, threshold) {
+  if (threshold <= 0) return 0;
+  for (let i = 0; i < series.length; i++) {
+    if (series[i] >= threshold) return i;
   }
   return null;
+}
+
+function computeFireNumber() {
+  if (!(withdrawalRate > 0)) return 0;
+  return annualExpenses / (withdrawalRate / 100);
 }
 
 function niceStep(maxVal, targetTicks = 4) {
@@ -173,17 +185,17 @@ function hideTooltip() {
   tooltipEl.classList.add("hidden");
 }
 
-// ---------- area/line chart with crosshair ----------
+// ---------- FI projection chart (area/line + reference line + milestone) ----------
 
-function renderAreaChart(container, series, horizonYears, color) {
+function renderFireChart(container, series, horizonYears, color, { fireNumber, milestoneMonth }) {
   container.innerHTML = "";
   const months = series.length - 1;
-  const width = 600, height = 220;
+  const width = 600, height = 240;
   const padLeft = 56, padRight = 12, padTop = 16, padBottom = 24;
   const plotWidth = width - padLeft - padRight;
   const plotHeight = height - padTop - padBottom;
 
-  const maxVal = Math.max(...series, 1);
+  const maxVal = Math.max(...series, fireNumber || 0, 1);
   const step = niceStep(maxVal, 4);
   const maxTick = Math.max(step, Math.ceil(maxVal / step) * step);
   const tickCount = Math.round(maxTick / step);
@@ -208,7 +220,7 @@ function renderAreaChart(container, series, horizonYears, color) {
   }
 
   // x labels
-  const xTickCount = Math.min(5, Math.max(2, horizonYears));
+  const xTickCount = Math.min(6, Math.max(2, Math.round(horizonYears)));
   for (let i = 0; i <= xTickCount; i++) {
     const yearFrac = i / xTickCount;
     const m = Math.round(yearFrac * months);
@@ -231,12 +243,36 @@ function renderAreaChart(container, series, horizonYears, color) {
   svg.appendChild(svgEl("path", { d: areaPath, fill: color, "fill-opacity": 0.1, stroke: "none" }));
   svg.appendChild(svgEl("path", { d: linePath.trim(), fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
 
+  // FIRE number reference line (label pinned to the left, clear of the
+  // end-of-series value and the FI milestone label, which both live on the right)
+  if (fireNumber > 0) {
+    const refY = yForVal(fireNumber);
+    svg.appendChild(svgEl("line", {
+      x1: padLeft, x2: width - padRight, y1: refY, y2: refY,
+      stroke: "var(--ink-muted)", "stroke-width": 1.5, "stroke-dasharray": "4 4",
+    }));
+    svg.appendChild(svgText("text", {
+      x: padLeft + 4, y: Math.max(padTop + 8, refY - 6), class: "axis-tick", "text-anchor": "start", "font-weight": 700,
+    }, `FIRE number · ${formatCompactMoney(fireNumber)}`));
+  }
+
   // end marker + direct label
   const endX = xForMonth(months), endY = yForVal(series[months]);
   svg.appendChild(svgEl("circle", { cx: endX, cy: endY, r: 4, fill: color, stroke: "var(--surface)", "stroke-width": 2 }));
   svg.appendChild(svgText("text", {
     x: endX - 8, y: endY - 10, class: "axis-tick", "text-anchor": "end", fill: "var(--ink-primary)", "font-weight": 700, "font-size": 11,
   }, formatCompactMoney(series[months])));
+
+  // FI milestone marker
+  if (milestoneMonth !== null && milestoneMonth >= 0 && milestoneMonth <= months) {
+    const mx = xForMonth(milestoneMonth), my = yForVal(series[milestoneMonth]);
+    svg.appendChild(svgEl("circle", { cx: mx, cy: my, r: 5, fill: GOOD_COLOR, stroke: "var(--surface)", "stroke-width": 2 }));
+    if (milestoneMonth < months * 0.92 && milestoneMonth > months * 0.08) {
+      svg.appendChild(svgText("text", {
+        x: mx, y: Math.max(padTop + 8, my - 12), "text-anchor": "middle", fill: GOOD_COLOR, "font-weight": 700, "font-size": 11,
+      }, "FI reached"));
+    }
+  }
 
   // interaction layer
   const crosshair = svgEl("line", { x1: 0, x2: 0, y1: padTop, y2: baselineY, stroke: "var(--ink-muted)", "stroke-width": 1, opacity: 0 });
@@ -265,7 +301,9 @@ function renderAreaChart(container, series, horizonYears, color) {
     hoverDot.setAttribute("opacity", 1);
     const years = idx / 12;
     const title = idx === 0 ? "Today" : years < 1 ? `${idx} mo` : `Year ${years.toFixed(years % 1 === 0 ? 0 : 1)}`;
-    showTooltip(clientX, clientY, title, [{ color, value: formatMoney(series[idx]) }]);
+    const rows = [{ color, label: "Net worth", value: formatMoney(series[idx]) }];
+    if (fireNumber > 0) rows.push({ color: "var(--ink-muted)", label: "FIRE number", value: formatMoney(fireNumber) });
+    showTooltip(clientX, clientY, title, rows);
   }
 
   overlay.addEventListener("pointermove", (e) => handleMove(e.clientX, e.clientY));
@@ -278,7 +316,7 @@ function renderAreaChart(container, series, horizonYears, color) {
   container.appendChild(svg);
 }
 
-// ---------- sparkline (decorative, goal cards) ----------
+// ---------- sparkline (decorative, account cards) ----------
 
 function renderSparkline(container, series, color) {
   container.innerHTML = "";
@@ -360,306 +398,257 @@ function renderBarChart(container, items) {
 
 // ---------- elements ----------
 
-const incomeInput = document.getElementById("income-input");
-const expensesListEl = document.getElementById("expenses-list");
-const addExpenseBtn = document.getElementById("add-expense-btn");
-const addExpenseForm = document.getElementById("add-expense-form");
-const cancelExpenseBtn = document.getElementById("cancel-expense-btn");
-const expenseNameInput = document.getElementById("expense-name");
-const expenseAmountInput = document.getElementById("expense-amount");
-const statMonthlySavings = document.getElementById("stat-monthly-savings");
-const statUnallocated = document.getElementById("stat-unallocated");
+const expensesInput = document.getElementById("expenses-input");
+const withdrawalRateInput = document.getElementById("withdrawal-rate-input");
+const fireNumberValueEl = document.getElementById("fire-number-value");
+const fireNumberHintEl = document.getElementById("fire-number-hint");
 
-const overviewPanel = document.getElementById("overview-panel");
+const accountsListEl = document.getElementById("accounts-list");
+const accountsEmptyHint = document.getElementById("accounts-empty-hint");
+const addAccountBtn = document.getElementById("add-account-btn");
+const addAccountForm = document.getElementById("add-account-form");
+const accountNameInput = document.getElementById("account-name");
+const accountBalanceInput = document.getElementById("account-balance");
+const accountContributionInput = document.getElementById("account-contribution");
+const accountReturnInput = document.getElementById("account-return");
+const cancelAccountBtn = document.getElementById("cancel-account-btn");
+const accountSubmitBtn = document.getElementById("account-submit-btn");
+const statTotalBalance = document.getElementById("stat-total-balance");
+const statTotalContrib = document.getElementById("stat-total-contrib");
+
+const pathPanel = document.getElementById("path-panel");
 const horizonPicker = document.getElementById("horizon-picker");
-const statInvestedToday = document.getElementById("stat-invested-today");
-const statMonthlyContrib = document.getElementById("stat-monthly-contrib");
-const statProjectedLabel = document.getElementById("stat-projected-label");
-const statProjected = document.getElementById("stat-projected");
-const overviewChartEl = document.getElementById("overview-chart");
-
-const goalsListEl = document.getElementById("goals-list");
-const goalsEmptyHint = document.getElementById("goals-empty-hint");
-const addGoalBtn = document.getElementById("add-goal-btn");
-const addGoalForm = document.getElementById("add-goal-form");
-const goalNameInput = document.getElementById("goal-name");
-const goalTargetInput = document.getElementById("goal-target");
-const goalCurrentInput = document.getElementById("goal-current");
-const goalContributionInput = document.getElementById("goal-contribution");
-const goalReturnInput = document.getElementById("goal-return");
-const cancelGoalBtn = document.getElementById("cancel-goal-btn");
-const goalSubmitBtn = document.getElementById("goal-submit-btn");
+const fiProgressFill = document.getElementById("fi-progress-fill");
+const fiProgressLabel = document.getElementById("fi-progress-label");
+const fiProgressPct = document.getElementById("fi-progress-pct");
+const statNetworthToday = document.getElementById("stat-networth-today");
+const statTimeToFi = document.getElementById("stat-time-to-fi");
+const pathChartEl = document.getElementById("path-chart");
 
 const allocationPanel = document.getElementById("allocation-panel");
 const allocationChartEl = document.getElementById("allocation-chart");
 
-// ---------- income & expenses ----------
+// ---------- FIRE target ----------
 
-incomeInput.addEventListener("change", () => {
-  monthlyIncome = parseFloat(incomeInput.value) || 0;
+expensesInput.addEventListener("change", () => {
+  annualExpenses = parseFloat(expensesInput.value) || 0;
   save();
-  renderCashflow();
+  renderAll();
 });
 
-addExpenseBtn.addEventListener("click", () => {
-  addExpenseForm.classList.remove("hidden");
-  expenseNameInput.focus();
+withdrawalRateInput.addEventListener("change", () => {
+  withdrawalRate = parseFloat(withdrawalRateInput.value) || 0;
+  save();
+  renderAll();
 });
 
-cancelExpenseBtn.addEventListener("click", () => {
-  addExpenseForm.reset();
-  addExpenseForm.classList.add("hidden");
-});
+function renderFireTarget() {
+  expensesInput.value = annualExpenses || "";
+  withdrawalRateInput.value = withdrawalRate || "";
 
-addExpenseForm.addEventListener("submit", (e) => {
+  const fireNumber = computeFireNumber();
+  fireNumberValueEl.textContent = formatMoney(fireNumber);
+  const multiple = withdrawalRate > 0 ? (100 / withdrawalRate).toFixed(1) : "--";
+  fireNumberHintEl.textContent = `${multiple}× annual expenses at a ${withdrawalRate || 0}% withdrawal rate`;
+}
+
+// ---------- accounts ----------
+
+addAccountBtn.addEventListener("click", () => openAccountForm());
+cancelAccountBtn.addEventListener("click", closeAccountForm);
+
+function openAccountForm(account = null) {
+  editingAccountId = account ? account.id : null;
+  accountSubmitBtn.textContent = account ? "Save changes" : "Save account";
+  accountNameInput.value = account ? account.name : "";
+  accountBalanceInput.value = account ? account.currentBalance : "";
+  accountContributionInput.value = account ? account.monthlyContribution : "";
+  accountReturnInput.value = account ? account.annualReturnPct : "";
+  addAccountForm.classList.remove("hidden");
+  accountNameInput.focus();
+}
+
+function closeAccountForm() {
+  editingAccountId = null;
+  addAccountForm.reset();
+  addAccountForm.classList.add("hidden");
+}
+
+addAccountForm.addEventListener("submit", (e) => {
   e.preventDefault();
-  const name = expenseNameInput.value.trim();
-  const amount = parseFloat(expenseAmountInput.value);
-  if (!name || !(amount >= 0)) return;
-  expenses.push({ id: uid(), name, amount });
-  save();
-  addExpenseForm.reset();
-  addExpenseForm.classList.add("hidden");
-  renderCashflow();
-});
+  const name = accountNameInput.value.trim();
+  const currentBalance = parseFloat(accountBalanceInput.value);
+  const monthlyContribution = parseFloat(accountContributionInput.value);
+  const annualReturnPct = parseFloat(accountReturnInput.value);
+  if (!name || !(currentBalance >= 0) || !(monthlyContribution >= 0) || !(annualReturnPct >= 0)) return;
 
-function removeExpense(id) {
-  expenses = expenses.filter((e) => e.id !== id);
-  save();
-  renderCashflow();
-}
-
-function renderCashflow() {
-  incomeInput.value = monthlyIncome || "";
-
-  expensesListEl.innerHTML = "";
-  expenses.forEach((exp) => {
-    const row = document.createElement("div");
-    row.className = "expense-item";
-    const name = document.createElement("span");
-    name.className = "name";
-    name.textContent = exp.name;
-    const amountWrap = document.createElement("span");
-    amountWrap.className = "amount";
-    const amountText = document.createElement("span");
-    amountText.textContent = formatMoney(exp.amount);
-    const removeBtn = document.createElement("button");
-    removeBtn.className = "remove-btn";
-    removeBtn.type = "button";
-    removeBtn.textContent = "×";
-    removeBtn.setAttribute("aria-label", `Remove ${exp.name}`);
-    removeBtn.addEventListener("click", () => removeExpense(exp.id));
-    amountWrap.appendChild(amountText);
-    amountWrap.appendChild(removeBtn);
-    row.appendChild(name);
-    row.appendChild(amountWrap);
-    expensesListEl.appendChild(row);
-  });
-
-  const monthlyExpensesTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
-  const monthlySavings = monthlyIncome - monthlyExpensesTotal;
-  const allocated = goals.reduce((sum, g) => sum + g.monthlyContribution, 0);
-  const unallocated = monthlySavings - allocated;
-
-  statMonthlySavings.textContent = formatMoney(monthlySavings);
-  statMonthlySavings.classList.toggle("negative", monthlySavings < 0);
-  statUnallocated.textContent = formatMoney(unallocated);
-  statUnallocated.classList.toggle("negative", unallocated < 0);
-}
-
-// ---------- goals ----------
-
-addGoalBtn.addEventListener("click", () => openGoalForm());
-cancelGoalBtn.addEventListener("click", closeGoalForm);
-
-function openGoalForm(goal = null) {
-  editingGoalId = goal ? goal.id : null;
-  goalSubmitBtn.textContent = goal ? "Save changes" : "Save goal";
-  goalNameInput.value = goal ? goal.name : "";
-  goalTargetInput.value = goal ? goal.targetAmount : "";
-  goalCurrentInput.value = goal ? goal.currentAmount : "";
-  goalContributionInput.value = goal ? goal.monthlyContribution : "";
-  goalReturnInput.value = goal ? goal.annualReturnPct : "";
-  addGoalForm.classList.remove("hidden");
-  goalNameInput.focus();
-}
-
-function closeGoalForm() {
-  editingGoalId = null;
-  addGoalForm.reset();
-  addGoalForm.classList.add("hidden");
-}
-
-addGoalForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const name = goalNameInput.value.trim();
-  const targetAmount = parseFloat(goalTargetInput.value);
-  const currentAmount = parseFloat(goalCurrentInput.value);
-  const monthlyContribution = parseFloat(goalContributionInput.value);
-  const annualReturnPct = parseFloat(goalReturnInput.value);
-  if (!name || !(targetAmount >= 0) || !(currentAmount >= 0) || !(monthlyContribution >= 0) || !(annualReturnPct >= 0)) return;
-
-  if (editingGoalId) {
-    const goal = goals.find((g) => g.id === editingGoalId);
-    Object.assign(goal, { name, targetAmount, currentAmount, monthlyContribution, annualReturnPct });
+  if (editingAccountId) {
+    const account = accounts.find((a) => a.id === editingAccountId);
+    Object.assign(account, { name, currentBalance, monthlyContribution, annualReturnPct });
   } else {
-    goals.push({ id: uid(), name, targetAmount, currentAmount, monthlyContribution, annualReturnPct });
+    accounts.push({ id: uid(), name, currentBalance, monthlyContribution, annualReturnPct });
   }
   save();
-  closeGoalForm();
+  closeAccountForm();
   renderAll();
 });
 
-function removeGoal(id) {
-  goals = goals.filter((g) => g.id !== id);
+function removeAccount(id) {
+  accounts = accounts.filter((a) => a.id !== id);
   save();
   renderAll();
 }
 
-function renderGoals() {
-  goalsListEl.innerHTML = "";
-  goalsEmptyHint.classList.toggle("hidden", goals.length > 0);
+function renderAccounts() {
+  accountsListEl.innerHTML = "";
+  accountsEmptyHint.classList.toggle("hidden", accounts.length > 0);
 
-  goals.forEach((goal) => {
+  accounts.forEach((account) => {
     const card = document.createElement("div");
-    card.className = "goal-card";
+    card.className = "account-card";
 
     const top = document.createElement("div");
-    top.className = "goal-card-top";
+    top.className = "account-card-top";
     const name = document.createElement("span");
     name.className = "name";
-    name.textContent = goal.name;
+    name.textContent = account.name;
     const actions = document.createElement("div");
-    actions.className = "goal-card-actions";
+    actions.className = "account-card-actions";
     const editBtn = document.createElement("button");
     editBtn.type = "button";
     editBtn.textContent = "Edit";
-    editBtn.addEventListener("click", () => openGoalForm(goal));
+    editBtn.addEventListener("click", () => openAccountForm(account));
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
-    removeBtn.className = "remove-goal-btn";
+    removeBtn.className = "remove-account-btn";
     removeBtn.textContent = "Remove";
-    removeBtn.addEventListener("click", () => removeGoal(goal.id));
+    removeBtn.addEventListener("click", () => removeAccount(account.id));
     actions.appendChild(editBtn);
     actions.appendChild(removeBtn);
     top.appendChild(name);
     top.appendChild(actions);
 
-    const track = document.createElement("div");
-    track.className = "progress-track";
-    const fill = document.createElement("div");
-    fill.className = "progress-fill";
-    const pct = goal.targetAmount > 0 ? Math.min(100, (goal.currentAmount / goal.targetAmount) * 100) : 0;
-    fill.style.width = `${pct}%`;
-    track.appendChild(fill);
-
     const meta = document.createElement("div");
-    meta.className = "goal-card-meta";
+    meta.className = "account-card-meta";
     const metaLeft = document.createElement("span");
-    metaLeft.textContent = `${formatMoney(goal.currentAmount)} of ${formatMoney(goal.targetAmount)}`;
+    metaLeft.textContent = `${formatMoney(account.currentBalance)} balance`;
     const metaRight = document.createElement("span");
-    metaRight.textContent = `${pct.toFixed(0)}%`;
+    metaRight.textContent = `${account.annualReturnPct}% / yr`;
     meta.appendChild(metaLeft);
     meta.appendChild(metaRight);
 
     const body = document.createElement("div");
-    body.className = "goal-card-body";
+    body.className = "account-card-body";
     const sparklineEl = document.createElement("div");
     sparklineEl.className = "sparkline";
     const stats = document.createElement("div");
-    stats.className = "goal-card-stats";
+    stats.className = "account-card-stats";
 
-    const months = monthsToReachGoal(goal);
-    const chartMonths = Math.min(months ?? 600, 600) || 12;
-    const series = simulateSeries(goal.currentAmount, goal.monthlyContribution, goal.annualReturnPct, Math.max(chartMonths, 1));
+    const series = simulateSeries(account.currentBalance, account.monthlyContribution, account.annualReturnPct, 120);
 
     const contribLine = document.createElement("div");
-    contribLine.innerHTML = "";
     contribLine.append("Contributing ");
     const contribStrong = document.createElement("strong");
-    contribStrong.textContent = `${formatMoney(goal.monthlyContribution)}/mo`;
+    contribStrong.textContent = `${formatMoney(account.monthlyContribution)}/mo`;
     contribLine.appendChild(contribStrong);
-    contribLine.append(` at ${goal.annualReturnPct}% / yr`);
 
-    const etaLine = document.createElement("div");
-    etaLine.append("Reaches goal in ");
-    const etaStrong = document.createElement("strong");
-    etaStrong.textContent = formatMonths(months);
-    etaLine.appendChild(etaStrong);
+    const projectedLine = document.createElement("div");
+    projectedLine.append("In 10 yrs: ");
+    const projectedStrong = document.createElement("strong");
+    projectedStrong.textContent = formatCompactMoney(series[120]);
+    projectedLine.appendChild(projectedStrong);
 
     stats.appendChild(contribLine);
-    stats.appendChild(etaLine);
+    stats.appendChild(projectedLine);
     body.appendChild(sparklineEl);
     body.appendChild(stats);
 
     card.appendChild(top);
-    card.appendChild(track);
     card.appendChild(meta);
     card.appendChild(body);
-    goalsListEl.appendChild(card);
+    accountsListEl.appendChild(card);
 
     renderSparkline(sparklineEl, series, "#2a78d6");
   });
+
+  const totalBalance = accounts.reduce((sum, a) => sum + a.currentBalance, 0);
+  const totalContribution = accounts.reduce((sum, a) => sum + a.monthlyContribution, 0);
+  statTotalBalance.textContent = formatMoney(totalBalance);
+  statTotalContrib.textContent = formatMoney(totalContribution);
 }
 
-// ---------- overview ----------
+// ---------- path to FI ----------
 
 horizonPicker.addEventListener("click", (e) => {
-  const btn = e.target.closest("button[data-years]");
+  const btn = e.target.closest("button[data-mode]");
   if (!btn) return;
-  horizonYears = parseInt(btn.dataset.years, 10);
+  horizonMode = btn.dataset.mode;
   save();
-  renderOverview();
+  renderPath();
 });
 
-function renderOverview() {
-  if (goals.length === 0) {
-    overviewPanel.classList.add("hidden");
+function renderPath() {
+  if (accounts.length === 0) {
+    pathPanel.classList.add("hidden");
     return;
   }
-  overviewPanel.classList.remove("hidden");
+  pathPanel.classList.remove("hidden");
 
   [...horizonPicker.querySelectorAll("button")].forEach((btn) => {
-    btn.classList.toggle("active", parseInt(btn.dataset.years, 10) === horizonYears);
+    btn.classList.toggle("active", btn.dataset.mode === horizonMode);
   });
 
-  const months = horizonYears * 12;
-  const combined = new Array(months + 1).fill(0);
-  goals.forEach((g) => {
-    const series = simulateSeries(g.currentAmount, g.monthlyContribution, g.annualReturnPct, months);
-    for (let i = 0; i <= months; i++) combined[i] += series[i];
-  });
+  const fireNumber = computeFireNumber();
+  const capSeries = simulateCombinedSeries(accounts, CAP_MONTHS);
+  const fiMonth = findCrossingMonth(capSeries, fireNumber);
 
-  const investedToday = goals.reduce((sum, g) => sum + g.currentAmount, 0);
-  const monthlyContrib = goals.reduce((sum, g) => sum + g.monthlyContribution, 0);
-  const projected = combined[months];
+  let displayMonths;
+  if (horizonMode === "auto") {
+    if (fiMonth !== null) {
+      displayMonths = Math.min(CAP_MONTHS, Math.max(24, fiMonth + Math.max(24, Math.round(fiMonth * 0.15))));
+    } else {
+      displayMonths = CAP_MONTHS;
+    }
+  } else {
+    displayMonths = parseInt(horizonMode, 10) * 12;
+  }
 
-  statInvestedToday.textContent = formatMoney(investedToday);
-  statMonthlyContrib.textContent = formatMoney(monthlyContrib);
-  statProjectedLabel.textContent = `Projected in ${horizonYears}y`;
-  statProjected.textContent = formatCompactMoney(projected);
+  const displaySeries = displayMonths <= CAP_MONTHS
+    ? capSeries.slice(0, displayMonths + 1)
+    : simulateCombinedSeries(accounts, displayMonths);
 
-  renderAreaChart(overviewChartEl, combined, horizonYears, "#2a78d6");
+  const totalBalance = accounts.reduce((sum, a) => sum + a.currentBalance, 0);
+  const progressPct = fireNumber > 0 ? Math.min(100, (totalBalance / fireNumber) * 100) : 0;
+
+  fiProgressFill.style.width = `${progressPct}%`;
+  fiProgressLabel.textContent = `${formatMoney(totalBalance)} of ${formatMoney(fireNumber)}`;
+  fiProgressPct.textContent = `${progressPct.toFixed(0)}%`;
+
+  statNetworthToday.textContent = formatMoney(totalBalance);
+  statTimeToFi.textContent = formatMonths(fiMonth);
+
+  const milestoneMonth = fiMonth !== null && fiMonth <= displayMonths ? fiMonth : null;
+  renderFireChart(pathChartEl, displaySeries, displayMonths / 12, "#2a78d6", { fireNumber, milestoneMonth });
 }
 
 // ---------- allocation ----------
 
 function renderAllocation() {
-  if (goals.length < 2) {
+  if (accounts.length < 2) {
     allocationPanel.classList.add("hidden");
     return;
   }
   allocationPanel.classList.remove("hidden");
 
-  const sorted = [...goals].sort((a, b) => b.monthlyContribution - a.monthlyContribution);
-  const top = sorted.slice(0, 8).map((g, i) => ({
-    label: g.name, value: g.monthlyContribution, color: CATEGORICAL[i % CATEGORICAL.length],
+  const sorted = [...accounts].sort((a, b) => b.monthlyContribution - a.monthlyContribution);
+  const top = sorted.slice(0, 8).map((a, i) => ({
+    label: a.name, value: a.monthlyContribution, color: CATEGORICAL[i % CATEGORICAL.length],
   }));
   const rest = sorted.slice(8);
   if (rest.length > 0) {
     top.push({
       label: "Other",
-      value: rest.reduce((sum, g) => sum + g.monthlyContribution, 0),
+      value: rest.reduce((sum, a) => sum + a.monthlyContribution, 0),
       color: OTHER_COLOR,
     });
   }
@@ -670,9 +659,9 @@ function renderAllocation() {
 // ---------- init ----------
 
 function renderAll() {
-  renderCashflow();
-  renderOverview();
-  renderGoals();
+  renderFireTarget();
+  renderAccounts();
+  renderPath();
   renderAllocation();
 }
 
