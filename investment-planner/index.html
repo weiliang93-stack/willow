@@ -7,7 +7,8 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="app">
+  <div id="authGate" class="auth-gate"></div>
+  <div class="app" id="app-content" style="display:none">
     <header>
       <h1>FIRE Planner</h1>
       <p class="subtitle">Project your path to financial independence</p>
@@ -104,6 +105,9 @@
 
   <div id="tooltip" class="chart-tooltip hidden" role="tooltip"></div>
 
+  <script src="../shared/supabase-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="../shared/supabase-sync.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

@@ -457,6 +457,73 @@ button[type="submit"] {
   border-radius: 4px;
 }
 
+/* --- cloud sync --- */
+
+.auth-gate {
+  max-width: 520px;
+  margin: 0 auto 16px;
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.auth-gate-signedin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+}
+
+.auth-signedin-label {
+  color: var(--ink-secondary);
+  font-size: 13px;
+}
+
+.auth-signout-btn {
+  background: none;
+  color: var(--accent);
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.auth-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auth-box h2 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.auth-hint {
+  color: var(--ink-secondary);
+  font-size: 13px;
+  margin: 0 0 4px;
+}
+
+.auth-box input {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--gridline);
+  font-size: 14px;
+  width: 100%;
+}
+
+.auth-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.auth-error {
+  color: #c0392b;
+  font-size: 12px;
+  min-height: 1em;
+}
+
 /* --- tooltip --- */
 
 .chart-tooltip {

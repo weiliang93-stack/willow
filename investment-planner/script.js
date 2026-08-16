@@ -3,6 +3,7 @@ const STORAGE_KEYS = {
   withdrawalRate: "investmentPlanner.withdrawalRate",
   accounts: "investmentPlanner.accounts",
   horizonMode: "investmentPlanner.horizonMode",
+  updatedAt: "investmentPlanner.updatedAt",
 };
 
 const CATEGORICAL = [
@@ -34,6 +35,8 @@ function save() {
   localStorage.setItem(STORAGE_KEYS.withdrawalRate, JSON.stringify(withdrawalRate));
   localStorage.setItem(STORAGE_KEYS.accounts, JSON.stringify(accounts));
   localStorage.setItem(STORAGE_KEYS.horizonMode, JSON.stringify(horizonMode));
+  localStorage.setItem(STORAGE_KEYS.updatedAt, new Date().toISOString());
+  SupaSync.pushState("investment", { annualExpenses, withdrawalRate, accounts, horizonMode });
 }
 
 function uid() {
@@ -665,4 +668,39 @@ function renderAll() {
   renderAllocation();
 }
 
-renderAll();
+// Pulls this user's cloud state (if signed in and any exists) before the
+// first render, so a returning device starts from the synced data instead
+// of whatever was last saved locally. Only adopts the remote copy if it's
+// actually newer than this device's last local edit — so a change made
+// offline (saved locally, but not yet pushed) survives a reload instead
+// of being silently overwritten by the older cloud copy.
+async function bootApp() {
+  const remote = await SupaSync.pullState("investment");
+  const localUpdatedAt = localStorage.getItem(STORAGE_KEYS.updatedAt);
+  const remoteIsNewer = remote && (!localUpdatedAt || new Date(remote.updatedAt) > new Date(localUpdatedAt));
+
+  if (remoteIsNewer) {
+    annualExpenses = remote.state.annualExpenses || 0;
+    withdrawalRate = remote.state.withdrawalRate ?? 4;
+    accounts = remote.state.accounts || [];
+    horizonMode = remote.state.horizonMode || "auto";
+    localStorage.setItem(STORAGE_KEYS.annualExpenses, JSON.stringify(annualExpenses));
+    localStorage.setItem(STORAGE_KEYS.withdrawalRate, JSON.stringify(withdrawalRate));
+    localStorage.setItem(STORAGE_KEYS.accounts, JSON.stringify(accounts));
+    localStorage.setItem(STORAGE_KEYS.horizonMode, JSON.stringify(horizonMode));
+    localStorage.setItem(STORAGE_KEYS.updatedAt, remote.updatedAt);
+  }
+
+  renderAll();
+
+  // First time this account syncs, seed the cloud with whatever was
+  // already on this device. Also covers the offline case: if this
+  // device's local edit was newer than the cloud (so we kept it above
+  // instead of overwriting), push it up now that we're booting again.
+  if (!remoteIsNewer) save();
+}
+
+SupaSync.mountAuthGate(document.getElementById("authGate"), () => {
+  document.getElementById("app-content").style.display = "";
+  bootApp();
+});
