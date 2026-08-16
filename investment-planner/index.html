@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Investment Planner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Investment Planner</h1>
+      <p class="subtitle">Plan your savings, project your growth, hit your goals</p>
+    </header>
+
+    <section class="cashflow-panel">
+      <h2>Monthly cash flow</h2>
+      <div class="field-row">
+        <label for="income-input">Monthly income</label>
+        <input id="income-input" type="number" inputmode="decimal" min="0" step="0.01" placeholder="$0">
+      </div>
+
+      <div class="panel-heading">
+        <h3>Expenses</h3>
+        <button id="add-expense-btn" class="link-btn" type="button">+ Add expense</button>
+      </div>
+      <div id="expenses-list" class="expenses-list"></div>
+
+      <form id="add-expense-form" class="inline-form hidden">
+        <input id="expense-name" type="text" placeholder="Expense name (e.g. Rent)" required>
+        <input id="expense-amount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Amount ($)" required>
+        <div class="form-actions">
+          <button type="submit">Save</button>
+          <button type="button" id="cancel-expense-btn" class="secondary">Cancel</button>
+        </div>
+      </form>
+
+      <div class="stat-row">
+        <div class="stat-tile">
+          <div class="stat-label">Monthly savings</div>
+          <div class="stat-value" id="stat-monthly-savings">$0</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Unallocated</div>
+          <div class="stat-value" id="stat-unallocated">$0</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="overview-panel hidden" id="overview-panel">
+      <div class="panel-heading">
+        <h2>Net worth projection</h2>
+        <div class="horizon-picker" id="horizon-picker">
+          <button type="button" data-years="5">5y</button>
+          <button type="button" data-years="10">10y</button>
+          <button type="button" data-years="20">20y</button>
+          <button type="button" data-years="30">30y</button>
+        </div>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat-tile">
+          <div class="stat-label">Invested today</div>
+          <div class="stat-value" id="stat-invested-today">$0</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Monthly contributions</div>
+          <div class="stat-value" id="stat-monthly-contrib">$0</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label" id="stat-projected-label">Projected in 10y</div>
+          <div class="stat-value" id="stat-projected">$0</div>
+        </div>
+      </div>
+
+      <div class="chart-wrap" id="overview-chart"></div>
+    </section>
+
+    <section class="goals-panel">
+      <div class="panel-heading">
+        <h2>Investment goals</h2>
+        <button id="add-goal-btn" class="link-btn" type="button">+ Add goal</button>
+      </div>
+      <div id="goals-list" class="goals-list"></div>
+      <p class="hint empty-hint hidden" id="goals-empty-hint">No goals yet. Add one to start projecting your growth.</p>
+
+      <form id="add-goal-form" class="inline-form hidden">
+        <input id="goal-name" type="text" placeholder="Goal name (e.g. Retirement)" required>
+        <input id="goal-target" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Target amount ($)" required>
+        <input id="goal-current" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Current savings ($)" required>
+        <input id="goal-contribution" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Monthly contribution ($)" required>
+        <input id="goal-return" type="number" inputmode="decimal" min="0" max="30" step="0.1" placeholder="Expected annual return (%)" required>
+        <div class="form-actions">
+          <button type="submit" id="goal-submit-btn">Save goal</button>
+          <button type="button" id="cancel-goal-btn" class="secondary">Cancel</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="allocation-panel hidden" id="allocation-panel">
+      <h2>Where your savings go</h2>
+      <div class="chart-wrap" id="allocation-chart"></div>
+    </section>
+  </div>
+
+  <div id="tooltip" class="chart-tooltip hidden" role="tooltip"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
