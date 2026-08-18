@@ -1,17 +1,21 @@
 // Supabase Edge Function: sends a Telegram message when your monthly
-// spend crosses 70% or 100% of your budget. Meant to be triggered by a
-// Database Webhook on public.app_state (INSERT and UPDATE), configured
-// in the Dashboard under Database > Webhooks.
+// spend crosses 70% or 100% of your budget. Meant to be triggered on a
+// schedule by a Database > Cron Job (using pg_net directly), rather than
+// a Database Webhook on app_state — some projects are missing the
+// internal supabase_functions schema that Database Webhooks depend on,
+// so this checks the current state itself on each run instead of relying
+// on a trigger payload. That also means it catches expenses added from
+// the app UI, not just ones logged through the bot.
 //
 // Required secrets, in addition to the ones telegram-webhook/index.ts uses:
 //   DB_WEBHOOK_SECRET - a random string you invent; set the same value as
 //                        a custom HTTP header (e.g. x-webhook-secret) on
-//                        the Database Webhook, so this function only
+//                        the Cron Job's request, so this function only
 //                        accepts calls that actually came from it.
 //
 // Requires shared/telegram-schema.sql to have been run (creates
 // budget_alert_state, which tracks the last-sent tier so this only
-// messages you on a genuine threshold crossing, not on every edit).
+// messages you on a genuine threshold crossing, not on every run).
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -42,15 +46,19 @@ Deno.serve(async (req) => {
     return new Response("Forbidden", { status: 403 });
   }
 
-  const payload = await req.json();
-  const record = payload.record;
-  // Only care about your own expenses row — ignore training/diary rows,
-  // and (defensively, though this project is single-user) anyone else's.
-  if (!record || record.app !== "expenses" || record.user_id !== USER_ID) {
-    return new Response("ignored");
+  const { data: row, error } = await supabase
+    .from("app_state")
+    .select("state")
+    .eq("user_id", USER_ID)
+    .eq("app", "expenses")
+    .maybeSingle();
+  if (error) {
+    console.error(error);
+    return new Response("error reading app_state", { status: 500 });
   }
+  if (!row) return new Response("no expenses data yet");
 
-  const state = record.state ?? {};
+  const state = row.state ?? {};
   const budget = state.monthlyBudget;
   if (typeof budget !== "number" || budget <= 0) return new Response("no budget set");
 
