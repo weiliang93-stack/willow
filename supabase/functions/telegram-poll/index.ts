@@ -355,7 +355,10 @@ async function promptWeightReps(templateIdx: number, focus: string, exercises: a
   // long labels into half-width buttons and Telegram truncates the text.
   const rows: Keyboard = [];
   if (ex.weight && ex.reps) rows.push([{ text: `Same as planned (${ex.weight}, ${ex.reps} reps)`, data: "set:wr:planned" }]);
-  if (last) rows.push([{ text: `Same as last time (${last.weight}kg × ${last.reps})`, data: "set:wr:last" }]);
+  if (last) {
+    const lastRpe = last.rpe ? ` RPE ${last.rpe}` : "";
+    rows.push([{ text: `Same as last time (${last.weight}kg × ${last.reps})${lastRpe}`, data: "set:wr:last" }]);
+  }
 
   await sendMessage(
     `${ex.name} Set ${setNumber} — send weight and reps (e.g. "60 5")${rows.length ? ", or tap a shortcut:" : ""}`,
