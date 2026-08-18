@@ -365,7 +365,16 @@ async function promptWeightReps(templateIdx: number, focus: string, exercises: a
 
 async function promptRpe(sessionData: any, weight: string, reps: string) {
   await setSession("set", "awaiting_rpe", { ...sessionData, weight, reps });
-  await sendMessage("RPE? (1-10, or tap Skip)", [[{ text: "Skip", data: "set:rpe_skip" }]]);
+
+  let hint = "";
+  const ex = sessionData.exercises?.find((e: any) => e.exIdx === sessionData.exIdx);
+  if (ex) {
+    const trainingState = (await getAppState("training")) ?? { ...DEFAULT_TRAINING_STATE };
+    const last = findLastLogged(trainingState, ex.name, sessionData.setNumber);
+    if (last?.rpe) hint = ` (last time: RPE ${last.rpe})`;
+  }
+
+  await sendMessage(`RPE?${hint} (1-10, or tap Skip)`, [[{ text: "Skip", data: "set:rpe_skip" }]]);
 }
 
 async function finishSet(sessionData: any, weight: string, reps: string, rpe: string) {
@@ -600,7 +609,10 @@ async function handleFlowMessage(session: Session, text: string) {
         return;
       }
       await setSession("set", "awaiting_adhoc_rpe", { ...session.data, weight: match[1], reps: match[2] });
-      await sendMessage("RPE? (1-10, or tap Skip)", [[{ text: "Skip", data: "set:adhoc_rpe_skip" }]]);
+      const trainingState = (await getAppState("training")) ?? { ...DEFAULT_TRAINING_STATE };
+      const lastAdhoc = findLastLogged(trainingState, session.data.exerciseName, 1);
+      const adhocHint = lastAdhoc?.rpe ? ` (last time: RPE ${lastAdhoc.rpe})` : "";
+      await sendMessage(`RPE?${adhocHint} (1-10, or tap Skip)`, [[{ text: "Skip", data: "set:adhoc_rpe_skip" }]]);
       return;
     }
     if (session.step === "awaiting_adhoc_rpe") {
