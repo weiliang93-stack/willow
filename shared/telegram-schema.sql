@@ -20,3 +20,21 @@ alter table public.budget_alert_state enable row level security;
 -- bypasses RLS entirely. Leaving RLS enabled with zero policies means
 -- the anon/authenticated roles (i.e. the apps themselves) get no access
 -- to it at all.
+
+-- Tracks the last Telegram update id the telegram-poll function has
+-- already processed, so a message doesn't get logged twice across
+-- separate cron-triggered invocations. Single row (id is always 1).
+create table if not exists public.telegram_poll_state (
+  id smallint primary key,
+  last_update_id bigint not null default 0,
+  updated_at timestamptz not null default now()
+);
+
+insert into public.telegram_poll_state (id, last_update_id)
+values (1, 0)
+on conflict (id) do nothing;
+
+alter table public.telegram_poll_state enable row level security;
+
+-- Same reasoning as budget_alert_state above: no policies, only the
+-- service-role-authenticated Edge Function ever touches this table.
