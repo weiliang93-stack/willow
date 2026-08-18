@@ -62,7 +62,15 @@ Deno.serve(async (req) => {
   const budget = state.monthlyBudget;
   if (typeof budget !== "number" || budget <= 0) return new Response("no budget set");
 
-  const thisMonth = new Date().toISOString().slice(0, 7);
+  // Singapore local time, not UTC — see telegram-poll's todayStr comment
+  // for why (this only matters right around the turn of the month).
+  const todaySGT = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const thisMonth = todaySGT.slice(0, 7);
   const spent = (state.expenses || [])
     .filter((e: any) => typeof e.date === "string" && e.date.slice(0, 7) === thisMonth)
     .reduce((s: number, e: any) => s + e.amount, 0);
