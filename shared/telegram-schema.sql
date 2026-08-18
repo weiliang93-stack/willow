@@ -38,3 +38,24 @@ alter table public.telegram_poll_state enable row level security;
 
 -- Same reasoning as budget_alert_state above: no policies, only the
 -- service-role-authenticated Edge Function ever touches this table.
+
+-- Tracks the state of a multi-step Telegram conversation (e.g. /exp or
+-- /set walking through amount -> category -> payment -> note via button
+-- taps), so it survives across separate cron-triggered invocations.
+-- Single row (id is always 1). `flow` is null when idle.
+create table if not exists public.telegram_session_state (
+  id smallint primary key,
+  flow text,
+  step text,
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
+insert into public.telegram_session_state (id, flow, step, data)
+values (1, null, null, '{}'::jsonb)
+on conflict (id) do nothing;
+
+alter table public.telegram_session_state enable row level security;
+
+-- Same reasoning as the tables above: no policies, only the
+-- service-role-authenticated Edge Function ever touches this table.

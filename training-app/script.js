@@ -166,6 +166,11 @@ function saveState() {
     deletedExercises: state.deletedExercises,
     weekKey: state.weekKey,
     restEndTime: state.restEndTime,
+    // TEMPLATES itself isn't otherwise persisted anywhere — it's a
+    // hardcoded constant, not user data — but the Telegram bot needs it
+    // server-side to resolve "today's workout" the same way this file
+    // does, so it rides along in the synced blob.
+    templates: TEMPLATES,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   localStorage.setItem(UPDATED_AT_KEY, new Date().toISOString());

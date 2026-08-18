@@ -1,24 +1,20 @@
-// Supabase Edge Function: polls Telegram for new messages and logs
-// entries straight into the same app_state rows the willow apps
+// Supabase Edge Function: polls Telegram for new messages/button taps and
+// logs entries straight into the same app_state rows the willow apps
 // themselves read and write, using a fixed (single) Supabase user — this
 // bot is for personal use only, not multi-user.
 //
-// This polls instead of receiving a Telegram webhook push. Inbound
-// webhook delivery from Telegram's servers to this project's Edge
-// Functions was blocked at the network/edge level — confirmed by
-// pointing the webhook at an external inspector (webhook.site), which
-// received Telegram's request correctly and instantly, while the exact
-// same message never reached this project's functions.supabase.co
-// endpoint at all (getWebhookInfo showed a raw 401 that this function's
-// own code never produces, meaning something in front of it rejected
-// the request before our code ran). Likely a bot-protection/WAF layer
-// blocking Telegram's server traffic specifically. Polling only needs
-// outbound requests from Supabase to Telegram, which works fine, so
-// this sidesteps the problem entirely — at the cost of up to ~1 minute
-// of latency instead of an instant push.
+// Polls instead of receiving a Telegram webhook push — see the comment
+// history on this function (or PR #64) for why: inbound webhook delivery
+// from Telegram's servers was blocked at Supabase's network edge on this
+// project, confirmed via an external inspector (webhook.site) receiving
+// the exact same request correctly while it never reached this endpoint.
 //
-// Meant to be triggered every minute by a Database > Cron Job (using
-// pg_net directly), the same way budget-alert is.
+// Each invocation loops internally (checking Telegram every ~2s, for up
+// to ~100s) rather than checking once and exiting, so it can be
+// triggered by a coarse Database > Cron Job (every 2 minutes) while
+// still picking up new messages within a couple of seconds most of the
+// time — see shared/telegram-schema.sql and the setup notes for the cron
+// SQL.
 //
 // Required secrets:
 //   TELEGRAM_BOT_TOKEN        - from @BotFather
@@ -32,16 +28,25 @@
 //                               need to set these yourself
 //
 // Requires shared/telegram-schema.sql to have been run (creates
-// telegram_poll_state, which tracks the last processed Telegram update
-// id so the same message isn't logged twice).
+// telegram_poll_state and telegram_session_state).
 //
 // IMPORTANT: Telegram will not deliver updates to getUpdates while a
 // webhook is registered — call deleteWebhook once before using this.
 //
-// Commands:
+// Commands (power-user, single message, logs immediately):
 //   /exp <amount> <category> [note]   e.g. /exp 12.50 Food lunch with team
 //   /set <exercise> <weight> <reps>   e.g. /set squat 60 5
 //   /diary <text>                     e.g. /diary Had a great day at the gym
+//
+// Guided flows (button taps, walks you through it):
+//   /exp    - asks amount, then category/payment method as tappable
+//             buttons pulled live from your actual expense-tracker
+//             categories and cards, then an optional note
+//   /set    - shows today's planned exercises (from training-app's
+//             schedule, respecting day-swaps) as buttons, then which
+//             set, offering "same as planned" / "same as last time"
+//             quick-fill, then asks RPE. On a rest day, offers to log an
+//             ad-hoc exercise instead (same as today's day-view does)
 //   /help
 
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -53,13 +58,17 @@ const CALL_SECRET = Deno.env.get("DB_WEBHOOK_SECRET")!;
 
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
+const LOOP_BUDGET_MS = 100_000;
+const POLL_INTERVAL_MS = 2000;
+const SESSION_STALE_MS = 15 * 60 * 1000;
+
 function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
-// Uses Singapore local time rather than the server's UTC clock — without
-// this, anything logged between midnight and 8am SGT would get dated the
-// previous day, since Edge Functions always run in UTC.
+// Singapore local time, not UTC — Edge Functions run in UTC, and without
+// this, anything logged between midnight and 8am SGT would land on the
+// previous day.
 function todayStr() {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Singapore",
@@ -69,11 +78,33 @@ function todayStr() {
   }).format(new Date());
 }
 
-async function sendMessage(text: string) {
+// Monday-indexed 0-6 (matches training-app's todayIndex()), computed in
+// Singapore local time.
+function todaySlotIndex() {
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Singapore", weekday: "short" }).format(new Date());
+  const order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  return order.indexOf(weekday);
+}
+
+type Keyboard = { text: string; data: string }[][];
+
+async function sendMessage(text: string, keyboard?: Keyboard) {
+  const body: Record<string, unknown> = { chat_id: CHAT_ID, text };
+  if (keyboard) {
+    body.reply_markup = { inline_keyboard: keyboard.map((row) => row.map((b) => ({ text: b.text, callback_data: b.data }))) };
+  }
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: CHAT_ID, text }),
+    body: JSON.stringify(body),
+  });
+}
+
+async function answerCallback(callbackQueryId: string) {
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callback_query_id: callbackQueryId }),
   });
 }
 
@@ -90,22 +121,46 @@ async function setAppState(app: string, state: unknown) {
   if (error) throw error;
 }
 
-async function logExpense(amount: number, category: string, note: string) {
-  const state =
-    (await getAppState("expenses")) ??
-    ({
-      cards: [],
-      expenses: [],
-      categories: ["Food", "Transport", "Shopping", "Bills", "Entertainment", "Other"],
-      monthlyBudget: null,
-    } as any);
+// ---------------------------------------------------------------------
+// Conversation session (tracks where you are in a guided /exp or /set flow)
+// ---------------------------------------------------------------------
 
-  const categories: string[] = state.categories || [];
-  const matched = categories.find((c) => c.toLowerCase() === category.toLowerCase());
-  const resolvedCategory = matched || categories[categories.length - 1] || "Other";
+type Session = { flow: string | null; step: string | null; data: any; updatedAt: string | null };
 
+async function getSession(): Promise<Session> {
+  const { data } = await supabase.from("telegram_session_state").select("flow, step, data, updated_at").eq("id", 1).maybeSingle();
+  if (!data) return { flow: null, step: null, data: {}, updatedAt: null };
+  if (data.flow && data.updated_at && Date.now() - new Date(data.updated_at).getTime() > SESSION_STALE_MS) {
+    return { flow: null, step: null, data: {}, updatedAt: null };
+  }
+  return { flow: data.flow, step: data.step, data: data.data || {}, updatedAt: data.updated_at };
+}
+
+async function setSession(flow: string | null, step: string | null, data: any) {
+  await supabase
+    .from("telegram_session_state")
+    .upsert({ id: 1, flow, step, data, updated_at: new Date().toISOString() });
+}
+
+async function clearSession() {
+  await setSession(null, null, {});
+}
+
+// ---------------------------------------------------------------------
+// Expenses
+// ---------------------------------------------------------------------
+
+const DEFAULT_EXPENSE_STATE = {
+  cards: [],
+  expenses: [],
+  categories: ["Food", "Transport", "Shopping", "Bills", "Entertainment", "Other"],
+  monthlyBudget: null,
+};
+
+async function finishExpense(amount: number, category: string, cardId: string, cardLabel: string, note: string) {
+  const state = (await getAppState("expenses")) ?? { ...DEFAULT_EXPENSE_STATE };
   state.expenses = state.expenses || [];
-  state.expenses.push({ id: uid(), amount, category: resolvedCategory, cardId: "cash", date: todayStr(), note });
+  state.expenses.push({ id: uid(), amount, category, cardId, date: todayStr(), note });
   await setAppState("expenses", state);
 
   const thisMonth = todayStr().slice(0, 7);
@@ -115,26 +170,274 @@ async function logExpense(amount: number, category: string, note: string) {
   const budgetLine =
     typeof state.monthlyBudget === "number" ? ` — $${spent.toFixed(2)} / $${state.monthlyBudget.toFixed(2)} this month` : "";
 
-  return `Logged $${amount.toFixed(2)} · ${resolvedCategory}${note ? ` · ${note}` : ""}${budgetLine}`;
+  await sendMessage(
+    `Logged $${amount.toFixed(2)} · ${category} · ${cardLabel}${note ? ` · ${note}` : ""}${budgetLine}`,
+    [[{ text: "Log another expense", data: "exp:restart" }]]
+  );
+  await clearSession();
 }
 
-async function logWorkoutSet(exercise: string, weight: string, reps: string) {
-  const state =
-    (await getAppState("training")) ??
-    ({
-      done: {},
-      actualWeight: {},
-      actualReps: {},
-      rpe: {},
-      order: [0, 1, 2, 3, 4, 5, 6],
-      log: [],
-      exerciseOverrides: {},
-      customExercises: {},
-      deletedExercises: {},
-      weekKey: null,
-      restEndTime: null,
-    } as any);
+// Immediate single-message logging: /exp <amount> <category> [note]
+async function logExpenseOneShot(amount: number, category: string, note: string) {
+  const state = (await getAppState("expenses")) ?? { ...DEFAULT_EXPENSE_STATE };
+  const categories: string[] = state.categories || DEFAULT_EXPENSE_STATE.categories;
+  const matched = categories.find((c) => c.toLowerCase() === category.toLowerCase());
+  const resolvedCategory = matched || categories[categories.length - 1] || "Other";
+  await finishExpenseSilent(state, amount, resolvedCategory, "cash", note);
+}
 
+// Shared by the one-shot path (which already has `state` loaded) — same
+// as finishExpense but avoids a redundant getAppState call.
+async function finishExpenseSilent(state: any, amount: number, category: string, cardId: string, note: string) {
+  state.expenses = state.expenses || [];
+  state.expenses.push({ id: uid(), amount, category, cardId, date: todayStr(), note });
+  await setAppState("expenses", state);
+
+  const thisMonth = todayStr().slice(0, 7);
+  const spent = state.expenses
+    .filter((e: any) => e.date.slice(0, 7) === thisMonth)
+    .reduce((s: number, e: any) => s + e.amount, 0);
+  const budgetLine =
+    typeof state.monthlyBudget === "number" ? ` — $${spent.toFixed(2)} / $${state.monthlyBudget.toFixed(2)} this month` : "";
+  await sendMessage(`Logged $${amount.toFixed(2)} · ${category}${note ? ` · ${note}` : ""}${budgetLine}`);
+}
+
+function paymentOptions(state: any): { label: string; id: string }[] {
+  const cards: any[] = state.cards || [];
+  return [{ label: "Cash / Other", id: "cash" }, ...cards.map((c: any) => ({ label: c.name, id: c.id }))];
+}
+
+async function startExpenseFlow(amount?: number) {
+  if (amount != null) {
+    await promptExpenseCategory(amount);
+  } else {
+    await setSession("exp", "awaiting_amount", {});
+    await sendMessage("How much did you spend?");
+  }
+}
+
+async function promptExpenseCategory(amount: number) {
+  const state = (await getAppState("expenses")) ?? { ...DEFAULT_EXPENSE_STATE };
+  const categories: string[] = state.categories?.length ? state.categories : DEFAULT_EXPENSE_STATE.categories;
+  await setSession("exp", "awaiting_category", { amount, categories });
+  const keyboard: Keyboard = [];
+  for (let i = 0; i < categories.length; i += 2) {
+    keyboard.push(
+      categories.slice(i, i + 2).map((c, j) => ({ text: c, data: `exp:cat:${i + j}` }))
+    );
+  }
+  await sendMessage("Category?", keyboard);
+}
+
+async function promptExpensePayment(amount: number, category: string) {
+  const state = (await getAppState("expenses")) ?? { ...DEFAULT_EXPENSE_STATE };
+  const payments = paymentOptions(state);
+  await setSession("exp", "awaiting_payment", { amount, category, payments });
+  const keyboard: Keyboard = payments.map((p, i) => [{ text: p.label, data: `exp:pay:${i}` }]);
+  await sendMessage("Payment method?", keyboard);
+}
+
+async function promptExpenseNote(amount: number, category: string, cardId: string, cardLabel: string) {
+  await setSession("exp", "awaiting_note", { amount, category, cardId, cardLabel });
+  await sendMessage("Add a note? (or tap Skip)", [[{ text: "Skip", data: "exp:note_skip" }]]);
+}
+
+// ---------------------------------------------------------------------
+// Training — mirrors training-app/script.js's own resolution logic
+// (contentFor / exercisesFor / effectiveEx / visibleExercises / key),
+// operating on the `templates` field training-app now includes in its
+// synced state specifically so the bot can do this server-side.
+// ---------------------------------------------------------------------
+
+const DEFAULT_TRAINING_STATE = {
+  done: {},
+  actualWeight: {},
+  actualReps: {},
+  rpe: {},
+  order: [0, 1, 2, 3, 4, 5, 6],
+  log: [],
+  exerciseOverrides: {},
+  customExercises: {},
+  deletedExercises: {},
+  weekKey: null,
+  restEndTime: null,
+  templates: null,
+};
+
+function resolveTodayExercises(state: any) {
+  const templates = state.templates;
+  if (!Array.isArray(templates) || templates.length !== 7) return null; // not synced yet
+
+  const order: number[] = Array.isArray(state.order) && state.order.length === 7 ? state.order : [0, 1, 2, 3, 4, 5, 6];
+  const slotIdx = todaySlotIndex();
+  const templateIdx = order[slotIdx];
+  const template = templates[templateIdx];
+  const focus = template?.focus ?? "Workout";
+
+  const base = template?.exercises ?? [];
+  const custom = state.customExercises?.[templateIdx] ?? [];
+  const combined = [...base, ...custom];
+
+  const overrides = state.exerciseOverrides || {};
+  const deleted = state.deletedExercises || {};
+
+  const exercises = combined
+    .map((baseEx: any, exIdx: number) => {
+      const override = overrides[`${templateIdx}-${exIdx}`];
+      const ex = override ? { ...baseEx, ...override } : baseEx;
+      return { exIdx, name: ex.name, sets: ex.sets, reps: ex.reps, weight: ex.weight || null };
+    })
+    .filter((_: any, exIdx: number) => !deleted[`${templateIdx}-${exIdx}`]);
+
+  return { templateIdx, focus, exercises };
+}
+
+function trainingKey(templateIdx: number, exIdx: number, setIdx: number) {
+  return `${templateIdx}-${exIdx}-${setIdx}`;
+}
+
+// Most recent past log entry for this exercise+set, for the "same as
+// last time" quick-fill.
+function findLastLogged(state: any, exerciseName: string, setNumber: number) {
+  const log: any[] = state.log || [];
+  const matches = log
+    .filter((e) => e.exercise === exerciseName && e.setNumber === setNumber && e.weight)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return matches.length ? matches[matches.length - 1] : null;
+}
+
+async function startSetFlow() {
+  const state = (await getAppState("training")) ?? { ...DEFAULT_TRAINING_STATE };
+  const resolved = resolveTodayExercises(state);
+
+  if (!resolved) {
+    await sendMessage(
+      "Can't see today's plan yet — open training-app once on your phone so it syncs your workout schedule to the cloud, then try /set again."
+    );
+    return;
+  }
+
+  if (resolved.exercises.length === 0) {
+    await setSession("set", "rest_day_offer", {});
+    await sendMessage(`Rest day — no workout scheduled (${resolved.focus}).`, [
+      [{ text: "Log an exercise anyway", data: "set:adhoc_start" }],
+    ]);
+    return;
+  }
+
+  await promptExercisePicker(resolved.templateIdx, resolved.focus, resolved.exercises);
+}
+
+async function promptExercisePicker(templateIdx: number, focus: string, exercises: any[]) {
+  await setSession("set", "awaiting_exercise", { templateIdx, focus, exercises });
+  const keyboard: Keyboard = exercises.map((ex, i) => [
+    { text: `${ex.name} — ${ex.sets}×${ex.reps}`, data: `set:ex:${i}` },
+  ]);
+  await sendMessage(`${focus} — pick an exercise:`, keyboard);
+}
+
+async function promptSetPicker(templateIdx: number, focus: string, exercises: any[], exIdx: number) {
+  const ex = exercises.find((e: any) => e.exIdx === exIdx);
+  await setSession("set", "awaiting_set", { templateIdx, focus, exercises, exIdx });
+  const keyboard: Keyboard = [];
+  for (let i = 1; i <= ex.sets; i++) keyboard.push([{ text: `Set ${i}`, data: `set:setnum:${i}` }]);
+  await sendMessage(`${ex.name} (${ex.sets}×${ex.reps}) — which set?`, keyboard);
+}
+
+async function promptWeightReps(templateIdx: number, focus: string, exercises: any[], exIdx: number, setNumber: number) {
+  const ex = exercises.find((e: any) => e.exIdx === exIdx);
+  const trainingState = (await getAppState("training")) ?? { ...DEFAULT_TRAINING_STATE };
+  const last = findLastLogged(trainingState, ex.name, setNumber);
+
+  await setSession("set", "awaiting_weight_reps", { templateIdx, focus, exercises, exIdx, setNumber });
+
+  const buttons: Keyboard[number] = [];
+  if (ex.weight && ex.reps) buttons.push({ text: `Same as planned (${ex.weight}, ${ex.reps} reps)`, data: "set:wr:planned" });
+  if (last) buttons.push({ text: `Same as last time (${last.weight}kg × ${last.reps})`, data: "set:wr:last" });
+
+  await sendMessage(
+    `${ex.name} Set ${setNumber} — send weight and reps (e.g. "60 5")${buttons.length ? ", or tap a shortcut:" : ""}`,
+    buttons.length ? [buttons] : undefined
+  );
+}
+
+async function promptRpe(sessionData: any, weight: string, reps: string) {
+  await setSession("set", "awaiting_rpe", { ...sessionData, weight, reps });
+  await sendMessage("RPE? (1-10, or tap Skip)", [[{ text: "Skip", data: "set:rpe_skip" }]]);
+}
+
+async function finishSet(sessionData: any, weight: string, reps: string, rpe: string) {
+  const { templateIdx, focus, exercises, exIdx, setNumber } = sessionData;
+  const ex = exercises.find((e: any) => e.exIdx === exIdx);
+  const state = (await getAppState("training")) ?? { ...DEFAULT_TRAINING_STATE };
+
+  const k = trainingKey(templateIdx, exIdx, setNumber - 1);
+  state.done = state.done || {};
+  state.actualWeight = state.actualWeight || {};
+  state.actualReps = state.actualReps || {};
+  state.rpe = state.rpe || {};
+  state.log = state.log || [];
+
+  state.done[k] = true;
+  state.actualWeight[k] = weight;
+  state.actualReps[k] = reps;
+  if (rpe) state.rpe[k] = rpe;
+
+  state.log.push({
+    id: uid(),
+    date: todayStr(),
+    templateIdx,
+    day: "Bot",
+    dayFull: "Logged via Telegram",
+    focus,
+    exIdx,
+    exercise: ex.name,
+    setNumber,
+    weight,
+    reps,
+    rpe,
+  });
+
+  await setAppState("training", state);
+  await sendMessage(`Logged ${ex.name} Set ${setNumber}: ${weight}kg × ${reps}${rpe ? ` · RPE ${rpe}` : ""}`, [
+    [
+      { text: "Log another set", data: "set:cont_same" },
+      { text: "Different exercise", data: "set:cont_new" },
+    ],
+    [{ text: "Done", data: "set:cont_done" }],
+  ]);
+  // Keep exIdx around so "Log another set" (set:cont_same) knows which
+  // exercise to return the set-picker for.
+  await setSession("set", "awaiting_continuation", { templateIdx, focus, exercises, exIdx });
+}
+
+// Ad-hoc (rest day) logging — appends to the log only, same as the old
+// single-message /set path, since there's no template slot to address.
+async function finishAdhocSet(exerciseName: string, weight: string, reps: string, rpe: string) {
+  const state = (await getAppState("training")) ?? { ...DEFAULT_TRAINING_STATE };
+  state.log = state.log || [];
+  state.log.push({
+    id: uid(),
+    date: todayStr(),
+    templateIdx: -1,
+    day: "Bot",
+    dayFull: "Logged via Telegram",
+    focus: "Quick log",
+    exIdx: -1,
+    exercise: exerciseName,
+    setNumber: 1,
+    weight,
+    reps,
+    rpe,
+  });
+  await setAppState("training", state);
+  await sendMessage(`Logged ${exerciseName}: ${weight}kg × ${reps}${rpe ? ` · RPE ${rpe}` : ""}`);
+  await clearSession();
+}
+
+// Immediate single-message logging: /set <exercise> <weight> <reps>
+async function logSetOneShot(exercise: string, weight: string, reps: string) {
+  const state = (await getAppState("training")) ?? { ...DEFAULT_TRAINING_STATE };
   state.log = state.log || [];
   state.log.push({
     id: uid(),
@@ -151,35 +454,35 @@ async function logWorkoutSet(exercise: string, weight: string, reps: string) {
     rpe: "",
   });
   await setAppState("training", state);
-
-  return `Logged ${exercise}: ${weight}kg × ${reps} reps`;
+  await sendMessage(`Logged ${exercise}: ${weight}kg × ${reps}`);
 }
 
+// ---------------------------------------------------------------------
+// Diary
+// ---------------------------------------------------------------------
+
 async function logDiaryEntry(text: string) {
-  const state = (await getAppState("diary")) ?? ({ entries: [] } as any);
+  const state = (await getAppState("diary")) ?? { entries: [] };
   state.entries = state.entries || [];
 
   const now = new Date().toISOString();
   const firstLineBreak = text.indexOf("\n");
   const title = firstLineBreak === -1 ? text.slice(0, 60) : text.slice(0, firstLineBreak);
 
-  state.entries.push({
-    id: uid(),
-    date: todayStr(),
-    title,
-    body: text,
-    attachments: [],
-    createdAt: now,
-    updatedAt: now,
-  });
+  state.entries.push({ id: uid(), date: todayStr(), title, body: text, attachments: [], createdAt: now, updatedAt: now });
   await setAppState("diary", state);
-
-  return `Diary entry added for ${todayStr()}`;
+  await sendMessage(`Diary entry added for ${todayStr()}`);
 }
+
+// ---------------------------------------------------------------------
+// Command parsing
+// ---------------------------------------------------------------------
 
 type ParsedCommand =
   | { kind: "expense"; amount: number; category: string; note: string }
+  | { kind: "expense_flow"; amount?: number }
   | { kind: "set"; exercise: string; weight: string; reps: string }
+  | { kind: "set_flow" }
   | { kind: "diary"; text: string }
   | { kind: "help" }
   | { kind: "unknown" };
@@ -187,20 +490,20 @@ type ParsedCommand =
 function parseCommand(text: string): ParsedCommand {
   const trimmed = text.trim();
 
-  const expMatch = trimmed.match(/^\/exp(?:ense)?\s+([\d.]+)\s+(\S+)\s*(.*)$/is);
-  if (expMatch) {
-    return { kind: "expense", amount: parseFloat(expMatch[1]), category: expMatch[2], note: expMatch[3].trim() };
+  const expFullMatch = trimmed.match(/^\/exp(?:ense)?\s+([\d.]+)\s+(\S+)\s*(.*)$/is);
+  if (expFullMatch) {
+    return { kind: "expense", amount: parseFloat(expFullMatch[1]), category: expFullMatch[2], note: expFullMatch[3].trim() };
   }
+  const expAmountOnlyMatch = trimmed.match(/^\/exp(?:ense)?\s+([\d.]+)\s*$/i);
+  if (expAmountOnlyMatch) return { kind: "expense_flow", amount: parseFloat(expAmountOnlyMatch[1]) };
+  if (/^\/exp(?:ense)?\s*$/i.test(trimmed)) return { kind: "expense_flow" };
 
-  const setMatch = trimmed.match(/^\/set\s+(\S+)\s+([\d.]+)\s+(\d+)\s*$/i);
-  if (setMatch) {
-    return { kind: "set", exercise: setMatch[1], weight: setMatch[2], reps: setMatch[3] };
-  }
+  const setFullMatch = trimmed.match(/^\/set\s+(\S+)\s+([\d.]+)\s+(\d+)\s*$/i);
+  if (setFullMatch) return { kind: "set", exercise: setFullMatch[1], weight: setFullMatch[2], reps: setFullMatch[3] };
+  if (/^\/set\s*$/i.test(trimmed)) return { kind: "set_flow" };
 
   const diaryMatch = trimmed.match(/^\/diary\s+([\s\S]+)$/i);
-  if (diaryMatch) {
-    return { kind: "diary", text: diaryMatch[1].trim() };
-  }
+  if (diaryMatch) return { kind: "diary", text: diaryMatch[1].trim() };
 
   if (/^\/help/i.test(trimmed)) return { kind: "help" };
 
@@ -209,10 +512,195 @@ function parseCommand(text: string): ParsedCommand {
 
 const HELP_TEXT = [
   "Commands:",
-  "/exp <amount> <category> [note] — e.g. /exp 12.50 Food lunch with team",
-  "/set <exercise> <weight> <reps> — e.g. /set squat 60 5",
+  "/exp <amount> <category> [note] — log instantly, e.g. /exp 12.50 Food lunch",
+  "/exp — guided: amount, then tap category/payment method, then a note",
+  "/set <exercise> <weight> <reps> — log instantly, e.g. /set squat 60 5",
+  "/set — guided: today's planned exercises as buttons, then which set, then weight/reps/RPE",
   "/diary <text> — e.g. /diary Had a great day at the gym",
 ].join("\n");
+
+// ---------------------------------------------------------------------
+// Update handling
+// ---------------------------------------------------------------------
+
+async function handleCommand(parsed: ParsedCommand) {
+  switch (parsed.kind) {
+    case "expense":
+      await clearSession();
+      await logExpenseOneShot(parsed.amount, parsed.category, parsed.note);
+      break;
+    case "expense_flow":
+      await startExpenseFlow(parsed.amount);
+      break;
+    case "set":
+      await clearSession();
+      await logSetOneShot(parsed.exercise, parsed.weight, parsed.reps);
+      break;
+    case "set_flow":
+      await startSetFlow();
+      break;
+    case "diary":
+      await clearSession();
+      await logDiaryEntry(parsed.text);
+      break;
+    case "help":
+      await sendMessage(HELP_TEXT);
+      break;
+    default:
+      await sendMessage(`Didn't recognize that.\n\n${HELP_TEXT}`);
+  }
+}
+
+async function handleFlowMessage(session: Session, text: string) {
+  const trimmed = text.trim();
+
+  if (session.flow === "exp") {
+    if (session.step === "awaiting_amount") {
+      const amount = parseFloat(trimmed);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        await sendMessage("That doesn't look like an amount — try again, e.g. 12.50");
+        return;
+      }
+      await promptExpenseCategory(amount);
+      return;
+    }
+    if (session.step === "awaiting_note") {
+      const { amount, category, cardId, cardLabel } = session.data;
+      await finishExpense(amount, category, cardId, cardLabel, trimmed);
+      return;
+    }
+  }
+
+  if (session.flow === "set") {
+    if (session.step === "awaiting_weight_reps") {
+      const match = trimmed.match(/^([\d.]+)\s+(\d+)$/);
+      if (!match) {
+        await sendMessage('Send weight and reps like "60 5", or tap a shortcut above.');
+        return;
+      }
+      await promptRpe(session.data, match[1], match[2]);
+      return;
+    }
+    if (session.step === "awaiting_rpe") {
+      const { weight, reps } = session.data;
+      await finishSet(session.data, weight, reps, trimmed);
+      return;
+    }
+    if (session.step === "awaiting_adhoc_name") {
+      await setSession("set", "awaiting_adhoc_weight_reps", { exerciseName: trimmed });
+      await sendMessage(`${trimmed} — send weight and reps (e.g. "60 5")`);
+      return;
+    }
+    if (session.step === "awaiting_adhoc_weight_reps") {
+      const match = trimmed.match(/^([\d.]+)\s+(\d+)$/);
+      if (!match) {
+        await sendMessage('Send weight and reps like "60 5".');
+        return;
+      }
+      await setSession("set", "awaiting_adhoc_rpe", { ...session.data, weight: match[1], reps: match[2] });
+      await sendMessage("RPE? (1-10, or tap Skip)", [[{ text: "Skip", data: "set:adhoc_rpe_skip" }]]);
+      return;
+    }
+    if (session.step === "awaiting_adhoc_rpe") {
+      const { exerciseName, weight, reps } = session.data;
+      await finishAdhocSet(exerciseName, weight, reps, trimmed);
+      return;
+    }
+  }
+
+  // No matching flow step for free text — nudge toward /help.
+  await sendMessage(`Not sure what to do with that.\n\n${HELP_TEXT}`);
+}
+
+async function handleMessage(message: any) {
+  if (!message || typeof message.text !== "string") return;
+  if (String(message.chat.id) !== CHAT_ID) return;
+
+  const parsed = parseCommand(message.text);
+  try {
+    if (parsed.kind !== "unknown") {
+      await handleCommand(parsed);
+      return;
+    }
+    const session = await getSession();
+    if (session.flow) {
+      await handleFlowMessage(session, message.text);
+    } else {
+      await sendMessage(`Didn't recognize that.\n\n${HELP_TEXT}`);
+    }
+  } catch (err) {
+    console.error(err);
+    await sendMessage(`Something went wrong: ${err instanceof Error ? err.message : String(err)}`);
+    await clearSession();
+  }
+}
+
+async function handleCallback(cq: any) {
+  if (!cq.message || String(cq.message.chat.id) !== CHAT_ID) {
+    await answerCallback(cq.id);
+    return;
+  }
+  const data: string = cq.data || "";
+  try {
+    const session = await getSession();
+
+    if (data === "exp:restart") {
+      await startExpenseFlow();
+    } else if (data.startsWith("exp:cat:")) {
+      const idx = parseInt(data.slice("exp:cat:".length), 10);
+      const category = session.data.categories?.[idx];
+      if (category != null) await promptExpensePayment(session.data.amount, category);
+    } else if (data.startsWith("exp:pay:")) {
+      const idx = parseInt(data.slice("exp:pay:".length), 10);
+      const payment = session.data.payments?.[idx];
+      if (payment) await promptExpenseNote(session.data.amount, session.data.category, payment.id, payment.label);
+    } else if (data === "exp:note_skip") {
+      const { amount, category, cardId, cardLabel } = session.data;
+      await finishExpense(amount, category, cardId, cardLabel, "");
+    } else if (data === "set:adhoc_start") {
+      await setSession("set", "awaiting_adhoc_name", {});
+      await sendMessage("What exercise?");
+    } else if (data.startsWith("set:ex:")) {
+      const idx = parseInt(data.slice("set:ex:".length), 10);
+      const ex = session.data.exercises?.[idx];
+      if (ex) await promptSetPicker(session.data.templateIdx, session.data.focus, session.data.exercises, ex.exIdx);
+    } else if (data.startsWith("set:setnum:")) {
+      const setNumber = parseInt(data.slice("set:setnum:".length), 10);
+      await promptWeightReps(session.data.templateIdx, session.data.focus, session.data.exercises, session.data.exIdx, setNumber);
+    } else if (data === "set:wr:planned") {
+      const ex = session.data.exercises.find((e: any) => e.exIdx === session.data.exIdx);
+      await promptRpe(session.data, String(ex.weight ?? ""), String(ex.reps ?? ""));
+    } else if (data === "set:wr:last") {
+      const ex = session.data.exercises.find((e: any) => e.exIdx === session.data.exIdx);
+      const trainingState = (await getAppState("training")) ?? { ...DEFAULT_TRAINING_STATE };
+      const last = findLastLogged(trainingState, ex.name, session.data.setNumber);
+      if (last) await promptRpe(session.data, String(last.weight), String(last.reps));
+    } else if (data === "set:rpe_skip") {
+      const { weight, reps } = session.data;
+      await finishSet(session.data, weight, reps, "");
+    } else if (data === "set:cont_same") {
+      await promptSetPicker(session.data.templateIdx, session.data.focus, session.data.exercises, session.data.exIdx);
+    } else if (data === "set:cont_new") {
+      await promptExercisePicker(session.data.templateIdx, session.data.focus, session.data.exercises);
+    } else if (data === "set:cont_done") {
+      await clearSession();
+      await sendMessage("Nice work.");
+    } else if (data === "set:adhoc_rpe_skip") {
+      const { exerciseName, weight, reps } = session.data;
+      await finishAdhocSet(exerciseName, weight, reps, "");
+    }
+  } catch (err) {
+    console.error(err);
+    await sendMessage(`Something went wrong: ${err instanceof Error ? err.message : String(err)}`);
+    await clearSession();
+  } finally {
+    await answerCallback(cq.id);
+  }
+}
+
+// ---------------------------------------------------------------------
+// Polling loop
+// ---------------------------------------------------------------------
 
 async function getOffset(): Promise<number> {
   const { data } = await supabase.from("telegram_poll_state").select("last_update_id").eq("id", 1).maybeSingle();
@@ -223,38 +711,26 @@ async function setOffset(id: number) {
   await supabase.from("telegram_poll_state").upsert({ id: 1, last_update_id: id, updated_at: new Date().toISOString() });
 }
 
-async function processMessage(message: any) {
-  if (!message || typeof message.text !== "string") return;
-
-  // Ignore anyone but you — this bot writes into your personal data with
-  // no further auth, so this check is the only thing standing between a
-  // stranger who finds the bot and your expense/workout/diary data.
-  if (String(message.chat.id) !== CHAT_ID) return;
-
-  const parsed = parseCommand(message.text);
-  try {
-    let reply: string;
-    switch (parsed.kind) {
-      case "expense":
-        reply = await logExpense(parsed.amount, parsed.category, parsed.note);
-        break;
-      case "set":
-        reply = await logWorkoutSet(parsed.exercise, parsed.weight, parsed.reps);
-        break;
-      case "diary":
-        reply = await logDiaryEntry(parsed.text);
-        break;
-      case "help":
-        reply = HELP_TEXT;
-        break;
-      default:
-        reply = `Didn't recognize that.\n\n${HELP_TEXT}`;
-    }
-    await sendMessage(reply);
-  } catch (err) {
-    console.error(err);
-    await sendMessage(`Something went wrong: ${err instanceof Error ? err.message : String(err)}`);
+async function pollOnce(): Promise<number> {
+  const offset = await getOffset();
+  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${offset + 1}&timeout=0`);
+  const data = await res.json();
+  if (!data.ok) {
+    console.error("getUpdates failed", data);
+    return 0;
   }
+
+  const updates = data.result as any[];
+  for (const update of updates) {
+    if (update.callback_query) await handleCallback(update.callback_query);
+    else if (update.message) await handleMessage(update.message);
+  }
+
+  if (updates.length > 0) {
+    const maxId = Math.max(...updates.map((u: any) => u.update_id));
+    await setOffset(maxId);
+  }
+  return updates.length;
 }
 
 Deno.serve(async (req) => {
@@ -262,23 +738,15 @@ Deno.serve(async (req) => {
     return new Response("Forbidden", { status: 403 });
   }
 
-  const offset = await getOffset();
-  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${offset + 1}&timeout=0`);
-  const data = await res.json();
-  if (!data.ok) {
-    console.error("getUpdates failed", data);
-    return new Response("getUpdates failed", { status: 500 });
+  const deadline = Date.now() + LOOP_BUDGET_MS;
+  let totalProcessed = 0;
+  while (Date.now() < deadline) {
+    const count = await pollOnce();
+    totalProcessed += count;
+    if (count === 0) {
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    }
   }
 
-  const updates = data.result as any[];
-  for (const update of updates) {
-    await processMessage(update.message);
-  }
-
-  if (updates.length > 0) {
-    const maxId = Math.max(...updates.map((u: any) => u.update_id));
-    await setOffset(maxId);
-  }
-
-  return new Response(`processed ${updates.length}`);
+  return new Response(`done, processed ${totalProcessed}`);
 });
