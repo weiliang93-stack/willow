@@ -1,21 +1,42 @@
-// Supabase Edge Function: receives Telegram bot updates and logs entries
-// straight into the same app_state rows the willow apps themselves read
-// and write, using a fixed (single) Supabase user — this bot is for
-// personal use only, not multi-user.
+// Supabase Edge Function: polls Telegram for new messages and logs
+// entries straight into the same app_state rows the willow apps
+// themselves read and write, using a fixed (single) Supabase user — this
+// bot is for personal use only, not multi-user.
 //
-// Required secrets (Edge Functions > Manage secrets, or `supabase secrets set`):
+// This polls instead of receiving a Telegram webhook push. Inbound
+// webhook delivery from Telegram's servers to this project's Edge
+// Functions was blocked at the network/edge level — confirmed by
+// pointing the webhook at an external inspector (webhook.site), which
+// received Telegram's request correctly and instantly, while the exact
+// same message never reached this project's functions.supabase.co
+// endpoint at all (getWebhookInfo showed a raw 401 that this function's
+// own code never produces, meaning something in front of it rejected
+// the request before our code ran). Likely a bot-protection/WAF layer
+// blocking Telegram's server traffic specifically. Polling only needs
+// outbound requests from Supabase to Telegram, which works fine, so
+// this sidesteps the problem entirely — at the cost of up to ~1 minute
+// of latency instead of an instant push.
+//
+// Meant to be triggered every minute by a Database > Cron Job (using
+// pg_net directly), the same way budget-alert is.
+//
+// Required secrets:
 //   TELEGRAM_BOT_TOKEN        - from @BotFather
-//   TELEGRAM_WEBHOOK_SECRET   - a random string you invent; also passed as
-//                               secret_token when registering the webhook with Telegram
 //   TELEGRAM_CHAT_ID          - your personal chat id (messages from any other
 //                               chat are silently ignored)
 //   WILLOW_USER_ID            - your Supabase auth user id (Authentication > Users)
-//   SUPABASE_URL              - project URL, same as shared/supabase-config.js
-//   SUPABASE_SERVICE_ROLE_KEY - Settings > API > service_role key.
-//                               NEVER put this key in client-side code — it
-//                               bypasses Row Level Security entirely. It's
-//                               only safe here because Edge Functions run
-//                               server-side.
+//   DB_WEBHOOK_SECRET         - the same random string used for budget-alert's
+//                               Cron Job; reused here to protect this function's
+//                               URL from random callers the same way
+//   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY - auto-injected by Supabase, no
+//                               need to set these yourself
+//
+// Requires shared/telegram-schema.sql to have been run (creates
+// telegram_poll_state, which tracks the last processed Telegram update
+// id so the same message isn't logged twice).
+//
+// IMPORTANT: Telegram will not deliver updates to getUpdates while a
+// webhook is registered — call deleteWebhook once before using this.
 //
 // Commands:
 //   /exp <amount> <category> [note]   e.g. /exp 12.50 Food lunch with team
@@ -26,9 +47,9 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN")!;
-const WEBHOOK_SECRET = Deno.env.get("TELEGRAM_WEBHOOK_SECRET")!;
 const CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID")!;
 const USER_ID = Deno.env.get("WILLOW_USER_ID")!;
+const CALL_SECRET = Deno.env.get("DB_WEBHOOK_SECRET")!;
 
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -185,19 +206,22 @@ const HELP_TEXT = [
   "/diary <text> — e.g. /diary Had a great day at the gym",
 ].join("\n");
 
-Deno.serve(async (req) => {
-  if (req.headers.get("x-telegram-bot-api-secret-token") !== WEBHOOK_SECRET) {
-    return new Response("Forbidden", { status: 403 });
-  }
+async function getOffset(): Promise<number> {
+  const { data } = await supabase.from("telegram_poll_state").select("last_update_id").eq("id", 1).maybeSingle();
+  return data?.last_update_id ?? 0;
+}
 
-  const update = await req.json();
-  const message = update.message;
-  if (!message || typeof message.text !== "string") return new Response("ok");
+async function setOffset(id: number) {
+  await supabase.from("telegram_poll_state").upsert({ id: 1, last_update_id: id, updated_at: new Date().toISOString() });
+}
+
+async function processMessage(message: any) {
+  if (!message || typeof message.text !== "string") return;
 
   // Ignore anyone but you — this bot writes into your personal data with
   // no further auth, so this check is the only thing standing between a
   // stranger who finds the bot and your expense/workout/diary data.
-  if (String(message.chat.id) !== CHAT_ID) return new Response("ok");
+  if (String(message.chat.id) !== CHAT_ID) return;
 
   const parsed = parseCommand(message.text);
   try {
@@ -223,6 +247,30 @@ Deno.serve(async (req) => {
     console.error(err);
     await sendMessage(`Something went wrong: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
 
-  return new Response("ok");
+Deno.serve(async (req) => {
+  if (req.headers.get("x-webhook-secret") !== CALL_SECRET) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  const offset = await getOffset();
+  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${offset + 1}&timeout=0`);
+  const data = await res.json();
+  if (!data.ok) {
+    console.error("getUpdates failed", data);
+    return new Response("getUpdates failed", { status: 500 });
+  }
+
+  const updates = data.result as any[];
+  for (const update of updates) {
+    await processMessage(update.message);
+  }
+
+  if (updates.length > 0) {
+    const maxId = Math.max(...updates.map((u: any) => u.update_id));
+    await setOffset(maxId);
+  }
+
+  return new Response(`processed ${updates.length}`);
 });
