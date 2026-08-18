@@ -749,7 +749,7 @@ async function bootDiaryApp() {
   const remote = await SupaSync.pullState("diary");
 
   if (remote) {
-    const remoteEntries = remote.entries || [];
+    const remoteEntries = remote.state.entries || [];
     const merged = mergeEntries(remoteEntries, localEntriesAtBoot);
     entries = merged;
     if (JSON.stringify(merged) !== JSON.stringify(remoteEntries)) {
