@@ -351,13 +351,15 @@ async function promptWeightReps(templateIdx: number, focus: string, exercises: a
 
   await setSession("set", "awaiting_weight_reps", { templateIdx, focus, exercises, exIdx, setNumber });
 
-  const buttons: Keyboard[number] = [];
-  if (ex.weight && ex.reps) buttons.push({ text: `Same as planned (${ex.weight}, ${ex.reps} reps)`, data: "set:wr:planned" });
-  if (last) buttons.push({ text: `Same as last time (${last.weight}kg × ${last.reps})`, data: "set:wr:last" });
+  // Each shortcut gets its own row — putting them side by side crams two
+  // long labels into half-width buttons and Telegram truncates the text.
+  const rows: Keyboard = [];
+  if (ex.weight && ex.reps) rows.push([{ text: `Same as planned (${ex.weight}, ${ex.reps} reps)`, data: "set:wr:planned" }]);
+  if (last) rows.push([{ text: `Same as last time (${last.weight}kg × ${last.reps})`, data: "set:wr:last" }]);
 
   await sendMessage(
-    `${ex.name} Set ${setNumber} — send weight and reps (e.g. "60 5")${buttons.length ? ", or tap a shortcut:" : ""}`,
-    buttons.length ? [buttons] : undefined
+    `${ex.name} Set ${setNumber} — send weight and reps (e.g. "60 5")${rows.length ? ", or tap a shortcut:" : ""}`,
+    rows.length ? rows : undefined
   );
 }
 
