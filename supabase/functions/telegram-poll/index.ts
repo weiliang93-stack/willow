@@ -9,12 +9,16 @@
 // project, confirmed via an external inspector (webhook.site) receiving
 // the exact same request correctly while it never reached this endpoint.
 //
-// Each invocation loops internally (checking Telegram every ~2s, for up
-// to ~100s) rather than checking once and exiting, so it can be
-// triggered by a coarse Database > Cron Job (every 2 minutes) while
-// still picking up new messages within a couple of seconds most of the
-// time — see shared/telegram-schema.sql and the setup notes for the cron
-// SQL.
+// Each invocation does a single quick check and exits (previously it
+// looped internally for ~100s — reverted, see PR history: Supabase's
+// pg_net hard-caps HTTP call timeouts at 5 seconds regardless of what's
+// requested, so a cron-triggered call was never actually able to wait
+// for a 100s-long response; the invocation was getting cut short every
+// time). Responsiveness now comes entirely from firing the cron trigger
+// itself frequently (every few seconds) via pg_cron's interval-based
+// scheduling — see shared/telegram-schema.sql and the setup notes for
+// the cron SQL, which has to be run directly rather than through the
+// dashboard's cron-expression-only form.
 //
 // Required secrets:
 //   TELEGRAM_BOT_TOKEN        - from @BotFather
@@ -58,8 +62,6 @@ const CALL_SECRET = Deno.env.get("DB_WEBHOOK_SECRET")!;
 
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-const LOOP_BUDGET_MS = 100_000;
-const POLL_INTERVAL_MS = 2000;
 const SESSION_STALE_MS = 15 * 60 * 1000;
 
 function uid() {
@@ -865,15 +867,6 @@ Deno.serve(async (req) => {
     return new Response("Forbidden", { status: 403 });
   }
 
-  const deadline = Date.now() + LOOP_BUDGET_MS;
-  let totalProcessed = 0;
-  while (Date.now() < deadline) {
-    const count = await pollOnce();
-    totalProcessed += count;
-    if (count === 0) {
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    }
-  }
-
-  return new Response(`done, processed ${totalProcessed}`);
+  const count = await pollOnce();
+  return new Response(`processed ${count}`);
 });
