@@ -45,6 +45,17 @@ alter table public.telegram_poll_state enable row level security;
 -- Same reasoning as budget_alert_state above: no policies, only the
 -- service-role-authenticated Edge Function ever touches this table.
 
+-- Guards against overlapping cron-triggered invocations (which become
+-- likely once the poll interval gets down to a few seconds): an
+-- invocation atomically claims this before calling Telegram's getUpdates
+-- and releases it when done, so two invocations can never both read the
+-- same not-yet-acknowledged offset and both process (and reply to) the
+-- same update. A run that crashes without releasing self-heals once
+-- locked_at goes stale — see claimPollLock in telegram-poll/index.ts.
+-- Safe to re-run.
+alter table public.telegram_poll_state
+  add column if not exists locked_at timestamptz;
+
 -- Tracks the state of a multi-step Telegram conversation (e.g. /exp or
 -- /set walking through amount -> category -> payment -> note via button
 -- taps), so it survives across separate cron-triggered invocations.
