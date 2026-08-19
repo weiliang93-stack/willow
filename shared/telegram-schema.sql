@@ -59,3 +59,20 @@ alter table public.telegram_session_state enable row level security;
 
 -- Same reasoning as the tables above: no policies, only the
 -- service-role-authenticated Edge Function ever touches this table.
+
+-- Keyword list for the group/channel job-posting watcher (/addkeyword,
+-- /removekeyword, /keywords). Single row (id is always 1).
+create table if not exists public.telegram_job_watch (
+  id smallint primary key,
+  keywords text[] not null default '{}',
+  updated_at timestamptz not null default now()
+);
+
+insert into public.telegram_job_watch (id, keywords)
+values (1, '{}')
+on conflict (id) do nothing;
+
+alter table public.telegram_job_watch enable row level security;
+
+-- Same reasoning as the tables above: no policies, only the
+-- service-role-authenticated Edge Function ever touches this table.
