@@ -21,6 +21,12 @@ alter table public.budget_alert_state enable row level security;
 -- the anon/authenticated roles (i.e. the apps themselves) get no access
 -- to it at all.
 
+-- Per-card tiers ("none" / "warn" / "over"), keyed by card id, for the
+-- credit-card-cap alert below. Kept as a jsonb map on the same row rather
+-- than a separate table since there's still only one user. Safe to re-run.
+alter table public.budget_alert_state
+  add column if not exists card_tiers jsonb not null default '{}'::jsonb;
+
 -- Tracks the last Telegram update id the telegram-poll function has
 -- already processed, so a message doesn't get logged twice across
 -- separate cron-triggered invocations. Single row (id is always 1).
