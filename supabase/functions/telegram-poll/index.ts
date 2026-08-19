@@ -489,6 +489,84 @@ async function logDiaryEntry(text: string) {
 }
 
 // ---------------------------------------------------------------------
+// Job-posting watcher — scans messages in any group/channel this bot has
+// been added to (never your own DM with it) for keyword matches, and
+// alerts you here. Requires group privacy mode disabled via @BotFather
+// (see setup notes) so the bot actually receives regular group messages,
+// not just ones that @-mention it.
+// ---------------------------------------------------------------------
+
+async function getJobKeywords(): Promise<string[]> {
+  const { data } = await supabase.from("telegram_job_watch").select("keywords").eq("id", 1).maybeSingle();
+  return data?.keywords ?? [];
+}
+
+async function setJobKeywords(keywords: string[]) {
+  await supabase.from("telegram_job_watch").upsert({ id: 1, keywords, updated_at: new Date().toISOString() });
+}
+
+async function addJobKeyword(keyword: string) {
+  const keywords = await getJobKeywords();
+  if (keywords.some((k) => k.toLowerCase() === keyword.toLowerCase())) {
+    await sendMessage(`Already watching for "${keyword}".`);
+    return;
+  }
+  keywords.push(keyword);
+  await setJobKeywords(keywords);
+  await sendMessage(`Added "${keyword}". Watching for: ${keywords.join(", ")}`);
+}
+
+async function removeJobKeyword(keyword: string) {
+  const keywords = await getJobKeywords();
+  const next = keywords.filter((k) => k.toLowerCase() !== keyword.toLowerCase());
+  if (next.length === keywords.length) {
+    await sendMessage(`Wasn't watching for "${keyword}".`);
+    return;
+  }
+  await setJobKeywords(next);
+  await sendMessage(next.length ? `Removed "${keyword}". Watching for: ${next.join(", ")}` : `Removed "${keyword}". No keywords left.`);
+}
+
+async function listJobKeywords() {
+  const keywords = await getJobKeywords();
+  await sendMessage(keywords.length ? `Watching for: ${keywords.join(", ")}` : "No keywords set. Add one with /addkeyword <text>");
+}
+
+// Deep link to jump straight to the matched message, where Telegram's
+// link format allows it (public chats with a @username, or supergroups
+// via their internal /c/ link — regular private groups without a
+// username can't be linked to directly).
+function buildMessageLink(message: any): string | null {
+  const chat = message.chat;
+  if (chat.username) return `https://t.me/${chat.username}/${message.message_id}`;
+  if (typeof chat.id === "number" && chat.id < 0) {
+    const internalId = String(chat.id).replace(/^-100/, "");
+    if (internalId !== String(chat.id)) return `https://t.me/c/${internalId}/${message.message_id}`;
+  }
+  return null;
+}
+
+async function checkJobKeywords(message: any) {
+  if (!message || typeof message.text !== "string") return;
+  if (String(message.chat.id) === CHAT_ID) return; // never scan your own DM with the bot
+
+  const keywords = await getJobKeywords();
+  if (keywords.length === 0) return;
+
+  const lower = message.text.toLowerCase();
+  const matched = keywords.filter((k) => lower.includes(k.toLowerCase()));
+  if (matched.length === 0) return;
+
+  const chatTitle = message.chat.title || message.chat.username || "a monitored chat";
+  const link = buildMessageLink(message);
+  const snippet = message.text.length > 500 ? `${message.text.slice(0, 500)}…` : message.text;
+
+  await sendMessage(
+    `Job match in ${chatTitle} (matched: ${matched.join(", ")}):\n\n${snippet}${link ? `\n\n${link}` : ""}`
+  );
+}
+
+// ---------------------------------------------------------------------
 // Command parsing
 // ---------------------------------------------------------------------
 
@@ -498,6 +576,9 @@ type ParsedCommand =
   | { kind: "set"; exercise: string; weight: string; reps: string }
   | { kind: "set_flow" }
   | { kind: "diary"; text: string }
+  | { kind: "add_keyword"; keyword: string }
+  | { kind: "remove_keyword"; keyword: string }
+  | { kind: "list_keywords" }
   | { kind: "help" }
   | { kind: "unknown" };
 
@@ -519,6 +600,14 @@ function parseCommand(text: string): ParsedCommand {
   const diaryMatch = trimmed.match(/^\/diary\s+([\s\S]+)$/i);
   if (diaryMatch) return { kind: "diary", text: diaryMatch[1].trim() };
 
+  const addKeywordMatch = trimmed.match(/^\/addkeyword\s+([\s\S]+)$/i);
+  if (addKeywordMatch) return { kind: "add_keyword", keyword: addKeywordMatch[1].trim() };
+
+  const removeKeywordMatch = trimmed.match(/^\/removekeyword\s+([\s\S]+)$/i);
+  if (removeKeywordMatch) return { kind: "remove_keyword", keyword: removeKeywordMatch[1].trim() };
+
+  if (/^\/keywords\s*$/i.test(trimmed)) return { kind: "list_keywords" };
+
   if (/^\/help/i.test(trimmed)) return { kind: "help" };
 
   return { kind: "unknown" };
@@ -531,6 +620,9 @@ const HELP_TEXT = [
   "/set <exercise> <weight> <reps> — log instantly, e.g. /set squat 60 5",
   "/set — guided: today's planned exercises as buttons, then which set, then weight/reps/RPE",
   "/diary <text> — e.g. /diary Had a great day at the gym",
+  "/addkeyword <text> — watch group/channel chats for this, e.g. /addkeyword frontend engineer",
+  "/removekeyword <text> — stop watching for it",
+  "/keywords — list what you're watching for",
 ].join("\n");
 
 // ---------------------------------------------------------------------
@@ -556,6 +648,15 @@ async function handleCommand(parsed: ParsedCommand) {
     case "diary":
       await clearSession();
       await logDiaryEntry(parsed.text);
+      break;
+    case "add_keyword":
+      await addJobKeyword(parsed.keyword);
+      break;
+    case "remove_keyword":
+      await removeJobKeyword(parsed.keyword);
+      break;
+    case "list_keywords":
+      await listJobKeywords();
       break;
     case "help":
       await sendMessage(HELP_TEXT);
@@ -739,8 +840,17 @@ async function pollOnce(): Promise<number> {
 
   const updates = data.result as any[];
   for (const update of updates) {
-    if (update.callback_query) await handleCallback(update.callback_query);
-    else if (update.message) await handleMessage(update.message);
+    if (update.callback_query) {
+      await handleCallback(update.callback_query);
+    } else if (update.message) {
+      // Job-keyword scanning runs on every message (group chats this bot
+      // is in), independent of handleMessage's command handling, which
+      // only ever acts on your own DM with the bot.
+      await checkJobKeywords(update.message);
+      await handleMessage(update.message);
+    } else if (update.channel_post) {
+      await checkJobKeywords(update.channel_post);
+    }
   }
 
   if (updates.length > 0) {
