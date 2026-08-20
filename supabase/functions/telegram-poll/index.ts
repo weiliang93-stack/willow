@@ -838,43 +838,45 @@ async function handleCallback(cq: any) {
 
 const POLL_LOCK_STALE_MS = 20 * 1000;
 
-async function getOffset(): Promise<number> {
-  const { data } = await supabase.from("telegram_poll_state").select("last_update_id").eq("id", 1).maybeSingle();
-  return data?.last_update_id ?? 0;
-}
-
-async function setOffset(id: number) {
-  await supabase.from("telegram_poll_state").upsert({ id: 1, last_update_id: id, updated_at: new Date().toISOString() });
-}
-
-// Claims the single poll lock via a conditional UPDATE (atomic at the row
-// level: two concurrent calls can't both see locked_at as free), so
-// overlapping cron-triggered invocations don't process the same Telegram
-// update twice. Returns false if another invocation currently holds it.
-async function acquirePollLock(): Promise<boolean> {
-  const staleCutoff = new Date(Date.now() - POLL_LOCK_STALE_MS).toISOString();
-  const { data } = await supabase
+// Atomically claims the poll lock, returning the last processed update id
+// — or null if another invocation is already mid-poll and the lock isn't
+// stale yet, meaning the caller should just skip this tick. Telegram's
+// getUpdates doesn't "consume" an update until you ack it with a higher
+// offset, so without this, two overlapping invocations (which become
+// likely once the cron interval is only a few seconds) could both read
+// the same not-yet-advanced offset, both receive the same update from
+// Telegram, and both process/reply to it — a run that crashes before
+// releasing the lock self-heals once locked_at is older than this.
+async function claimPollLock(): Promise<number | null> {
+  const staleBefore = new Date(Date.now() - POLL_LOCK_STALE_MS).toISOString();
+  const { data, error } = await supabase
     .from("telegram_poll_state")
     .update({ locked_at: new Date().toISOString() })
     .eq("id", 1)
-    .or(`locked_at.is.null,locked_at.lt.${staleCutoff}`)
-    .select("id");
-  return (data?.length ?? 0) > 0;
+    .or(`locked_at.is.null,locked_at.lt.${staleBefore}`)
+    .select("last_update_id")
+    .maybeSingle();
+  if (error) throw error;
+  return data ? data.last_update_id ?? 0 : null;
 }
 
-async function releasePollLock() {
-  await supabase.from("telegram_poll_state").update({ locked_at: null }).eq("id", 1);
+async function releasePollLock(id: number) {
+  await supabase
+    .from("telegram_poll_state")
+    .update({ last_update_id: id, locked_at: null, updated_at: new Date().toISOString() })
+    .eq("id", 1);
 }
 
 async function pollOnce(): Promise<number> {
-  if (!(await acquirePollLock())) return 0;
+  const offset = await claimPollLock();
+  if (offset === null) return 0; // another invocation is still in flight
 
   try {
-    const offset = await getOffset();
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${offset + 1}&timeout=0`);
     const data = await res.json();
     if (!data.ok) {
       console.error("getUpdates failed", data);
+      await releasePollLock(offset);
       return 0;
     }
 
@@ -893,13 +895,12 @@ async function pollOnce(): Promise<number> {
       }
     }
 
-    if (updates.length > 0) {
-      const maxId = Math.max(...updates.map((u: any) => u.update_id));
-      await setOffset(maxId);
-    }
+    const maxId = updates.length > 0 ? Math.max(...updates.map((u: any) => u.update_id)) : offset;
+    await releasePollLock(maxId);
     return updates.length;
-  } finally {
-    await releasePollLock();
+  } catch (err) {
+    await releasePollLock(offset);
+    throw err;
   }
 }
 
