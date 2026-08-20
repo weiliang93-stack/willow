@@ -43,10 +43,12 @@
 //   /diary <text>                               e.g. /diary Had a great day at the gym
 //
 // Guided flows (button taps, walks you through it):
-//   /exp    - asks amount, then category and payment method as tappable
-//             buttons in one message (pulled live from your actual
-//             expense-tracker categories and cards) — tapping both logs
-//             immediately, no note step; use the one-liner above for a note
+//   /exp    - asks amount (add a note after it in the same reply if you
+//             want one, e.g. "12.50 lunch with team"), then category as
+//             tappable buttons, then payment method as tappable buttons
+//             (pulled live from your actual expense-tracker categories
+//             and cards) — logs immediately once payment is picked, no
+//             separate note step
 //   /set    - shows today's planned exercises (from training-app's
 //             schedule, respecting day-swaps) as buttons, then which
 //             set, offering "same as planned" / "same as last time"
@@ -91,29 +93,12 @@ function todaySlotIndex() {
 
 type Keyboard = { text: string; data: string }[][];
 
-// Returns the sent message's id (used to edit it in place later, e.g. the
-// combined category/payment picker) — existing callers that don't need it
-// simply don't use the return value.
-async function sendMessage(text: string, keyboard?: Keyboard): Promise<number | undefined> {
+async function sendMessage(text: string, keyboard?: Keyboard) {
   const body: Record<string, unknown> = { chat_id: CHAT_ID, text };
   if (keyboard) {
     body.reply_markup = { inline_keyboard: keyboard.map((row) => row.map((b) => ({ text: b.text, callback_data: b.data }))) };
   }
-  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => null);
-  return data?.result?.message_id;
-}
-
-async function editMessage(messageId: number, text: string, keyboard?: Keyboard): Promise<void> {
-  const body: Record<string, unknown> = { chat_id: CHAT_ID, message_id: messageId, text };
-  if (keyboard) {
-    body.reply_markup = { inline_keyboard: keyboard.map((row) => row.map((b) => ({ text: b.text, callback_data: b.data }))) };
-  }
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -244,72 +229,39 @@ function paymentOptions(state: any): { label: string; id: string }[] {
 
 async function startExpenseFlow(amount?: number) {
   if (amount != null) {
-    await promptExpenseCatPay(amount, null, null, null);
+    await promptExpenseCategory(amount, "");
   } else {
     await setSession("exp", "awaiting_amount", {});
-    await sendMessage("How much did you spend?");
+    await sendMessage('How much did you spend? (add a note after the amount if you like, e.g. "12.50 lunch with team")');
   }
 }
 
-// Combined category + payment-method picker: both live in one message,
-// edited in place as each is tapped (no new message per step), and logs
-// immediately the moment both are selected — no separate note step. Use
-// the /exp <amount> <category> <payment> <note> one-liner if you want a
-// note attached.
-function buildCatPayKeyboard(
-  categories: string[],
-  payments: { label: string; id: string }[],
-  category: string | null,
-  cardId: string | null
-): Keyboard {
-  const keyboard: Keyboard = [];
-  for (let i = 0; i < categories.length; i += 2) {
-    keyboard.push(
-      categories.slice(i, i + 2).map((c, j) => {
-        const idx = i + j;
-        return { text: `${c === category ? "✓ " : ""}${c}`, data: `exp:cp:cat:${idx}` };
-      })
-    );
-  }
-  payments.forEach((p, i) => {
-    keyboard.push([{ text: `${p.id === cardId ? "✓ " : ""}${p.label}`, data: `exp:cp:pay:${i}` }]);
-  });
-  return keyboard;
-}
-
-async function promptExpenseCatPay(
-  amount: number,
-  category: string | null,
-  cardId: string | null,
-  cardLabel: string | null,
-  messageId?: number
-) {
+async function promptExpenseCategory(amount: number, note: string) {
   const state = (await getAppState("expenses")) ?? { ...DEFAULT_EXPENSE_STATE };
   const categories: string[] = state.categories?.length ? state.categories : DEFAULT_EXPENSE_STATE.categories;
-  const payments = paymentOptions(state);
-  const keyboard = buildCatPayKeyboard(categories, payments, category, cardId);
-  const text = `Amount: $${amount.toFixed(2)}\nTap a category and a payment method.`;
-
-  let msgId = messageId;
-  if (msgId == null) {
-    msgId = await sendMessage(text, keyboard);
-  } else {
-    await editMessage(msgId, text, keyboard);
+  await setSession("exp", "awaiting_category", { amount, note, categories });
+  const keyboard: Keyboard = [];
+  for (let i = 0; i < categories.length; i += 2) {
+    keyboard.push(categories.slice(i, i + 2).map((c, j) => ({ text: c, data: `exp:cat:${i + j}` })));
   }
-  await setSession("exp", "awaiting_cat_pay", { amount, categories, payments, category, cardId, cardLabel, messageId: msgId });
+  await sendMessage("Category?", keyboard);
 }
 
-async function finishExpenseInline(messageId: number | undefined, amount: number, category: string, cardId: string, cardLabel: string) {
+async function promptExpensePayment(amount: number, category: string, note: string) {
   const state = (await getAppState("expenses")) ?? { ...DEFAULT_EXPENSE_STATE };
-  const budgetLine = await recordExpense(state, amount, category, cardId, "");
+  const payments = paymentOptions(state);
+  await setSession("exp", "awaiting_payment", { amount, category, note, payments });
+  const keyboard: Keyboard = payments.map((p, i) => [{ text: p.label, data: `exp:pay:${i}` }]);
+  await sendMessage("Payment method?", keyboard);
+}
 
-  const text = `Logged $${amount.toFixed(2)} · ${category} · ${cardLabel}${budgetLine}`;
-  const keyboard: Keyboard = [[{ text: "Log another expense", data: "exp:restart" }]];
-  if (messageId != null) {
-    await editMessage(messageId, text, keyboard);
-  } else {
-    await sendMessage(text, keyboard);
-  }
+async function finishExpense(amount: number, category: string, cardId: string, cardLabel: string, note: string) {
+  const state = (await getAppState("expenses")) ?? { ...DEFAULT_EXPENSE_STATE };
+  const budgetLine = await recordExpense(state, amount, category, cardId, note);
+  await sendMessage(
+    `Logged $${amount.toFixed(2)} · ${category} · ${cardLabel}${note ? ` · ${note}` : ""}${budgetLine}`,
+    [[{ text: "Log another expense", data: "exp:restart" }]]
+  );
   await clearSession();
 }
 
@@ -656,11 +608,11 @@ type ParsedCommand =
 function parseCommand(text: string): ParsedCommand {
   const trimmed = text.trim();
 
-  const expFullMatch = trimmed.match(/^\/exp(?:ense)?\s+([\d.]+)\s+(.+)$/is);
+  const expFullMatch = trimmed.match(/^\/exp(?:ense)?\s+\$?([\d.]+)\s+(.+)$/is);
   if (expFullMatch) {
     return { kind: "expense", amount: parseFloat(expFullMatch[1]), rest: expFullMatch[2].trim() };
   }
-  const expAmountOnlyMatch = trimmed.match(/^\/exp(?:ense)?\s+([\d.]+)\s*$/i);
+  const expAmountOnlyMatch = trimmed.match(/^\/exp(?:ense)?\s+\$?([\d.]+)\s*$/i);
   if (expAmountOnlyMatch) return { kind: "expense_flow", amount: parseFloat(expAmountOnlyMatch[1]) };
   if (/^\/exp(?:ense)?\s*$/i.test(trimmed)) return { kind: "expense_flow" };
 
@@ -687,7 +639,7 @@ function parseCommand(text: string): ParsedCommand {
 const HELP_TEXT = [
   "Commands:",
   "/exp <amount> [category] [payment] [note] — log instantly, e.g. /exp 12.50 Food Amex lunch",
-  "/exp — guided: amount, then tap category + payment in one message (logs immediately, no note step)",
+  '/exp — guided: amount (add a note after it, e.g. "12.50 lunch"), then tap category, then tap payment method',
   "/set <exercise> <weight> <reps> — log instantly, e.g. /set squat 60 5",
   "/set — guided: today's planned exercises as buttons, then which set, then weight/reps/RPE",
   "/diary <text> — e.g. /diary Had a great day at the gym",
@@ -742,12 +694,13 @@ async function handleFlowMessage(session: Session, text: string) {
 
   if (session.flow === "exp") {
     if (session.step === "awaiting_amount") {
-      const amount = parseFloat(trimmed);
+      const match = trimmed.match(/^\$?([\d.]+)\s*(.*)$/s);
+      const amount = match ? parseFloat(match[1]) : NaN;
       if (!Number.isFinite(amount) || amount <= 0) {
-        await sendMessage("That doesn't look like an amount — try again, e.g. 12.50");
+        await sendMessage('That doesn\'t look like an amount — try again, e.g. "12.50" or "$12.50 lunch with team"');
         return;
       }
-      await promptExpenseCatPay(amount, null, null, null);
+      await promptExpenseCategory(amount, match![2].trim());
       return;
     }
   }
@@ -830,28 +783,14 @@ async function handleCallback(cq: any) {
 
     if (data === "exp:restart") {
       await startExpenseFlow();
-    } else if (data.startsWith("exp:cp:cat:")) {
-      const idx = parseInt(data.slice("exp:cp:cat:".length), 10);
+    } else if (data.startsWith("exp:cat:")) {
+      const idx = parseInt(data.slice("exp:cat:".length), 10);
       const category = session.data.categories?.[idx];
-      if (category != null) {
-        const { amount, cardId, cardLabel, messageId } = session.data;
-        if (cardId != null) {
-          await finishExpenseInline(messageId, amount, category, cardId, cardLabel);
-        } else {
-          await promptExpenseCatPay(amount, category, null, null, messageId);
-        }
-      }
-    } else if (data.startsWith("exp:cp:pay:")) {
-      const idx = parseInt(data.slice("exp:cp:pay:".length), 10);
+      if (category != null) await promptExpensePayment(session.data.amount, category, session.data.note ?? "");
+    } else if (data.startsWith("exp:pay:")) {
+      const idx = parseInt(data.slice("exp:pay:".length), 10);
       const payment = session.data.payments?.[idx];
-      if (payment) {
-        const { amount, category, messageId } = session.data;
-        if (category != null) {
-          await finishExpenseInline(messageId, amount, category, payment.id, payment.label);
-        } else {
-          await promptExpenseCatPay(amount, null, payment.id, payment.label, messageId);
-        }
-      }
+      if (payment) await finishExpense(session.data.amount, session.data.category, payment.id, payment.label, session.data.note ?? "");
     } else if (data === "set:adhoc_start") {
       await setSession("set", "awaiting_adhoc_name", {});
       await sendMessage("What exercise?");
