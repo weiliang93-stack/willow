@@ -836,6 +836,8 @@ async function handleCallback(cq: any) {
 // Polling loop
 // ---------------------------------------------------------------------
 
+const POLL_LOCK_STALE_MS = 20 * 1000;
+
 async function getOffset(): Promise<number> {
   const { data } = await supabase.from("telegram_poll_state").select("last_update_id").eq("id", 1).maybeSingle();
   return data?.last_update_id ?? 0;
@@ -845,35 +847,60 @@ async function setOffset(id: number) {
   await supabase.from("telegram_poll_state").upsert({ id: 1, last_update_id: id, updated_at: new Date().toISOString() });
 }
 
+// Claims the single poll lock via a conditional UPDATE (atomic at the row
+// level: two concurrent calls can't both see locked_at as free), so
+// overlapping cron-triggered invocations don't process the same Telegram
+// update twice. Returns false if another invocation currently holds it.
+async function acquirePollLock(): Promise<boolean> {
+  const staleCutoff = new Date(Date.now() - POLL_LOCK_STALE_MS).toISOString();
+  const { data } = await supabase
+    .from("telegram_poll_state")
+    .update({ locked_at: new Date().toISOString() })
+    .eq("id", 1)
+    .or(`locked_at.is.null,locked_at.lt.${staleCutoff}`)
+    .select("id");
+  return (data?.length ?? 0) > 0;
+}
+
+async function releasePollLock() {
+  await supabase.from("telegram_poll_state").update({ locked_at: null }).eq("id", 1);
+}
+
 async function pollOnce(): Promise<number> {
-  const offset = await getOffset();
-  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${offset + 1}&timeout=0`);
-  const data = await res.json();
-  if (!data.ok) {
-    console.error("getUpdates failed", data);
-    return 0;
-  }
+  if (!(await acquirePollLock())) return 0;
 
-  const updates = data.result as any[];
-  for (const update of updates) {
-    if (update.callback_query) {
-      await handleCallback(update.callback_query);
-    } else if (update.message) {
-      // Job-keyword scanning runs on every message (group chats this bot
-      // is in), independent of handleMessage's command handling, which
-      // only ever acts on your own DM with the bot.
-      await checkJobKeywords(update.message);
-      await handleMessage(update.message);
-    } else if (update.channel_post) {
-      await checkJobKeywords(update.channel_post);
+  try {
+    const offset = await getOffset();
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${offset + 1}&timeout=0`);
+    const data = await res.json();
+    if (!data.ok) {
+      console.error("getUpdates failed", data);
+      return 0;
     }
-  }
 
-  if (updates.length > 0) {
-    const maxId = Math.max(...updates.map((u: any) => u.update_id));
-    await setOffset(maxId);
+    const updates = data.result as any[];
+    for (const update of updates) {
+      if (update.callback_query) {
+        await handleCallback(update.callback_query);
+      } else if (update.message) {
+        // Job-keyword scanning runs on every message (group chats this bot
+        // is in), independent of handleMessage's command handling, which
+        // only ever acts on your own DM with the bot.
+        await checkJobKeywords(update.message);
+        await handleMessage(update.message);
+      } else if (update.channel_post) {
+        await checkJobKeywords(update.channel_post);
+      }
+    }
+
+    if (updates.length > 0) {
+      const maxId = Math.max(...updates.map((u: any) => u.update_id));
+      await setOffset(maxId);
+    }
+    return updates.length;
+  } finally {
+    await releasePollLock();
   }
-  return updates.length;
 }
 
 Deno.serve(async (req) => {
