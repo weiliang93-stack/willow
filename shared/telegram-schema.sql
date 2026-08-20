@@ -30,11 +30,23 @@ alter table public.budget_alert_state
 -- Tracks the last Telegram update id the telegram-poll function has
 -- already processed, so a message doesn't get logged twice across
 -- separate cron-triggered invocations. Single row (id is always 1).
+--
+-- `locked_at` is a short-lived mutex: the cron interval is a few seconds,
+-- short enough that a slow invocation (Telegram/Supabase network calls)
+-- can still be running when the next one fires. Without a lock, both
+-- invocations read the same last_update_id before either writes it back
+-- and both process (and act on) the same update — e.g. double-logging an
+-- expense. The claim is a single conditional UPDATE (atomic at the row
+-- level), and the lock self-clears after POLL_LOCK_STALE_MS so a crashed
+-- invocation can't wedge future polls forever.
 create table if not exists public.telegram_poll_state (
   id smallint primary key,
   last_update_id bigint not null default 0,
+  locked_at timestamptz,
   updated_at timestamptz not null default now()
 );
+
+alter table public.telegram_poll_state add column if not exists locked_at timestamptz;
 
 insert into public.telegram_poll_state (id, last_update_id)
 values (1, 0)
@@ -44,17 +56,6 @@ alter table public.telegram_poll_state enable row level security;
 
 -- Same reasoning as budget_alert_state above: no policies, only the
 -- service-role-authenticated Edge Function ever touches this table.
-
--- Guards against overlapping cron-triggered invocations (which become
--- likely once the poll interval gets down to a few seconds): an
--- invocation atomically claims this before calling Telegram's getUpdates
--- and releases it when done, so two invocations can never both read the
--- same not-yet-acknowledged offset and both process (and reply to) the
--- same update. A run that crashes without releasing self-heals once
--- locked_at goes stale — see claimPollLock in telegram-poll/index.ts.
--- Safe to re-run.
-alter table public.telegram_poll_state
-  add column if not exists locked_at timestamptz;
 
 -- Tracks the state of a multi-step Telegram conversation (e.g. /exp or
 -- /set walking through amount -> category -> payment -> note via button

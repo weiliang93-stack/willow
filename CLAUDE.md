@@ -26,8 +26,10 @@ without the user needing to re-explain anything — read this first.
   per-entry merge (`mergeEntries`, keyed by each entry's own
   `updatedAt`/`createdAt`) rather than the whole-state last-write-wins
   approach the other two apps use.
-- **investment-planner/** and **taxi-compare/** — standalone, not
-  connected to Supabase or the bot.
+- **investment-planner/** — synced to Supabase; not connected to the
+  Telegram bot, but `sheet-investment-sync` (see below) writes account
+  balances into it from a household net-worth Google Sheet.
+- **taxi-compare/** — standalone, not connected to Supabase or the bot.
 
 ## Sync architecture (shared/)
 
@@ -99,15 +101,22 @@ day. Same fix was applied client-side in expense-tracker's `todayStr()`.
 ### Commands
 
 Power-user (single message, logs instantly):
-- `/exp <amount> <category> [note]`
+- `/exp <amount> [category] [payment] [note]` — `$` prefix on the amount
+  is accepted. Everything after the amount is greedily matched against
+  actual category and payment-method names (longest-prefix match, so
+  multi-word names like "Chase Sapphire" work as one unit); leftover
+  words become the note. Category defaults to the last one in the list,
+  payment defaults to cash, if not recognized — see `matchLongestPrefix`.
 - `/set <exercise> <weight> <reps>`
 - `/diary <text>`
 
 Guided (button-driven, multi-step, state kept in
 `telegram_session_state` with a 15-minute staleness timeout):
-- `/exp` — amount → category buttons (pulled live from actual
-  expense-tracker categories) → payment method buttons (cards + Cash) →
-  optional note
+- `/exp` — asks for amount (optionally with a note after it, e.g.
+  "12.50 lunch with team") → category buttons (pulled live from actual
+  expense-tracker categories) → payment method buttons (cards + Cash),
+  then logs immediately — no separate note-prompt step (that was tried
+  and reverted; the note is captured with the amount instead)
 - `/set` — resolves *today's actual planned workout* from
   training-app's own schedule/override/deletion logic (mirrored
   server-side in `resolveTodayExercises`, matching
@@ -152,6 +161,50 @@ crossing, not every run:
   exactly, just with UTC arithmetic since Edge Functions run in UTC).
   Tiers tracked per-card in `budget_alert_state.card_tiers` (jsonb map).
 
+## Google Sheets sync (sheet-budget-sync, sheet-training-sync, sheet-investment-sync)
+
+Three more self-querying, cron-triggered Edge Functions (same pattern as
+`budget-alert` — no Database Webhooks on this project) that sync
+`app_state` against separate personal Google Sheets, each authenticated
+via one shared Google service account (JWT, not the owner's own Google
+login) so they run unattended on a schedule.
+
+- **sheet-budget-sync** — two-way with the expenses budget sheet: pulls
+  `monthlyBudget` from cell R15 of the sheet's leftmost tab (a new tab is
+  added each month with no fixed name, so "leftmost" is always used
+  instead of guessing a tab name from the date), pushes the computed
+  current-month spend back into R16.
+- **sheet-training-sync** — two-way with a separate training sheet: pulls
+  exercise plan edits from a "Plan" tab (Focus/Exercise/Sets/Reps/Weight/
+  Equipment columns), matched against `state.templates` by exact focus
+  text then by effective exercise name (checking deleted exercises too,
+  so a sheet row can't resurrect something soft-deleted in the app) —
+  add-or-update only, sheet edits never delete anything app-side. Also
+  pushes newly logged sets to the leftmost tab, append-only, tracked by
+  log-entry `id` in `training_sheet_sync_state` (idempotent re-runs).
+- **sheet-investment-sync** — one-way, sheet → app: pulls Wei Liang's and
+  Zhen Ling's latest investment balances out of a wide "Balances" tab
+  (one column per month, always reads whichever column in the date row
+  is the last non-empty one) into investment-planner's matching accounts
+  by exact name match; creates the account if missing, never touches
+  `monthlyContribution`/`annualReturnPct`.
+
+**Known caveat shared by all three** (and by `budget-alert`): `app_state`
+is a single JSON blob synced whole-state last-write-wins. If the app is
+open in a browser tab when one of these runs, its write can be silently
+overwritten the next time that tab's own `save()` fires. Not fixed —
+just something to know if a sheet-driven change seems to "disappear."
+
+Extra required secrets beyond the Telegram bot's:
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` —
+  from the service account's downloaded JSON key, shared across all
+  three functions
+- `GOOGLE_SHEET_ID` (budget), `GOOGLE_TRAINING_SHEET_ID` (training),
+  `GOOGLE_BALANCES_SHEET_ID` (investment) — three separate sheets, each
+  shared with the service account's email (Editor for budget/training
+  since they write back, Viewer is enough for the balances sheet since
+  it's read-only)
+
 ## Required secrets (Edge Functions)
 
 - `TELEGRAM_BOT_TOKEN` — from @BotFather
@@ -179,6 +232,10 @@ Run once each, in order, via the SQL Editor:
    `telegram_session_state`, `telegram_job_watch`. All idempotent
    (`create table if not exists`, `add column if not exists`), safe to
    re-run.
+3. `shared/training-sheet-sync-schema.sql` — `training_sheet_sync_state`
+   (tracks which logged-set ids have already been pushed to the training
+   sheet, for `sheet-training-sync`'s append-only idempotency). Also
+   idempotent, safe to re-run.
 
 ## Working conventions established in this repo
 

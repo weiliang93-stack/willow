@@ -38,14 +38,17 @@
 // webhook is registered — call deleteWebhook once before using this.
 //
 // Commands (power-user, single message, logs immediately):
-//   /exp <amount> <category> [note]   e.g. /exp 12.50 Food lunch with team
-//   /set <exercise> <weight> <reps>   e.g. /set squat 60 5
-//   /diary <text>                     e.g. /diary Had a great day at the gym
+//   /exp <amount> [category] [payment] [note]   e.g. /exp 12.50 Food Amex lunch with team
+//   /set <exercise> <weight> <reps>             e.g. /set squat 60 5
+//   /diary <text>                               e.g. /diary Had a great day at the gym
 //
 // Guided flows (button taps, walks you through it):
-//   /exp    - asks amount, then category/payment method as tappable
-//             buttons pulled live from your actual expense-tracker
-//             categories and cards, then an optional note
+//   /exp    - asks amount (add a note after it in the same reply if you
+//             want one, e.g. "12.50 lunch with team"), then category as
+//             tappable buttons, then payment method as tappable buttons
+//             (pulled live from your actual expense-tracker categories
+//             and cards) — logs immediately once payment is picked, no
+//             separate note step
 //   /set    - shows today's planned exercises (from training-app's
 //             schedule, respecting day-swaps) as buttons, then which
 //             set, offering "same as planned" / "same as last time"
@@ -159,8 +162,11 @@ const DEFAULT_EXPENSE_STATE = {
   monthlyBudget: null,
 };
 
-async function finishExpense(amount: number, category: string, cardId: string, cardLabel: string, note: string) {
-  const state = (await getAppState("expenses")) ?? { ...DEFAULT_EXPENSE_STATE };
+// Pushes the expense into state, saves it, and returns the "$spent /
+// $budget this month" suffix (or "" if no budget is set) — shared by
+// every logging path below so the push/save/budget-line logic lives
+// in one place.
+async function recordExpense(state: any, amount: number, category: string, cardId: string, note: string): Promise<string> {
   state.expenses = state.expenses || [];
   state.expenses.push({ id: uid(), amount, category, cardId, date: todayStr(), note });
   await setAppState("expenses", state);
@@ -169,38 +175,50 @@ async function finishExpense(amount: number, category: string, cardId: string, c
   const spent = state.expenses
     .filter((e: any) => e.date.slice(0, 7) === thisMonth)
     .reduce((s: number, e: any) => s + e.amount, 0);
-  const budgetLine =
-    typeof state.monthlyBudget === "number" ? ` — $${spent.toFixed(2)} / $${state.monthlyBudget.toFixed(2)} this month` : "";
-
-  await sendMessage(
-    `Logged $${amount.toFixed(2)} · ${category} · ${cardLabel}${note ? ` · ${note}` : ""}${budgetLine}`,
-    [[{ text: "Log another expense", data: "exp:restart" }]]
-  );
-  await clearSession();
+  return typeof state.monthlyBudget === "number" ? ` — $${spent.toFixed(2)} / $${state.monthlyBudget.toFixed(2)} this month` : "";
 }
 
-// Immediate single-message logging: /exp <amount> <category> [note]
-async function logExpenseOneShot(amount: number, category: string, note: string) {
+// Matches the longest possible word-prefix of `words` against
+// `candidates` (case-insensitive, so multi-word names like "Chase
+// Sapphire" or a two-word category still match as one unit). Returns
+// the canonical candidate string and the remaining words, or null.
+function matchLongestPrefix(words: string[], candidates: string[]): { matched: string; rest: string[] } | null {
+  for (let len = Math.min(words.length, 4); len >= 1; len--) {
+    const candidate = words.slice(0, len).join(" ");
+    const found = candidates.find((c) => c.toLowerCase() === candidate.toLowerCase());
+    if (found) return { matched: found, rest: words.slice(len) };
+  }
+  return null;
+}
+
+// Immediate single-message logging: /exp <amount> [category] [payment] [note]
+// `rest` is everything after the amount — greedily matched against known
+// category and payment-method names (in that order) so e.g.
+// "/exp 12.50 Food Amex lunch with team" resolves category=Food,
+// payment=Amex, note="lunch with team". Unmatched leading words are left
+// in the note rather than guessed at.
+async function logExpenseOneShot(amount: number, rest: string) {
   const state = (await getAppState("expenses")) ?? { ...DEFAULT_EXPENSE_STATE };
-  const categories: string[] = state.categories || DEFAULT_EXPENSE_STATE.categories;
-  const matched = categories.find((c) => c.toLowerCase() === category.toLowerCase());
-  const resolvedCategory = matched || categories[categories.length - 1] || "Other";
-  await finishExpenseSilent(state, amount, resolvedCategory, "cash", note);
-}
+  const categories: string[] = state.categories?.length ? state.categories : DEFAULT_EXPENSE_STATE.categories;
+  const payments = paymentOptions(state);
 
-// Shared by the one-shot path (which already has `state` loaded) — same
-// as finishExpense but avoids a redundant getAppState call.
-async function finishExpenseSilent(state: any, amount: number, category: string, cardId: string, note: string) {
-  state.expenses = state.expenses || [];
-  state.expenses.push({ id: uid(), amount, category, cardId, date: todayStr(), note });
-  await setAppState("expenses", state);
+  let words = rest.split(/\s+/).filter(Boolean);
 
-  const thisMonth = todayStr().slice(0, 7);
-  const spent = state.expenses
-    .filter((e: any) => e.date.slice(0, 7) === thisMonth)
-    .reduce((s: number, e: any) => s + e.amount, 0);
-  const budgetLine =
-    typeof state.monthlyBudget === "number" ? ` — $${spent.toFixed(2)} / $${state.monthlyBudget.toFixed(2)} this month` : "";
+  const catMatch = matchLongestPrefix(words, categories);
+  const category = catMatch?.matched ?? categories[categories.length - 1] ?? "Other";
+  if (catMatch) words = catMatch.rest;
+
+  let cardId = "cash";
+  const payMatch = matchLongestPrefix(words, payments.map((p) => p.label));
+  if (payMatch) {
+    words = payMatch.rest;
+    cardId = payments.find((p) => p.label.toLowerCase() === payMatch.matched.toLowerCase())?.id ?? "cash";
+  } else if (words[0]?.toLowerCase() === "cash") {
+    words = words.slice(1);
+  }
+
+  const note = words.join(" ");
+  const budgetLine = await recordExpense(state, amount, category, cardId, note);
   await sendMessage(`Logged $${amount.toFixed(2)} · ${category}${note ? ` · ${note}` : ""}${budgetLine}`);
 }
 
@@ -211,37 +229,40 @@ function paymentOptions(state: any): { label: string; id: string }[] {
 
 async function startExpenseFlow(amount?: number) {
   if (amount != null) {
-    await promptExpenseCategory(amount);
+    await promptExpenseCategory(amount, "");
   } else {
     await setSession("exp", "awaiting_amount", {});
-    await sendMessage("How much did you spend?");
+    await sendMessage('How much did you spend? (add a note after the amount if you like, e.g. "12.50 lunch with team")');
   }
 }
 
-async function promptExpenseCategory(amount: number) {
+async function promptExpenseCategory(amount: number, note: string) {
   const state = (await getAppState("expenses")) ?? { ...DEFAULT_EXPENSE_STATE };
   const categories: string[] = state.categories?.length ? state.categories : DEFAULT_EXPENSE_STATE.categories;
-  await setSession("exp", "awaiting_category", { amount, categories });
+  await setSession("exp", "awaiting_category", { amount, note, categories });
   const keyboard: Keyboard = [];
   for (let i = 0; i < categories.length; i += 2) {
-    keyboard.push(
-      categories.slice(i, i + 2).map((c, j) => ({ text: c, data: `exp:cat:${i + j}` }))
-    );
+    keyboard.push(categories.slice(i, i + 2).map((c, j) => ({ text: c, data: `exp:cat:${i + j}` })));
   }
   await sendMessage("Category?", keyboard);
 }
 
-async function promptExpensePayment(amount: number, category: string) {
+async function promptExpensePayment(amount: number, category: string, note: string) {
   const state = (await getAppState("expenses")) ?? { ...DEFAULT_EXPENSE_STATE };
   const payments = paymentOptions(state);
-  await setSession("exp", "awaiting_payment", { amount, category, payments });
+  await setSession("exp", "awaiting_payment", { amount, category, note, payments });
   const keyboard: Keyboard = payments.map((p, i) => [{ text: p.label, data: `exp:pay:${i}` }]);
   await sendMessage("Payment method?", keyboard);
 }
 
-async function promptExpenseNote(amount: number, category: string, cardId: string, cardLabel: string) {
-  await setSession("exp", "awaiting_note", { amount, category, cardId, cardLabel });
-  await sendMessage("Add a note? (or tap Skip)", [[{ text: "Skip", data: "exp:note_skip" }]]);
+async function finishExpense(amount: number, category: string, cardId: string, cardLabel: string, note: string) {
+  const state = (await getAppState("expenses")) ?? { ...DEFAULT_EXPENSE_STATE };
+  const budgetLine = await recordExpense(state, amount, category, cardId, note);
+  await sendMessage(
+    `Logged $${amount.toFixed(2)} · ${category} · ${cardLabel}${note ? ` · ${note}` : ""}${budgetLine}`,
+    [[{ text: "Log another expense", data: "exp:restart" }]]
+  );
+  await clearSession();
 }
 
 // ---------------------------------------------------------------------
@@ -573,7 +594,7 @@ async function checkJobKeywords(message: any) {
 // ---------------------------------------------------------------------
 
 type ParsedCommand =
-  | { kind: "expense"; amount: number; category: string; note: string }
+  | { kind: "expense"; amount: number; rest: string }
   | { kind: "expense_flow"; amount?: number }
   | { kind: "set"; exercise: string; weight: string; reps: string }
   | { kind: "set_flow" }
@@ -587,11 +608,11 @@ type ParsedCommand =
 function parseCommand(text: string): ParsedCommand {
   const trimmed = text.trim();
 
-  const expFullMatch = trimmed.match(/^\/exp(?:ense)?\s+([\d.]+)\s+(\S+)\s*(.*)$/is);
+  const expFullMatch = trimmed.match(/^\/exp(?:ense)?\s+\$?([\d.]+)\s+(.+)$/is);
   if (expFullMatch) {
-    return { kind: "expense", amount: parseFloat(expFullMatch[1]), category: expFullMatch[2], note: expFullMatch[3].trim() };
+    return { kind: "expense", amount: parseFloat(expFullMatch[1]), rest: expFullMatch[2].trim() };
   }
-  const expAmountOnlyMatch = trimmed.match(/^\/exp(?:ense)?\s+([\d.]+)\s*$/i);
+  const expAmountOnlyMatch = trimmed.match(/^\/exp(?:ense)?\s+\$?([\d.]+)\s*$/i);
   if (expAmountOnlyMatch) return { kind: "expense_flow", amount: parseFloat(expAmountOnlyMatch[1]) };
   if (/^\/exp(?:ense)?\s*$/i.test(trimmed)) return { kind: "expense_flow" };
 
@@ -617,8 +638,8 @@ function parseCommand(text: string): ParsedCommand {
 
 const HELP_TEXT = [
   "Commands:",
-  "/exp <amount> <category> [note] — log instantly, e.g. /exp 12.50 Food lunch",
-  "/exp — guided: amount, then tap category/payment method, then a note",
+  "/exp <amount> [category] [payment] [note] — log instantly, e.g. /exp 12.50 Food Amex lunch",
+  '/exp — guided: amount (add a note after it, e.g. "12.50 lunch"), then tap category, then tap payment method',
   "/set <exercise> <weight> <reps> — log instantly, e.g. /set squat 60 5",
   "/set — guided: today's planned exercises as buttons, then which set, then weight/reps/RPE",
   "/diary <text> — e.g. /diary Had a great day at the gym",
@@ -635,7 +656,7 @@ async function handleCommand(parsed: ParsedCommand) {
   switch (parsed.kind) {
     case "expense":
       await clearSession();
-      await logExpenseOneShot(parsed.amount, parsed.category, parsed.note);
+      await logExpenseOneShot(parsed.amount, parsed.rest);
       break;
     case "expense_flow":
       await startExpenseFlow(parsed.amount);
@@ -673,17 +694,13 @@ async function handleFlowMessage(session: Session, text: string) {
 
   if (session.flow === "exp") {
     if (session.step === "awaiting_amount") {
-      const amount = parseFloat(trimmed);
+      const match = trimmed.match(/^\$?([\d.]+)\s*(.*)$/s);
+      const amount = match ? parseFloat(match[1]) : NaN;
       if (!Number.isFinite(amount) || amount <= 0) {
-        await sendMessage("That doesn't look like an amount — try again, e.g. 12.50");
+        await sendMessage('That doesn\'t look like an amount — try again, e.g. "12.50" or "$12.50 lunch with team"');
         return;
       }
-      await promptExpenseCategory(amount);
-      return;
-    }
-    if (session.step === "awaiting_note") {
-      const { amount, category, cardId, cardLabel } = session.data;
-      await finishExpense(amount, category, cardId, cardLabel, trimmed);
+      await promptExpenseCategory(amount, match![2].trim());
       return;
     }
   }
@@ -769,14 +786,11 @@ async function handleCallback(cq: any) {
     } else if (data.startsWith("exp:cat:")) {
       const idx = parseInt(data.slice("exp:cat:".length), 10);
       const category = session.data.categories?.[idx];
-      if (category != null) await promptExpensePayment(session.data.amount, category);
+      if (category != null) await promptExpensePayment(session.data.amount, category, session.data.note ?? "");
     } else if (data.startsWith("exp:pay:")) {
       const idx = parseInt(data.slice("exp:pay:".length), 10);
       const payment = session.data.payments?.[idx];
-      if (payment) await promptExpenseNote(session.data.amount, session.data.category, payment.id, payment.label);
-    } else if (data === "exp:note_skip") {
-      const { amount, category, cardId, cardLabel } = session.data;
-      await finishExpense(amount, category, cardId, cardLabel, "");
+      if (payment) await finishExpense(session.data.amount, session.data.category, payment.id, payment.label, session.data.note ?? "");
     } else if (data === "set:adhoc_start") {
       await setSession("set", "awaiting_adhoc_name", {});
       await sendMessage("What exercise?");
