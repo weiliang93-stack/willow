@@ -135,10 +135,14 @@ const categoryNameInput = document.getElementById("category-name");
 
 const expenseForm = document.getElementById("add-expense-form");
 const expenseAmountInput = document.getElementById("expense-amount");
-const expenseCategoryInput = document.getElementById("expense-category");
-const expenseCardSelect = document.getElementById("expense-card");
+const expenseCategoryPickerEl = document.getElementById("expense-category-picker");
+const expenseCardPickerEl = document.getElementById("expense-card-picker");
 const expenseDateInput = document.getElementById("expense-date");
 const expenseNoteInput = document.getElementById("expense-note");
+const expenseFormHintEl = document.getElementById("expense-form-hint");
+
+let selectedExpenseCategory = null;
+let selectedExpensePaymentMethod = null;
 
 const expenseListEl = document.getElementById("expense-list");
 const monthTotalEl = document.getElementById("month-total");
@@ -175,9 +179,9 @@ expenseDateInput.value = todayStr();
 function render() {
   renderBudget();
   renderCards();
-  renderCardSelect();
+  renderExpenseCardPicker();
   renderCategories();
-  renderCategorySelect();
+  renderExpenseCategoryPicker();
   renderCategoryChart();
   renderExpenses();
   renderSearchCategorySelect();
@@ -379,18 +383,20 @@ function buildCardEditForm(card) {
   return item;
 }
 
-function renderCardSelect() {
-  const currentValue = expenseCardSelect.value;
-  expenseCardSelect.innerHTML =
-    '<option value="" disabled selected>Payment method</option><option value="cash">Cash / Other</option>';
-  for (const card of cards) {
-    const opt = document.createElement("option");
-    opt.value = card.id;
-    opt.textContent = card.name;
-    expenseCardSelect.appendChild(opt);
+function renderExpenseCardPicker() {
+  if (selectedExpensePaymentMethod !== "cash" && !cards.some((c) => c.id === selectedExpensePaymentMethod)) {
+    selectedExpensePaymentMethod = null;
   }
-  if (currentValue === "cash" || cards.some((c) => c.id === currentValue)) {
-    expenseCardSelect.value = currentValue;
+
+  expenseCardPickerEl.innerHTML = "";
+  const options = [{ id: "cash", name: "Cash / Other" }, ...cards];
+  for (const option of options) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "chip-option" + (selectedExpensePaymentMethod === option.id ? " selected" : "");
+    btn.textContent = option.name;
+    btn.dataset.id = option.id;
+    expenseCardPickerEl.appendChild(btn);
   }
 }
 
@@ -413,17 +419,19 @@ function renderCategories() {
   });
 }
 
-function renderCategorySelect() {
-  const currentValue = expenseCategoryInput.value;
-  expenseCategoryInput.innerHTML = '<option value="" disabled selected>Category</option>';
-  for (const category of categories) {
-    const opt = document.createElement("option");
-    opt.value = category;
-    opt.textContent = category;
-    expenseCategoryInput.appendChild(opt);
+function renderExpenseCategoryPicker() {
+  if (!categories.includes(selectedExpenseCategory)) {
+    selectedExpenseCategory = null;
   }
-  if (categories.includes(currentValue)) {
-    expenseCategoryInput.value = currentValue;
+
+  expenseCategoryPickerEl.innerHTML = "";
+  for (const category of categories) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "chip-option" + (selectedExpenseCategory === category ? " selected" : "");
+    btn.textContent = category;
+    btn.dataset.category = category;
+    expenseCategoryPickerEl.appendChild(btn);
   }
 }
 
@@ -778,19 +786,41 @@ categoriesListEl.addEventListener("click", (event) => {
   }
 });
 
+expenseCategoryPickerEl.addEventListener("click", (event) => {
+  const btn = event.target.closest(".chip-option");
+  if (!btn) return;
+  selectedExpenseCategory = btn.dataset.category;
+  renderExpenseCategoryPicker();
+});
+
+expenseCardPickerEl.addEventListener("click", (event) => {
+  const btn = event.target.closest(".chip-option");
+  if (!btn) return;
+  selectedExpensePaymentMethod = btn.dataset.id;
+  renderExpenseCardPicker();
+});
+
 expenseForm.addEventListener("submit", (event) => {
   event.preventDefault();
+  if (!selectedExpenseCategory || !selectedExpensePaymentMethod) {
+    expenseFormHintEl.classList.remove("hidden");
+    return;
+  }
+  expenseFormHintEl.classList.add("hidden");
+
   expenses.push({
     id: uid(),
     amount: parseFloat(expenseAmountInput.value),
-    category: expenseCategoryInput.value,
-    cardId: expenseCardSelect.value,
+    category: selectedExpenseCategory,
+    cardId: selectedExpensePaymentMethod,
     date: expenseDateInput.value,
     note: expenseNoteInput.value.trim(),
   });
   save();
   expenseForm.reset();
   expenseDateInput.value = todayStr();
+  selectedExpenseCategory = null;
+  selectedExpensePaymentMethod = null;
   render();
 });
 
