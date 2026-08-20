@@ -382,6 +382,48 @@ button.secondary:hover {
   cursor: default;
 }
 
+.field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #556;
+  margin-top: 2px;
+}
+
+.chip-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip-option {
+  background: #eef1ef;
+  color: #33463b;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.chip-option:hover {
+  background: #e4e9e6;
+}
+
+.chip-option.selected {
+  background: #1e5f3a;
+  color: white;
+}
+
+.chip-option.selected:hover {
+  background: #1e5f3a;
+}
+
+.form-error {
+  color: #c0392b;
+  font-size: 13px;
+  margin: 0;
+}
+
 /* Cloud sync */
 .auth-gate {
   max-width: 480px;
