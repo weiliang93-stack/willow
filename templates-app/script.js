@@ -254,9 +254,19 @@ function bindEvents() {
   searchInput.addEventListener("input", () => {
     query = searchInput.value;
     activeCategory = null;
+    view = "list";
+    activeTemplate = null;
     clearSearchBtn.classList.toggle("hidden", !query);
     searchBox.classList.toggle("active", !!query);
     render();
+  });
+
+  searchInput.addEventListener("focus", () => {
+    if (view === "detail") {
+      view = "list";
+      activeTemplate = null;
+      render();
+    }
   });
 
   clearSearchBtn.addEventListener("click", () => {
