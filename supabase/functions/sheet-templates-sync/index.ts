@@ -4,10 +4,13 @@
 // parsed, structured copy into app_state under app "templates", for
 // templates-app to search and copy from.
 //
-// One-way, doc -> app, same as sheet-investment-sync: edits to the doc
-// show up here on the next sync; templates-app never writes back, so
-// there's no whole-state-clobber risk from this sync the way the other
-// sheet-sync functions have (nothing else ever writes to app "templates").
+// One-way for the templates themselves, doc -> app, same as
+// sheet-investment-sync: edits to the doc show up here on the next sync.
+// templates-app does write back one thing this function doesn't touch —
+// which templates are starred — so unlike the other sheet-sync
+// functions this can't just overwrite `state` wholesale; it preserves
+// the existing `starred` list (pruned to ids that still exist) across
+// each sync. See templates-app/script.js for the write side.
 //
 // Parsing relies on two things the doc already has:
 //   1. Every template is separated from the next by a paragraph that is
@@ -337,9 +340,26 @@ Deno.serve(async (req) => {
     return { id, category: t.category, title: t.title, body: t.body };
   });
 
+  // templates-app owns one piece of state this function doesn't touch:
+  // which templates are starred. Carry it forward across this overwrite
+  // of `templates` rather than clobbering it, dropping only ids for
+  // templates that no longer exist (a title/category changed enough to
+  // shift its slug, or the doc dropped it) so a star can't point at
+  // nothing.
+  const { data: existingRow } = await supabase
+    .from("app_state")
+    .select("state")
+    .eq("user_id", USER_ID)
+    .eq("app", "templates")
+    .maybeSingle();
+
+  const templateIds = new Set(templates.map((t) => t.id));
+  const existingStarred: unknown = existingRow?.state?.starred;
+  const starred = Array.isArray(existingStarred) ? existingStarred.filter((id) => templateIds.has(id)) : [];
+
   const { error } = await supabase
     .from("app_state")
-    .upsert({ user_id: USER_ID, app: "templates", state: { templates }, updated_at: new Date().toISOString() });
+    .upsert({ user_id: USER_ID, app: "templates", state: { templates, starred }, updated_at: new Date().toISOString() });
   if (error) {
     console.error(error);
     return new Response(`error writing app_state: ${error.message}`, { status: 500 });

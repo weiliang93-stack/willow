@@ -30,16 +30,22 @@ without the user needing to re-explain anything — read this first.
   Telegram bot, but `sheet-investment-sync` (see below) writes account
   balances into it from a household net-worth Google Sheet.
 - **taxi-compare/** — standalone, not connected to Supabase or the bot.
-- **templates-app/** — read-only search/browse/copy UI for clinical
-  consult-note templates (~180 of them across 12 categories), used at the
-  point of care to find and copy the right template into the owner's
-  clinic management system. Synced to Supabase, but one-way and read-only:
-  it only ever calls `SupaSync.pullState("templates")`, never pushes —
-  `sheet-templates-sync` (see below) is the only writer. Caches the last
-  pull in localStorage so it still works if opened offline in clinic. Not
-  connected to the Telegram bot. Light/dark follows the OS via
-  `prefers-color-scheme` rather than a fixed palette, unlike the other
-  apps — this one gets opened at all hours.
+- **templates-app/** — search/browse/copy UI for clinical consult-note
+  templates (~185 of them across 12 categories), used at the point of
+  care to find and copy the right template into the owner's clinic
+  management system. Templates themselves are one-way, doc → app —
+  `sheet-templates-sync` (see below) is their only writer, the app just
+  `pullState`s them. Starring a template is the one thing the app itself
+  owns: it `pushState`s `{templates, starred}` (an array of template
+  ids) so stars follow the account across devices, and
+  `sheet-templates-sync` is careful to preserve `starred` across its own
+  daily overwrite of `templates` rather than clobbering it. Starred
+  templates surface in their own section above the category list on the
+  home screen. Caches templates/starred/updatedAt in localStorage so it
+  still works if opened offline in clinic. Not connected to the Telegram
+  bot. Light/dark follows the OS via `prefers-color-scheme` rather than
+  a fixed palette, unlike the other apps — this one gets opened at all
+  hours.
 
 ## Sync architecture (shared/)
 
@@ -204,8 +210,11 @@ is a single JSON blob synced whole-state last-write-wins. If the app is
 open in a browser tab when one of these runs, its write can be silently
 overwritten the next time that tab's own `save()` fires. Not fixed —
 just something to know if a sheet-driven change seems to "disappear."
-`sheet-templates-sync` (below) doesn't have this problem, since nothing
-else ever writes to app "templates".
+`sheet-templates-sync` (below) mostly avoids this: templates-app only
+ever writes the `starred` field, and the sync function reads-then-merges
+that field back in rather than overwriting `state` wholesale — so a
+star set from the app can't be clobbered by the next sync (see
+templates-app's entry above for how `starred` itself is kept in sync).
 
 Extra required secrets beyond the Telegram bot's:
 - `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` —

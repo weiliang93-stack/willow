@@ -1,11 +1,16 @@
 // Search/browse/copy UI for the consult-note templates synced from the
-// WILLOW Google Doc by the sheet-templates-sync Edge Function. Read-only —
-// this app never pushes state back to Supabase, it only pulls the latest
-// synced snapshot and caches it locally so the phone still has yesterday's
-// templates if opened offline in clinic.
+// WILLOW Google Doc by the sheet-templates-sync Edge Function. Mostly
+// read-only — the templates themselves only ever come from a pull, this
+// app never edits or reorders them — except for one thing it does own:
+// which templates are starred. Starring pushes {templates, starred} back
+// to Supabase so starred templates follow the account across devices;
+// sheet-templates-sync preserves that starred list (matched by template
+// id) across its own daily overwrite of `templates`, so a re-sync never
+// wipes it. Caches both locally so it still works offline in clinic.
 
 const DATA_KEY = "willow_templates_data";
 const UPDATED_AT_KEY = "willow_templates_updated_at";
+const STARRED_KEY = "willow_templates_starred";
 
 const CATEGORY_ORDER = [
   "General", "Neuro", "PSY", "Eye", "ENT", "Chest", "Abdomen",
@@ -29,11 +34,14 @@ const CATEGORY_ICONS = {
 
 const CHEVRON_SVG = `<svg class="row-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
+const STAR_ICON_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 3.5l2.55 5.6 6.15.65-4.6 4.2 1.25 6.05L12 16.9l-5.35 3.1 1.25-6.05-4.6-4.2 6.15-.65z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+
 const COPY_ICON = `<rect x="8" y="8" width="11" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M15 8V6.5A1.5 1.5 0 0013.5 5h-8A1.5 1.5 0 004 6.5v9A1.5 1.5 0 005.5 17H8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`;
 const COPIED_ICON = `<path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`;
 
 let templates = [];
 let updatedAt = null;
+let starredIds = new Set();
 
 let query = "";
 let activeCategory = null;
@@ -55,6 +63,7 @@ const detailBody = document.getElementById("detailBody");
 const copyBtn = document.getElementById("copyBtn");
 const copyIcon = document.getElementById("copyIcon");
 const copyLabel = document.getElementById("copyLabel");
+const starBtn = document.getElementById("starBtn");
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -165,6 +174,37 @@ function renderCategories() {
     return;
   }
 
+  const starred = templates.filter((t) => starredIds.has(t.id));
+  if (starred.length > 0) {
+    const section = document.createElement("div");
+    section.className = "starred-section";
+
+    const label = document.createElement("div");
+    label.className = "list-meta";
+    label.textContent = "Starred";
+    section.appendChild(label);
+
+    const rows = document.createElement("div");
+    rows.className = "list-rows";
+    starred.forEach((t) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "row";
+      row.innerHTML = `
+        <div class="row-icon star">${STAR_ICON_SVG}</div>
+        <div class="row-body">
+          <div class="row-title">${escapeHtml(t.title)}</div>
+          <div class="row-sub">${escapeHtml(t.category)}</div>
+        </div>
+        ${CHEVRON_SVG}
+      `;
+      row.addEventListener("click", () => openTemplate(t));
+      rows.appendChild(row);
+    });
+    section.appendChild(rows);
+    listRows.appendChild(section);
+  }
+
   cats.forEach((cat) => {
     const row = document.createElement("button");
     row.type = "button";
@@ -197,7 +237,19 @@ function renderDetail() {
   detailCategory.textContent = activeTemplate.category;
   detailTitle.textContent = activeTemplate.title;
   detailBody.textContent = activeTemplate.body;
+  starBtn.classList.toggle("starred", starredIds.has(activeTemplate.id));
   setCopied(false);
+}
+
+function toggleStar(t) {
+  if (starredIds.has(t.id)) {
+    starredIds.delete(t.id);
+  } else {
+    starredIds.add(t.id);
+  }
+  localStorage.setItem(STARRED_KEY, JSON.stringify(Array.from(starredIds)));
+  SupaSync.pushState("templates", { templates, starred: Array.from(starredIds) });
+  render();
 }
 
 function openTemplate(t) {
@@ -280,6 +332,9 @@ function bindEvents() {
 
   backBtn.addEventListener("click", closeDetail);
   copyBtn.addEventListener("click", handleCopy);
+  starBtn.addEventListener("click", () => {
+    if (activeTemplate) toggleStar(activeTemplate);
+  });
 }
 
 async function bootTemplatesApp() {
@@ -287,8 +342,10 @@ async function bootTemplatesApp() {
   if (remote && Array.isArray(remote.state && remote.state.templates)) {
     templates = remote.state.templates;
     updatedAt = remote.updatedAt;
+    starredIds = new Set(Array.isArray(remote.state.starred) ? remote.state.starred : []);
     localStorage.setItem(DATA_KEY, JSON.stringify(templates));
     localStorage.setItem(UPDATED_AT_KEY, updatedAt || "");
+    localStorage.setItem(STARRED_KEY, JSON.stringify(Array.from(starredIds)));
   } else {
     try {
       templates = JSON.parse(localStorage.getItem(DATA_KEY) || "[]");
@@ -296,6 +353,11 @@ async function bootTemplatesApp() {
       templates = [];
     }
     updatedAt = localStorage.getItem(UPDATED_AT_KEY) || null;
+    try {
+      starredIds = new Set(JSON.parse(localStorage.getItem(STARRED_KEY) || "[]"));
+    } catch (err) {
+      starredIds = new Set();
+    }
   }
 
   bindEvents();
