@@ -30,6 +30,16 @@ without the user needing to re-explain anything — read this first.
   Telegram bot, but `sheet-investment-sync` (see below) writes account
   balances into it from a household net-worth Google Sheet.
 - **taxi-compare/** — standalone, not connected to Supabase or the bot.
+- **templates-app/** — read-only search/browse/copy UI for clinical
+  consult-note templates (~180 of them across 12 categories), used at the
+  point of care to find and copy the right template into the owner's
+  clinic management system. Synced to Supabase, but one-way and read-only:
+  it only ever calls `SupaSync.pullState("templates")`, never pushes —
+  `sheet-templates-sync` (see below) is the only writer. Caches the last
+  pull in localStorage so it still works if opened offline in clinic. Not
+  connected to the Telegram bot. Light/dark follows the OS via
+  `prefers-color-scheme` rather than a fixed palette, unlike the other
+  apps — this one gets opened at all hours.
 
 ## Sync architecture (shared/)
 
@@ -194,6 +204,8 @@ is a single JSON blob synced whole-state last-write-wins. If the app is
 open in a browser tab when one of these runs, its write can be silently
 overwritten the next time that tab's own `save()` fires. Not fixed —
 just something to know if a sheet-driven change seems to "disappear."
+`sheet-templates-sync` (below) doesn't have this problem, since nothing
+else ever writes to app "templates".
 
 Extra required secrets beyond the Telegram bot's:
 - `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` —
@@ -204,6 +216,54 @@ Extra required secrets beyond the Telegram bot's:
   shared with the service account's email (Editor for budget/training
   since they write back, Viewer is enough for the balances sheet since
   it's read-only)
+
+## Google Doc sync (sheet-templates-sync)
+
+Same self-querying, cron-triggered pattern as the sheet syncs above (and
+the same shared Google service account), but the source is a Google
+*Doc*, not a Sheet — the WILLOW consult-templates doc — and it's fetched
+via Drive's plain-text export (`files/{id}/export?mimeType=text/plain`)
+rather than the Sheets API, since that already gives clean
+paragraph-per-line text without walking Docs API structuralElements.
+
+One-way, doc → app, daily cadence (a little latency is fine — the doc
+doesn't change during a clinic day). Parsing relies on two things the doc
+already has: each template is separated from the next by a paragraph
+that's just a long run of `=` characters (title = the first non-blank
+line after it), and the doc's own table of contents lists every
+condition under a category heading in the same top-to-bottom order the
+body follows. Category is assigned by walking the TOC in step with the
+body — each block's title is loosely matched (case/punctuation-
+insensitive containment) against the next few not-yet-consumed TOC
+entries; a hit advances to that entry's category, a miss means the block
+is a variant of the current condition (e.g. "URTI (COVID)" / "URTI" /
+"Paeds URTI" all under one TOC entry) and inherits the category
+unchanged. This ordering approach replaced an earlier version that tried
+reading category off a restated header line at the top of each
+category's first body block — the doc only does that consistently for a
+handful of categories, so for the rest it silently dumped everything
+after the last correctly-detected category into that one category
+(caught by comparing parsed counts against the TOC's own per-category
+counts before shipping). Because it's order-based rather than a hard
+structural anchor, category is still best-effort — occasionally a block
+can land one category off — while titles and bodies, read directly off
+the block, are always exact. If fewer than 20 templates parse out, the
+function aborts without writing, on the theory that's a doc-structure
+change rather than a real 0-template day — better to leave yesterday's
+synced copy in place than silently overwrite it with garbage.
+
+If the doc's variant naming ever needs actual "one condition, several
+variants" grouping (e.g. "URTI (COVID)" / "URTI" / "Paeds URTI" shown as
+tabs under one shared condition rather than three separate list entries)
+— that grouping isn't attempted here, since there's no reliable shared
+key across blocks to cluster on beyond the doc's own free-text titles.
+Each block is a standalone, independently searchable template.
+
+Extra required secret beyond the sheet syncs' own:
+- `GOOGLE_WILLOW_DOC_ID` — the id from the doc's URL
+  (`docs.google.com/document/d/<id>/edit`); the doc must be shared with
+  the same service account email as the sheet syncs (Viewer is enough,
+  read-only).
 
 ## Required secrets (Edge Functions)
 
