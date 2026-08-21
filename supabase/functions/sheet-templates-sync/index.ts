@@ -11,27 +11,49 @@
 //
 // Parsing relies on two things the doc already has:
 //   1. Every template is separated from the next by a paragraph that is
-//      just a long run of "=" characters, and the first non-blank line
-//      after that separator is the template's title.
+//      just a long run of "=" characters.
 //   2. The doc's own table of contents (the first "block", before the
 //      first separator) lists every condition under a category heading,
 //      in the same top-to-bottom order the body itself follows.
 // Category is assigned by walking the TOC in step with the body: each
 // body block's title is checked against the next few not-yet-consumed
-// TOC entries (loose containment match, case/punctuation-insensitive) —
+// TOC entries (word-overlap match, case/punctuation-insensitive, tolerant
+// of a body title being a reworded or expanded form of its TOC entry) —
 // a hit advances to that TOC entry's category, a miss means this block is
 // a variant of the current condition (e.g. "URTI (COVID)" / "URTI" /
 // "Paeds URTI" all under one TOC entry) and inherits the current
-// category unchanged. This turned out to be necessary rather than a
-// nice-to-have: an earlier version tried reading the category off a
-// restated header line at the top of each category's first body block,
-// but the doc only does that consistently for a handful of categories —
-// for the rest, relying on it silently dumped everything after the last
-// correctly-detected category into that one category. Because this is
-// order-based rather than a hard structural anchor, treat category as
-// best-effort — occasionally a block may land one category off — while
-// template titles and bodies (read directly off the block itself) are
-// always exact.
+// category unchanged.
+//
+// A block's first line isn't always its title, though: the doc
+// inconsistently restates a section label above the real title — an
+// exact category name in some spot ("DERMATOLOGY" above "Urticaria"), an
+// ad hoc abbreviation in others ("GASTRO" above "Gastroenteritis"), never
+// in most. There's no fixed marker for these, so the rule is: if the
+// first line reads like a label (short, entirely uppercase) AND the line
+// right after it is the one that actually matches the TOC, use that
+// second line as the title instead. Checking the *second* line's match
+// rather than the first line's non-match is what makes this safe — a
+// short all-caps line that's a genuine title on its own (e.g. "RENAL
+// COLIC", matching the TOC directly) never even reaches the fallback,
+// and a label whose real title doesn't happen to match anything nearby
+// (e.g. plain "URTI" as a variant of the COVID one) just keeps the first
+// line rather than being swapped for unrelated body text.
+//
+// Some blocks also bundle two age-group variants under one heading
+// instead of using their own separator (e.g. one block's body running
+// "Balanitis (Adult)" ... full note ... "Balanitis (Paeds)" ... full
+// note, with no "====" between them) — inconsistent with the /many/
+// conditions that already get their own separated blocks per variant.
+// Those embedded sub-headings are detected within the body (short line,
+// no trailing colon, starting or parenthetically ending with an
+// adult/paeds/child-type word) and split out into their own separate
+// templates, sharing the parent block's category.
+//
+// Because all of this is pattern-matching against a doc that isn't
+// perfectly consistent, rather than a hard structural anchor, treat
+// category as best-effort — occasionally a block may land one category
+// off — while template titles and bodies (read directly off the block
+// itself) are always exact.
 //
 // Fetches the doc via Drive's plain-text export rather than the Docs API,
 // since that already gives clean paragraph-per-line text without having
@@ -140,10 +162,13 @@ function parseToc(raw: string): TocEntry[] {
   return entries;
 }
 
-// Loose, symmetric containment match: strips parenthetical asides and
-// punctuation, lowercases, and checks whether either normalized string
-// contains the other — tolerant of a body title being a shortened or
-// reworded form of its TOC entry (or vice versa).
+// Strips parenthetical asides and punctuation, lowercases, and splits
+// into words for comparison — tolerant of a body title being a reworded
+// or expanded form of its TOC entry ("Stye/Hordeolum/Chalazion" vs the
+// TOC's "Stye/Chalazion") without falling for an unrelated TOC entry
+// that merely shares one common word with a short candidate (plain
+// substring containment let "EYE" match the word "eye" inside "Red eye
+// - Conjunctivitis" several entries away — word-set overlap doesn't).
 function normalizeTitle(s: string): string {
   return s
     .toLowerCase()
@@ -152,41 +177,84 @@ function normalizeTitle(s: string): string {
     .trim();
 }
 
+function wordSet(s: string): Set<string> {
+  return new Set(s.split(" ").filter(Boolean));
+}
+
 function titlesMatch(bodyTitle: string, tocTitle: string): boolean {
   const a = normalizeTitle(bodyTitle);
   const b = normalizeTitle(tocTitle);
   if (a.length < 3 || b.length < 3) return false;
-  return a.includes(b) || b.includes(a);
+  const aw = wordSet(a);
+  const bw = wordSet(b);
+  const [shorter, longer] = aw.size <= bw.size ? [aw, bw] : [bw, aw];
+  if (shorter.size === 0) return false;
+  let overlap = 0;
+  for (const w of shorter) if (longer.has(w)) overlap++;
+  return overlap / shorter.size >= 0.8;
 }
 
 const TOC_LOOKAHEAD = 4;
 
-// Finds the block's title line and everything after it as the body.
-// Returns null for a block with no real content (stray blank block from
-// consecutive separators).
-function parseBlockContent(raw: string): { title: string; body: string } | null {
-  const lines = raw.split("\n").map((l) => l.trim());
-  let i = 0;
-  while (i < lines.length && lines[i] === "") i++;
-  if (i >= lines.length) return null;
-
-  let titleIdx = i;
-  // Skip a restated category-name line where the doc happens to include
-  // one — it isn't relied on for categorization, but shouldn't be
-  // mistaken for the title either.
-  if (CATEGORY_SET.has(lines[i])) {
-    let j = i + 1;
-    while (j < lines.length && lines[j] === "") j++;
-    titleIdx = j;
+function tocMatchIndex(candidate: string, tocEntries: TocEntry[], tocIdx: number): number {
+  for (let k = 0; k < TOC_LOOKAHEAD && tocIdx + k < tocEntries.length; k++) {
+    if (titlesMatch(candidate, tocEntries[tocIdx + k].title)) return k;
   }
-  if (titleIdx >= lines.length || !lines[titleIdx]) return null;
+  return -1;
+}
 
-  const title = lines[titleIdx];
-  const bodyLines = lines.slice(titleIdx + 1);
-  while (bodyLines.length && bodyLines[0] === "") bodyLines.shift();
-  while (bodyLines.length && bodyLines[bodyLines.length - 1] === "") bodyLines.pop();
+// A restated section label reads like "DERMATOLOGY" or "GASTRO": short
+// and entirely uppercase. A genuine all-caps condition title ("RENAL
+// COLIC") looks the same on its own — the caller only acts on this when
+// the *following* line is the one that resolves against the TOC.
+function looksLikeLabel(line: string): boolean {
+  if (!line || line.length > 40) return false;
+  return line === line.toUpperCase() && /[A-Z]/.test(line);
+}
 
-  return { title, body: bodyLines.join("\n") };
+function firstNonEmpty(lines: string[], from: number): number {
+  let i = from;
+  while (i < lines.length && lines[i] === "") i++;
+  return i;
+}
+
+const AGE_KEYWORDS = new Set(["paeds", "paed", "paediatric", "pediatric", "child", "children", "kids", "kid", "adults", "adult"]);
+
+// An embedded age-variant sub-heading: short, not a "Meds:"-style list
+// intro (those end in a colon and belong to the section above them, not
+// a new one), and either led by or parenthetically qualified with an
+// age-group word — "Balanitis (Paeds)", "PAEDS GE", but not a body line
+// that merely happens to end with "(Adult)" as part of a much longer
+// sentence (a real case found in the doc: a medication dosing line).
+function isAgeVariantMarker(line: string): boolean {
+  const s = line.trim();
+  if (!s || s.length > 30 || s.endsWith(":")) return false;
+  const firstWord = (s.split(/\s+/)[0] ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  if (AGE_KEYWORDS.has(firstWord)) return true;
+  const m = s.match(/\(([a-zA-Z]+)\)\s*$/);
+  return m !== null && AGE_KEYWORDS.has(m[1].toLowerCase());
+}
+
+// Splits a block's body on any embedded age-variant sub-headings, e.g.
+// "Balanitis (Adult)"'s body containing a later "Balanitis (Paeds)" line
+// that should become its own template rather than trailing content
+// glued onto the first. A block with no such marker returns its single
+// original title/body unchanged.
+function splitAgeVariants(title: string, bodyLines: string[]): { title: string; body: string }[] {
+  const segments: { title: string; body: string[] }[] = [{ title, body: [] }];
+  for (const line of bodyLines) {
+    if (line !== "" && isAgeVariantMarker(line)) {
+      segments.push({ title: line, body: [] });
+    } else {
+      segments[segments.length - 1].body.push(line);
+    }
+  }
+  return segments.map((seg) => {
+    const b = seg.body.slice();
+    while (b.length && b[0] === "") b.shift();
+    while (b.length && b[b.length - 1] === "") b.pop();
+    return { title: seg.title, body: b.join("\n") };
+  });
 }
 
 function slugify(s: string): string {
@@ -203,18 +271,33 @@ function parseDoc(text: string): ParsedTemplate[] {
   const templates: ParsedTemplate[] = [];
 
   for (const block of blocks.slice(1)) {
-    const content = parseBlockContent(block);
-    if (!content) continue;
+    const lines = block.split("\n").map((l) => l.trim());
+    const i = firstNonEmpty(lines, 0);
+    if (i >= lines.length) continue;
 
-    for (let k = 0; k < TOC_LOOKAHEAD && tocIdx + k < tocEntries.length; k++) {
-      if (titlesMatch(content.title, tocEntries[tocIdx + k].title)) {
-        currentCategory = tocEntries[tocIdx + k].category;
-        tocIdx = tocIdx + k + 1;
-        break;
+    let titleIdx = i;
+    if (looksLikeLabel(lines[i])) {
+      const j = firstNonEmpty(lines, i + 1);
+      if (j < lines.length && lines[j] && tocMatchIndex(lines[j], tocEntries, tocIdx) !== -1) {
+        titleIdx = j;
       }
     }
+    if (!lines[titleIdx]) continue;
 
-    templates.push({ category: currentCategory, title: content.title, body: content.body });
+    const title = lines[titleIdx];
+    const match = tocMatchIndex(title, tocEntries, tocIdx);
+    if (match !== -1) {
+      currentCategory = tocEntries[tocIdx + match].category;
+      tocIdx = tocIdx + match + 1;
+    }
+
+    const bodyLines = lines.slice(titleIdx + 1);
+    while (bodyLines.length && bodyLines[0] === "") bodyLines.shift();
+    while (bodyLines.length && bodyLines[bodyLines.length - 1] === "") bodyLines.pop();
+
+    for (const seg of splitAgeVariants(title, bodyLines)) {
+      templates.push({ category: currentCategory, title: seg.title, body: seg.body });
+    }
   }
   return templates;
 }
