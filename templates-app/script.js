@@ -1,35 +1,64 @@
-// Search/browse/copy UI for the consult-note templates synced from the
-// WILLOW Google Doc by the sheet-templates-sync Edge Function. Mostly
-// read-only — the templates themselves only ever come from a pull, this
-// app never edits or reorders them — except for one thing it does own:
-// which templates are starred. Starring pushes {templates, starred} back
-// to Supabase so starred templates follow the account across devices;
-// sheet-templates-sync preserves that starred list (matched by template
-// id) across its own daily overwrite of `templates`, so a re-sync never
-// wipes it. Caches both locally so it still works offline in clinic.
+// Search/browse/copy UI for consult-note templates, synced from two
+// separate Google Docs by two Edge Functions: WILLOW (in-clinic
+// templates, sheet-templates-sync -> app_state app "templates") and
+// WILLOW TM (teleconsult templates, sheet-teletemplates-sync ->
+// app_state app "teletemplates"). The mode toggle switches which of the
+// two data sets is active; each has its own templates, categories, and
+// starred list. Mostly read-only — the templates themselves only ever
+// come from a pull, this app never edits or reorders them — except for
+// one thing it does own per mode: which templates are starred. Starring
+// pushes {templates, starred} back to Supabase under that mode's app key
+// so starred templates follow the account across devices; each sync
+// function preserves its own starred list (matched by template id)
+// across its daily overwrite of `templates`, so a re-sync never wipes
+// it. Caches everything locally so it still works offline in clinic.
 
-const DATA_KEY = "willow_templates_data";
-const UPDATED_AT_KEY = "willow_templates_updated_at";
-const STARRED_KEY = "willow_templates_starred";
+const MODE_KEY = "willow_templates_mode";
 
-const CATEGORY_ORDER = [
-  "General", "Neuro", "PSY", "Eye", "ENT", "Chest", "Abdomen",
-  "Uro/Gynae", "Dermatology", "MSK/Ortho", "Procedures", "Chronic Conditions Follow-up",
-];
+const MODES = {
+  clinic: {
+    app: "templates",
+    label: "In-Clinic",
+    dataKey: "willow_templates_data",
+    updatedAtKey: "willow_templates_updated_at",
+    starredKey: "willow_templates_starred",
+    categoryOrder: [
+      "General", "Neuro", "PSY", "Eye", "ENT", "Chest", "Abdomen",
+      "Uro/Gynae", "Dermatology", "MSK/Ortho", "Procedures", "Chronic Conditions Follow-up",
+    ],
+  },
+  tele: {
+    app: "teletemplates",
+    label: "Teleconsult",
+    dataKey: "willow_teletemplates_data",
+    updatedAtKey: "willow_teletemplates_updated_at",
+    starredKey: "willow_teletemplates_starred",
+    categoryOrder: [
+      "Standard Blocks", "General / Systemic", "Musculoskeletal", "Neurology",
+      "Eye", "ENT / Oral", "Abdomen", "Urology / Gynaecology", "Dermatology",
+    ],
+  },
+};
 
 const CATEGORY_ICONS = {
   "General": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><line x1="5" y1="7" x2="19" y2="7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><line x1="5" y1="17" x2="14" y2="17" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>`,
+  "General / Systemic": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><line x1="5" y1="7" x2="19" y2="7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><line x1="5" y1="17" x2="14" y2="17" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>`,
   "Neuro": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 10a6 6 0 1112 0c0 3-1.4 4-1.4 6.2 0 1-.8 1.8-1.8 1.8h-5.6c-1 0-1.8-.8-1.8-1.8C7.4 14 6 13 6 10z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 20h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`,
+  "Neurology": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 10a6 6 0 1112 0c0 3-1.4 4-1.4 6.2 0 1-.8 1.8-1.8 1.8h-5.6c-1 0-1.8-.8-1.8-1.8C7.4 14 6 13 6 10z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 20h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`,
   "PSY": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 18l3-3h9a2 2 0 002-2V8a2 2 0 00-2-2H6a2 2 0 00-2 2v8a2 2 0 002 2z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`,
   "Eye": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.4" stroke="currentColor" stroke-width="1.6"/></svg>`,
   "ENT": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M8 5c-2.5 1-4 3.6-4 6.4C4 15.6 7 19 12 19c1.6 0 2.6-1 2.6-2.2 0-1-.7-1.4-.7-2.4 0-1.2 1.1-1.6 1.1-3 0-2.6-2.4-4-2.4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  "ENT / Oral": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M8 5c-2.5 1-4 3.6-4 6.4C4 15.6 7 19 12 19c1.6 0 2.6-1 2.6-2.2 0-1-.7-1.4-.7-2.4 0-1.2 1.1-1.6 1.1-3 0-2.6-2.4-4-2.4-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
   "Chest": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 13h3l2-5 3 9 2.5-6 1.5 2h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
   "Abdomen": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M7 5c-2 2-3 4.6-3 7.4C4 16.8 7.4 20 12 20s8-3.2 8-7.6c0-2.8-1-5.4-3-7.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="8.5" y1="12.5" x2="15.5" y2="12.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`,
   "Uro/Gynae": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 4c-2.6 0-4.6 2.4-4.6 5.4 0 2.4 1.2 3.4 1.2 5.4 0 2.4 1.5 4.2 3.4 4.2s3.4-1.8 3.4-4.2c0-2 1.2-3 1.2-5.4C16.6 6.4 14.6 4 12 4z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`,
+  "Urology / Gynaecology": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 4c-2.6 0-4.6 2.4-4.6 5.4 0 2.4 1.2 3.4 1.2 5.4 0 2.4 1.5 4.2 3.4 4.2s3.4-1.8 3.4-4.2c0-2 1.2-3 1.2-5.4C16.6 6.4 14.6 4 12 4z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>`,
   "Dermatology": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="5" y="6" width="14" height="12" rx="3" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></svg>`,
   "MSK/Ortho": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="4.4" height="4.4" rx="1.4" transform="rotate(-45 6.2 12.2)" stroke="currentColor" stroke-width="1.6"/><rect x="15.4" y="10" width="4.4" height="4.4" rx="1.4" transform="rotate(-45 17.6 12.2)" stroke="currentColor" stroke-width="1.6"/><line x1="9" y1="12.2" x2="15" y2="12.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`,
+  "Musculoskeletal": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="4" y="10" width="4.4" height="4.4" rx="1.4" transform="rotate(-45 6.2 12.2)" stroke="currentColor" stroke-width="1.6"/><rect x="15.4" y="10" width="4.4" height="4.4" rx="1.4" transform="rotate(-45 17.6 12.2)" stroke="currentColor" stroke-width="1.6"/><line x1="9" y1="12.2" x2="15" y2="12.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`,
   "Procedures": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="8.5" cy="8.5" r="3.2" stroke="currentColor" stroke-width="1.6"/><circle cx="15.5" cy="15.5" r="3.2" stroke="currentColor" stroke-width="1.6"/><line x1="10.8" y1="10.8" x2="13.2" y2="13.2" stroke="currentColor" stroke-width="1.6"/></svg>`,
   "Chronic Conditions Follow-up": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 0113.7-5.7M20 12a8 8 0 01-13.7 5.7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M17.7 4.6v3.4h-3.4M6.3 19.4V16h3.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  "Standard Blocks": `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="6" y="4" width="12" height="16" rx="2" stroke="currentColor" stroke-width="1.6"/><line x1="9" y1="9" x2="15" y2="9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="9" y1="13" x2="15" y2="13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="9" y1="17" x2="12.5" y2="17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`,
 };
 
 const CHEVRON_SVG = `<svg class="row-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
@@ -39,9 +68,12 @@ const STAR_ICON_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="non
 const COPY_ICON = `<rect x="8" y="8" width="11" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M15 8V6.5A1.5 1.5 0 0013.5 5h-8A1.5 1.5 0 004 6.5v9A1.5 1.5 0 005.5 17H8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`;
 const COPIED_ICON = `<path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>`;
 
-let templates = [];
-let updatedAt = null;
-let starredIds = new Set();
+const savedMode = localStorage.getItem(MODE_KEY);
+let mode = MODES[savedMode] ? savedMode : "clinic";
+const data = {
+  clinic: { templates: [], updatedAt: null, starredIds: new Set() },
+  tele: { templates: [], updatedAt: null, starredIds: new Set() },
+};
 
 let query = "";
 let activeCategory = null;
@@ -49,6 +81,7 @@ let view = "list"; // "list" | "detail"
 let activeTemplate = null;
 let copyResetTimer = null;
 
+const modeToggle = document.getElementById("modeToggle");
 const searchBox = document.getElementById("searchBox");
 const searchInput = document.getElementById("searchInput");
 const clearSearchBtn = document.getElementById("clearSearchBtn");
@@ -64,6 +97,10 @@ const copyBtn = document.getElementById("copyBtn");
 const copyIcon = document.getElementById("copyIcon");
 const copyLabel = document.getElementById("copyLabel");
 const starBtn = document.getElementById("starBtn");
+
+function activeData() {
+  return data[mode];
+}
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -88,13 +125,14 @@ function filterTemplates(list, q) {
 }
 
 function groupByCategory(list) {
+  const order = MODES[mode].categoryOrder;
   const counts = {};
   list.forEach((t) => {
     counts[t.category] = (counts[t.category] || 0) + 1;
   });
-  const known = CATEGORY_ORDER.filter((c) => counts[c]).map((c) => ({ name: c, count: counts[c] }));
+  const known = order.filter((c) => counts[c]).map((c) => ({ name: c, count: counts[c] }));
   const extra = Object.keys(counts)
-    .filter((c) => !CATEGORY_ORDER.includes(c))
+    .filter((c) => !order.includes(c))
     .map((c) => ({ name: c, count: counts[c] }));
   return known.concat(extra);
 }
@@ -123,6 +161,7 @@ function renderList() {
   listView.classList.remove("hidden");
   listRows.innerHTML = "";
 
+  const { templates } = activeData();
   const q = query.trim();
 
   if (!q && !activeCategory) {
@@ -166,6 +205,7 @@ function renderList() {
 }
 
 function renderCategories() {
+  const { templates, starredIds, updatedAt } = activeData();
   const cats = groupByCategory(templates);
   listMeta.textContent = `${cats.length} categories · ${templates.length} templates`;
 
@@ -237,18 +277,19 @@ function renderDetail() {
   detailCategory.textContent = activeTemplate.category;
   detailTitle.textContent = activeTemplate.title;
   detailBody.textContent = activeTemplate.body;
-  starBtn.classList.toggle("starred", starredIds.has(activeTemplate.id));
+  starBtn.classList.toggle("starred", activeData().starredIds.has(activeTemplate.id));
   setCopied(false);
 }
 
 function toggleStar(t) {
+  const { starredIds, templates } = activeData();
   if (starredIds.has(t.id)) {
     starredIds.delete(t.id);
   } else {
     starredIds.add(t.id);
   }
-  localStorage.setItem(STARRED_KEY, JSON.stringify(Array.from(starredIds)));
-  SupaSync.pushState("templates", { templates, starred: Array.from(starredIds) });
+  localStorage.setItem(MODES[mode].starredKey, JSON.stringify(Array.from(starredIds)));
+  SupaSync.pushState(MODES[mode].app, { templates, starred: Array.from(starredIds) });
   render();
 }
 
@@ -302,7 +343,32 @@ async function handleCopy() {
   copyResetTimer = setTimeout(() => setCopied(false), 1800);
 }
 
+function switchMode(next) {
+  if (next === mode) return;
+  mode = next;
+  localStorage.setItem(MODE_KEY, mode);
+  query = "";
+  searchInput.value = "";
+  clearSearchBtn.classList.add("hidden");
+  searchBox.classList.remove("active");
+  activeCategory = null;
+  view = "list";
+  activeTemplate = null;
+  renderModeToggle();
+  render();
+}
+
+function renderModeToggle() {
+  modeToggle.querySelectorAll(".mode-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+}
+
 function bindEvents() {
+  modeToggle.querySelectorAll(".mode-btn").forEach((btn) => {
+    btn.addEventListener("click", () => switchMode(btn.dataset.mode));
+  });
+
   searchInput.addEventListener("input", () => {
     query = searchInput.value;
     activeCategory = null;
@@ -337,29 +403,35 @@ function bindEvents() {
   });
 }
 
-async function bootTemplatesApp() {
-  const remote = await SupaSync.pullState("templates");
+async function loadMode(key) {
+  const cfg = MODES[key];
+  const bucket = data[key];
+  const remote = await SupaSync.pullState(cfg.app);
   if (remote && Array.isArray(remote.state && remote.state.templates)) {
-    templates = remote.state.templates;
-    updatedAt = remote.updatedAt;
-    starredIds = new Set(Array.isArray(remote.state.starred) ? remote.state.starred : []);
-    localStorage.setItem(DATA_KEY, JSON.stringify(templates));
-    localStorage.setItem(UPDATED_AT_KEY, updatedAt || "");
-    localStorage.setItem(STARRED_KEY, JSON.stringify(Array.from(starredIds)));
+    bucket.templates = remote.state.templates;
+    bucket.updatedAt = remote.updatedAt;
+    bucket.starredIds = new Set(Array.isArray(remote.state.starred) ? remote.state.starred : []);
+    localStorage.setItem(cfg.dataKey, JSON.stringify(bucket.templates));
+    localStorage.setItem(cfg.updatedAtKey, bucket.updatedAt || "");
+    localStorage.setItem(cfg.starredKey, JSON.stringify(Array.from(bucket.starredIds)));
   } else {
     try {
-      templates = JSON.parse(localStorage.getItem(DATA_KEY) || "[]");
+      bucket.templates = JSON.parse(localStorage.getItem(cfg.dataKey) || "[]");
     } catch (err) {
-      templates = [];
+      bucket.templates = [];
     }
-    updatedAt = localStorage.getItem(UPDATED_AT_KEY) || null;
+    bucket.updatedAt = localStorage.getItem(cfg.updatedAtKey) || null;
     try {
-      starredIds = new Set(JSON.parse(localStorage.getItem(STARRED_KEY) || "[]"));
+      bucket.starredIds = new Set(JSON.parse(localStorage.getItem(cfg.starredKey) || "[]"));
     } catch (err) {
-      starredIds = new Set();
+      bucket.starredIds = new Set();
     }
   }
+}
 
+async function bootTemplatesApp() {
+  await Promise.all([loadMode("clinic"), loadMode("tele")]);
+  renderModeToggle();
   bindEvents();
   render();
 }
