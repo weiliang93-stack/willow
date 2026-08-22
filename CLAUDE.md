@@ -30,22 +30,31 @@ without the user needing to re-explain anything — read this first.
   Telegram bot, but `sheet-investment-sync` (see below) writes account
   balances into it from a household net-worth Google Sheet.
 - **taxi-compare/** — standalone, not connected to Supabase or the bot.
-- **templates-app/** — search/browse/copy UI for clinical consult-note
-  templates (~185 of them across 12 categories), used at the point of
-  care to find and copy the right template into the owner's clinic
-  management system. Templates themselves are one-way, doc → app —
-  `sheet-templates-sync` (see below) is their only writer, the app just
-  `pullState`s them. Starring a template is the one thing the app itself
-  owns: it `pushState`s `{templates, starred}` (an array of template
-  ids) so stars follow the account across devices, and
-  `sheet-templates-sync` is careful to preserve `starred` across its own
-  daily overwrite of `templates` rather than clobbering it. Starred
-  templates surface in their own section above the category list on the
-  home screen. Caches templates/starred/updatedAt in localStorage so it
-  still works if opened offline in clinic. Not connected to the Telegram
-  bot. Light/dark follows the OS via `prefers-color-scheme` rather than
-  a fixed palette, unlike the other apps — this one gets opened at all
-  hours.
+- **templates-app/** — search/browse/copy UI for consult-note templates,
+  used at the point of care to find and copy the right template into the
+  owner's clinic management system. A mode toggle (In-Clinic /
+  Teleconsult) switches between two completely separate template sets,
+  each with its own Google Doc source, sync function, `app_state` app
+  key, categories, and starred list:
+  - **In-Clinic** (~185 templates, 12 categories) — from the WILLOW doc,
+    synced by `sheet-templates-sync` into app `"templates"`.
+  - **Teleconsult** (~74 templates, 9 categories incl. a "Standard
+    Blocks" category for reusable opening/closing/referral/MC-disclaimer
+    snippets) — from the WILLOW TM doc, synced by
+    `sheet-teletemplates-sync` into app `"teletemplates"`.
+  Templates themselves are one-way, doc → app, for both — each sync
+  function is its data's only writer, the app just `pullState`s them.
+  Starring is the one thing the app itself owns, scoped per mode: it
+  `pushState`s `{templates, starred}` (starred = array of template ids)
+  under that mode's app key, and each sync function preserves its own
+  `starred` across its daily overwrite of `templates` rather than
+  clobbering it. Starred templates surface in their own section above
+  the category list on the home screen. Caches both modes'
+  templates/starred/updatedAt in localStorage (namespaced per mode) so
+  it still works if opened offline in clinic, and remembers the last
+  selected mode. Not connected to the Telegram bot. Light/dark follows
+  the OS via `prefers-color-scheme` rather than a fixed palette, unlike
+  the other apps — this one gets opened at all hours.
 
 ## Sync architecture (shared/)
 
@@ -226,7 +235,7 @@ Extra required secrets beyond the Telegram bot's:
   since they write back, Viewer is enough for the balances sheet since
   it's read-only)
 
-## Google Doc sync (sheet-templates-sync)
+## Google Doc sync (sheet-templates-sync, sheet-teletemplates-sync)
 
 Same self-querying, cron-triggered pattern as the sheet syncs above (and
 the same shared Google service account), but the source is a Google
@@ -273,6 +282,30 @@ Extra required secret beyond the sheet syncs' own:
   (`docs.google.com/document/d/<id>/edit`); the doc must be shared with
   the same service account email as the sheet syncs (Viewer is enough,
   read-only).
+
+**sheet-teletemplates-sync** is the companion sync for WILLOW TM (the
+teleconsultation-note equivalent of the same doctor's WILLOW doc — see
+templates-app's entry above for how the two feed the app's In-Clinic/
+Teleconsult mode toggle). Its parsing is much simpler than
+sheet-templates-sync's, because the source doc is authored with real
+Google Docs heading styles instead of `====` separators: it's fetched as
+Markdown (`export?mimeType=text/markdown`, not plain text) and parsed
+directly off the resulting `#`/`##`/`###` markers — `##` headings are
+categories, `###` headings under them are templates, no table-of-
+contents cross-referencing or label-guessing needed. The doc's own
+"Table of Contents" section is skipped outright (just a bullet list of
+links). One quirk: the doc's "Standard Teleconsult Blocks" section
+(reusable opening/closing scripts, MC disclaimer footer, a specialist
+referral letter template, paediatric medication precautions) doesn't use
+`###` for its sub-items — each is a paragraph that's *only* bold text
+(e.g. `**Opening (use for every teleconsult):**`) — so a trimmed line
+matching `^\*\*(.+)\*\*$` is treated the same as a heading, filed under
+its own `"Standard Blocks"` category. Same starred-preserving upsert and
+<20-templates abort safety net as sheet-templates-sync.
+
+Extra required secret beyond sheet-templates-sync's own:
+- `GOOGLE_WILLOW_TM_DOC_ID` — the id from the WILLOW TM doc's URL; same
+  service account, Viewer access.
 
 ## Required secrets (Edge Functions)
 

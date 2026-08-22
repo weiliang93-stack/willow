@@ -83,7 +83,35 @@ a {
 .page-title {
   font-size: 20px;
   font-weight: 600;
-  margin: 0 0 16px;
+  margin: 0 0 14px;
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 6px;
+  background: var(--surface-alt);
+  border-radius: 12px;
+  padding: 4px;
+  margin-bottom: 14px;
+}
+
+.mode-btn {
+  flex: 1;
+  min-height: 40px;
+  border-radius: 9px;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.mode-btn.active {
+  background: var(--accent);
+  color: var(--accent-text);
 }
 
 .search-box {
