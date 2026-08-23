@@ -43,7 +43,11 @@ without the user needing to re-explain anything — read this first.
     snippets) — from the WILLOW TM doc, synced by
     `sheet-teletemplates-sync` into app `"teletemplates"`.
   Templates themselves are one-way, doc → app, for both — each sync
-  function is its data's only writer, the app just `pullState`s them.
+  function is its data's only writer, the app just `pullState`s them —
+  with one exception: an edit button on the detail view lets the owner
+  fix a template's body in-app, which writes straight back into the live
+  source doc via the `template-edit` Edge Function (see its own section
+  below for the safety design) rather than just updating the local copy.
   Starring is the one thing the app itself owns, scoped per mode: it
   `pushState`s `{templates, starred}` (starred = array of template ids)
   under that mode's app key, and each sync function preserves its own
@@ -308,6 +312,50 @@ its own `"Standard Blocks"` category. Same starred-preserving upsert and
 Extra required secret beyond sheet-templates-sync's own:
 - `GOOGLE_WILLOW_TM_DOC_ID` — the id from the WILLOW TM doc's URL; same
   service account, Viewer access.
+
+## Doc editing (template-edit)
+
+The one place in the sync architecture where an app writes *into* a doc
+rather than just reading from it — templates-app's edit button lets the
+owner fix a template's body in-app and have that change written straight
+back into the live WILLOW or WILLOW TM doc, for both In-Clinic and
+Teleconsult. Templates and categories otherwise stay one-way (doc →
+app); this is the single exception.
+
+Unlike every other Edge Function here, `template-edit` is called by the
+app itself as the signed-in user (`SupaSync.invokeFunction`, which
+attaches the session's access token) rather than by cron, so
+`verify_jwt` is left on and the resolved user id is also checked against
+`WILLOW_USER_ID` as a second layer — the service-role client this
+function uses to read/write `app_state` bypasses RLS, so that check is
+what actually stops another Supabase user from hitting the function and
+editing the doctor's real doc.
+
+Safety design, since a wrong edit here corrupts the doctor's real
+clinical reference doc, not just a cached copy: given a template id, it
+looks up that template's stored `title` from the last successful sync
+(already known to exist verbatim in the live doc as of that sync),
+fetches the doc via the Docs API (not the plain-text/markdown export the
+read syncs use — this needs real paragraph start/end indices to build a
+batchUpdate request), and searches for paragraphs matching each doc's
+own boundary/title rules (`====` separator or age-variant marker for
+WILLOW; heading or bold-only paragraph for WILLOW TM — mirroring each
+read parser's own boundary logic exactly). It requires **exactly one**
+match — zero means the doc changed since the last sync, more than one is
+an ambiguous doc it refuses to guess at — and aborts with a clear error
+in either case rather than editing the wrong section. The body's end
+boundary is the next boundary paragraph, trimmed to the innermost
+non-blank paragraphs so surrounding blank-line spacing is preserved. The
+actual edit is a delete-then-insert `batchUpdate` with
+`writeControl.requiredRevisionId` set to the revision just read, so a
+concurrent doc edit between the read and the write fails the call
+cleanly instead of silently clobbering it. On success, the template's
+`body` in `app_state` is updated immediately too (preserving `starred`
+and everything else), rather than waiting for the next periodic sync.
+
+Requires Editor (not just Viewer) access on both docs for the shared
+Google service account — no new secrets beyond what the sheet-sync
+functions already use.
 
 ## Required secrets (Edge Functions)
 

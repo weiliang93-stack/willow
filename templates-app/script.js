@@ -82,9 +82,10 @@ let activeTemplate = null;
 let copyResetTimer = null;
 
 const modeToggle = document.getElementById("modeToggle");
-const searchBox = document.getElementById("searchBox");
-const searchInput = document.getElementById("searchInput");
-const clearSearchBtn = document.getElementById("clearSearchBtn");
+const searchBoxes = [
+  { box: document.getElementById("searchBox"), input: document.getElementById("searchInput"), clearBtn: document.getElementById("clearSearchBtn") },
+  { box: document.getElementById("searchBoxBottom"), input: document.getElementById("searchInputBottom"), clearBtn: document.getElementById("clearSearchBtnBottom") },
+];
 const listView = document.getElementById("listView");
 const listMeta = document.getElementById("listMeta");
 const listRows = document.getElementById("listRows");
@@ -96,7 +97,20 @@ const detailBody = document.getElementById("detailBody");
 const copyBtn = document.getElementById("copyBtn");
 const copyIcon = document.getElementById("copyIcon");
 const copyLabel = document.getElementById("copyLabel");
+const copyBtnTop = document.getElementById("copyBtnTop");
+const copyIconTop = document.getElementById("copyIconTop");
+const copyLabelTop = document.getElementById("copyLabelTop");
+const copyBar = document.getElementById("copyBar");
 const starBtn = document.getElementById("starBtn");
+const editBtn = document.getElementById("editBtn");
+const detailBodyEdit = document.getElementById("detailBodyEdit");
+const editError = document.getElementById("editError");
+const editBar = document.getElementById("editBar");
+const cancelEditBtn = document.getElementById("cancelEditBtn");
+const saveEditBtn = document.getElementById("saveEditBtn");
+
+let editing = false;
+let saving = false;
 
 function activeData() {
   return data[mode];
@@ -279,6 +293,79 @@ function renderDetail() {
   detailBody.textContent = activeTemplate.body;
   starBtn.classList.toggle("starred", activeData().starredIds.has(activeTemplate.id));
   setCopied(false);
+  renderEditMode();
+}
+
+function renderEditMode() {
+  detailBody.classList.toggle("hidden", editing);
+  detailBodyEdit.classList.toggle("hidden", !editing);
+  copyBar.classList.toggle("hidden", editing);
+  editBar.classList.toggle("hidden", !editing);
+  editBtn.classList.toggle("hidden", editing);
+  editError.classList.add("hidden");
+  editError.textContent = "";
+}
+
+// Returns false (and leaves `editing` untouched) if there's an unsaved
+// edit and the user chose not to discard it — callers should bail out
+// without navigating away in that case.
+function confirmDiscardIfEditing() {
+  if (!editing) return true;
+  if (!confirm("Discard unsaved changes to this template?")) return false;
+  editing = false;
+  return true;
+}
+
+function enterEdit() {
+  if (!activeTemplate) return;
+  editing = true;
+  detailBodyEdit.value = activeTemplate.body;
+  renderEditMode();
+  detailBodyEdit.focus();
+}
+
+function cancelEdit() {
+  editing = false;
+  renderEditMode();
+}
+
+async function saveEdit() {
+  if (!activeTemplate || saving) return;
+  const newBody = detailBodyEdit.value.trim();
+  if (!newBody) {
+    editError.textContent = "Template body can't be empty.";
+    editError.classList.remove("hidden");
+    return;
+  }
+
+  saving = true;
+  saveEditBtn.disabled = true;
+  saveEditBtn.textContent = "Saving…";
+  editError.classList.add("hidden");
+
+  const result = await SupaSync.invokeFunction("template-edit", {
+    app: MODES[mode].app,
+    templateId: activeTemplate.id,
+    newBody,
+  });
+
+  saving = false;
+  saveEditBtn.disabled = false;
+  saveEditBtn.textContent = "Save to doc";
+
+  if (!result.ok) {
+    editError.textContent = result.error || "Something went wrong saving to the doc.";
+    editError.classList.remove("hidden");
+    return;
+  }
+
+  activeTemplate.body = newBody;
+  const { templates } = activeData();
+  const idx = templates.findIndex((t) => t.id === activeTemplate.id);
+  if (idx !== -1) templates[idx] = { ...templates[idx], body: newBody };
+
+  editing = false;
+  render();
 }
 
 function toggleStar(t) {
@@ -296,10 +383,12 @@ function toggleStar(t) {
 function openTemplate(t) {
   activeTemplate = t;
   view = "detail";
+  editing = false;
   render();
 }
 
 function closeDetail() {
+  if (!confirmDiscardIfEditing()) return;
   view = "list";
   activeTemplate = null;
   render();
@@ -309,6 +398,10 @@ function setCopied(copied) {
   copyBtn.classList.toggle("copied", copied);
   copyLabel.textContent = copied ? "Copied to clipboard" : "Copy template";
   copyIcon.innerHTML = copied ? COPIED_ICON : COPY_ICON;
+
+  copyBtnTop.classList.toggle("copied", copied);
+  copyLabelTop.textContent = copied ? "Copied" : "Copy";
+  copyIconTop.innerHTML = copied ? COPIED_ICON : COPY_ICON;
 }
 
 async function handleCopy() {
@@ -343,19 +436,35 @@ async function handleCopy() {
   copyResetTimer = setTimeout(() => setCopied(false), 1800);
 }
 
-function switchMode(next) {
-  if (next === mode) return;
-  mode = next;
-  localStorage.setItem(MODE_KEY, mode);
-  query = "";
-  searchInput.value = "";
-  clearSearchBtn.classList.add("hidden");
-  searchBox.classList.remove("active");
+// Keeps the top and bottom search boxes in sync with each other and
+// with `query` — whichever one the user is typing in, both should
+// reflect the same value.
+function setQuery(next, { fromInput } = {}) {
+  if (!confirmDiscardIfEditing()) return;
+  query = next;
   activeCategory = null;
   view = "list";
   activeTemplate = null;
-  renderModeToggle();
+  searchBoxes.forEach(({ box, input, clearBtn }) => {
+    if (input !== fromInput) input.value = query;
+    clearBtn.classList.toggle("hidden", !query);
+    box.classList.toggle("active", !!query);
+  });
   render();
+}
+
+function clearQuery() {
+  setQuery("");
+  searchBoxes[0].input.focus();
+}
+
+function switchMode(next) {
+  if (next === mode) return;
+  if (!confirmDiscardIfEditing()) return;
+  mode = next;
+  localStorage.setItem(MODE_KEY, mode);
+  setQuery("");
+  renderModeToggle();
 }
 
 function renderModeToggle() {
@@ -369,38 +478,23 @@ function bindEvents() {
     btn.addEventListener("click", () => switchMode(btn.dataset.mode));
   });
 
-  searchInput.addEventListener("input", () => {
-    query = searchInput.value;
-    activeCategory = null;
-    view = "list";
-    activeTemplate = null;
-    clearSearchBtn.classList.toggle("hidden", !query);
-    searchBox.classList.toggle("active", !!query);
-    render();
-  });
-
-  searchInput.addEventListener("focus", () => {
-    if (view === "detail") {
-      view = "list";
-      activeTemplate = null;
-      render();
-    }
-  });
-
-  clearSearchBtn.addEventListener("click", () => {
-    query = "";
-    searchInput.value = "";
-    clearSearchBtn.classList.add("hidden");
-    searchBox.classList.remove("active");
-    searchInput.focus();
-    render();
+  searchBoxes.forEach(({ input, clearBtn }) => {
+    input.addEventListener("input", () => setQuery(input.value, { fromInput: input }));
+    input.addEventListener("focus", () => {
+      if (view === "detail") setQuery(query);
+    });
+    clearBtn.addEventListener("click", clearQuery);
   });
 
   backBtn.addEventListener("click", closeDetail);
   copyBtn.addEventListener("click", handleCopy);
+  copyBtnTop.addEventListener("click", handleCopy);
   starBtn.addEventListener("click", () => {
     if (activeTemplate) toggleStar(activeTemplate);
   });
+  editBtn.addEventListener("click", enterEdit);
+  cancelEditBtn.addEventListener("click", cancelEdit);
+  saveEditBtn.addEventListener("click", saveEdit);
 }
 
 async function loadMode(key) {
