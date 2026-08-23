@@ -189,20 +189,6 @@ function isBoundary(p: Para, kind: DocKind): boolean {
   return p.headingLevel !== null || p.boldOnly;
 }
 
-// For heading-kind docs (WILLOW TM) the boundary paragraph IS the title
-// paragraph. For separator-kind docs (WILLOW), a "====" boundary
-// paragraph is NOT itself the title — the title is the next non-blank
-// paragraph after it — while an embedded age-variant marker boundary
-// (e.g. "Balanitis (Paeds)", no preceding "====") IS its own title
-// paragraph. Returns null if a trailing "====" has no following content.
-function titleParagraphIndex(paras: Para[], boundaryIdx: number, kind: DocKind): number | null {
-  if (kind === "heading") return boundaryIdx;
-  if (!isSeparator(paras[boundaryIdx])) return boundaryIdx; // age-variant marker
-  let i = boundaryIdx + 1;
-  while (i < paras.length && paras[i].trimmed === "") i++;
-  return i < paras.length ? i : null;
-}
-
 // The text a title paragraph would have been stored as a template title
 // under (mirrors each read parser's own title cleanup): a heading-kind
 // bold-only paragraph (WILLOW TM's "Standard Blocks" sub-items) has its
@@ -211,6 +197,43 @@ function titleParagraphIndex(paras: Para[], boundaryIdx: number, kind: DocKind):
 function titleText(p: Para, kind: DocKind): string {
   if (kind === "heading" && p.headingLevel === null && p.boldOnly) return p.trimmed.replace(/:$/, "").trim();
   return p.trimmed;
+}
+
+// How many non-blank lines after a "====" separator to check for the
+// title before giving up on that block. Usually 1 (the title is the
+// very next line), but the WILLOW doc sometimes restates the category
+// as its own short label line right after the separator (e.g. "GASTRO"
+// before "Gastroenteritis") — sheet-templates-sync's own parser had to
+// work around the same thing. Since the exact title is already known
+// here (unlike the read parser, which has to derive it), a small
+// bounded scan for an exact match sidesteps needing to detect/skip
+// label lines specifically.
+const SEPARATOR_TITLE_SCAN_LINES = 4;
+
+// For heading-kind docs (WILLOW TM) the boundary paragraph IS the title
+// paragraph, compared directly. For separator-kind docs (WILLOW), an
+// embedded age-variant marker boundary (e.g. "Balanitis (Paeds)", no
+// preceding "====") is also its own title paragraph — but a plain
+// "====" boundary is not, so its block's next few non-blank lines are
+// scanned for an exact match instead of assuming the title is the very
+// first one. Returns the matching title paragraph's index, or null.
+function titleParagraphIndexIfMatch(paras: Para[], boundaryIdx: number, kind: DocKind, title: string): number | null {
+  if (kind === "heading") return titleText(paras[boundaryIdx], kind) === title ? boundaryIdx : null;
+  if (!isSeparator(paras[boundaryIdx])) {
+    return paras[boundaryIdx].trimmed === title ? boundaryIdx : null; // age-variant marker
+  }
+  let i = boundaryIdx + 1;
+  let scanned = 0;
+  while (i < paras.length && scanned < SEPARATOR_TITLE_SCAN_LINES && !isBoundary(paras[i], kind)) {
+    if (paras[i].trimmed === "") {
+      i++;
+      continue;
+    }
+    if (paras[i].trimmed === title) return i;
+    scanned++;
+    i++;
+  }
+  return null;
 }
 
 interface MatchResult {
@@ -225,9 +248,8 @@ function locateTemplate(paras: Para[], kind: DocKind, title: string): MatchResul
   const candidateIdxs = new Set<number>();
   paras.forEach((p, i) => {
     if (!isBoundary(p, kind)) return;
-    const tIdx = titleParagraphIndex(paras, i, kind);
-    if (tIdx === null) return;
-    if (titleText(paras[tIdx], kind) === title) candidateIdxs.add(tIdx);
+    const tIdx = titleParagraphIndexIfMatch(paras, i, kind, title);
+    if (tIdx !== null) candidateIdxs.add(tIdx);
   });
   if (candidateIdxs.size !== 1) return { matches: candidateIdxs.size };
 
@@ -360,6 +382,8 @@ Deno.serve(async (req) => {
   const paras = extractParagraphs(doc);
   const located = locateTemplate(paras, config.kind, template.title);
   if (located.matches === 0) {
+    const boundaryTexts = paras.filter((p) => isBoundary(p, config.kind)).map((p) => p.trimmed).slice(0, 40);
+    console.error("template-edit no match:", JSON.stringify({ app, title: template.title, boundaryTexts }));
     return jsonResponse(409, { error: `couldn't find "${template.title}" in the doc — it may have been renamed or removed; refresh and try again` });
   }
   if (located.matches > 1) {
