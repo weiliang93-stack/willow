@@ -74,8 +74,8 @@
 //   WILLOW_USER_ID, DB_WEBHOOK_SECRET    - reuse the same values already
 //                                          set for the other functions
 //
-// Meant to be triggered daily by a Database > Cron Job calling this via
-// pg_net, same as the other sheet-sync functions.
+// Meant to be triggered every 10 minutes by a Database > Cron Job
+// calling this via pg_net, same as the other sheet-sync functions.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { JWT } from "npm:google-auth-library@9";
