@@ -298,6 +298,10 @@ Deno.serve(async (req) => {
 
   const { data: authData, error: authError } = await supabase.auth.getUser(token);
   if (authError || !authData?.user || authData.user.id !== USER_ID) {
+    console.error(
+      "template-edit auth rejected:",
+      JSON.stringify({ authError: authError?.message, gotUserId: authData?.user?.id, expectedUserId: USER_ID }),
+    );
     return jsonResponse(403, { error: "not authorized" });
   }
 
