@@ -189,17 +189,28 @@ function isBoundary(p: Para, kind: DocKind): boolean {
   return p.headingLevel !== null || p.boldOnly;
 }
 
-// The text a boundary paragraph would have been stored as a template
-// title under (mirrors each read parser's own title cleanup): headings
-// and separator-kind titles are compared as-is; a heading-kind
+// For heading-kind docs (WILLOW TM) the boundary paragraph IS the title
+// paragraph. For separator-kind docs (WILLOW), a "====" boundary
+// paragraph is NOT itself the title — the title is the next non-blank
+// paragraph after it — while an embedded age-variant marker boundary
+// (e.g. "Balanitis (Paeds)", no preceding "====") IS its own title
+// paragraph. Returns null if a trailing "====" has no following content.
+function titleParagraphIndex(paras: Para[], boundaryIdx: number, kind: DocKind): number | null {
+  if (kind === "heading") return boundaryIdx;
+  if (!isSeparator(paras[boundaryIdx])) return boundaryIdx; // age-variant marker
+  let i = boundaryIdx + 1;
+  while (i < paras.length && paras[i].trimmed === "") i++;
+  return i < paras.length ? i : null;
+}
+
+// The text a title paragraph would have been stored as a template title
+// under (mirrors each read parser's own title cleanup): a heading-kind
 // bold-only paragraph (WILLOW TM's "Standard Blocks" sub-items) has its
 // trailing colon stripped, matching sheet-teletemplates-sync's
-// `stripBold(...).replace(/:$/, "")`.
-function titleCandidate(p: Para, kind: DocKind): string | null {
-  if (kind === "separator") return p.trimmed || null;
-  if (p.headingLevel !== null) return p.trimmed;
-  if (p.boldOnly) return p.trimmed.replace(/:$/, "").trim();
-  return null;
+// `stripBold(...).replace(/:$/, "")`; everything else compares as-is.
+function titleText(p: Para, kind: DocKind): string {
+  if (kind === "heading" && p.headingLevel === null && p.boldOnly) return p.trimmed.replace(/:$/, "").trim();
+  return p.trimmed;
 }
 
 interface MatchResult {
@@ -211,13 +222,16 @@ interface MatchResult {
 }
 
 function locateTemplate(paras: Para[], kind: DocKind, title: string): MatchResult | { matches: number } {
-  const candidateIdxs: number[] = [];
+  const candidateIdxs = new Set<number>();
   paras.forEach((p, i) => {
-    if (isBoundary(p, kind) && titleCandidate(p, kind) === title) candidateIdxs.push(i);
+    if (!isBoundary(p, kind)) return;
+    const tIdx = titleParagraphIndex(paras, i, kind);
+    if (tIdx === null) return;
+    if (titleText(paras[tIdx], kind) === title) candidateIdxs.add(tIdx);
   });
-  if (candidateIdxs.length !== 1) return { matches: candidateIdxs.length };
+  if (candidateIdxs.size !== 1) return { matches: candidateIdxs.size };
 
-  const titleIdx = candidateIdxs[0];
+  const titleIdx = [...candidateIdxs][0];
   let boundaryIdx = paras.length;
   for (let i = titleIdx + 1; i < paras.length; i++) {
     if (isBoundary(paras[i], kind)) {
