@@ -85,8 +85,23 @@ const SEPARATOR_RE = /^=+$/;
 const MIN_SEPARATOR_LEN = 10;
 const AGE_KEYWORDS = new Set(["paeds", "paed", "paediatric", "pediatric", "child", "children", "kids", "kid", "adults", "adult"]);
 
+// Called directly from the browser (templates-app, on a different origin
+// than *.supabase.co), unlike every other function here which is only
+// ever called server-to-server by cron — so, unlike those, this one
+// needs to answer the browser's CORS preflight OPTIONS request (which
+// never carries the Authorization header) and echo CORS headers on every
+// response, or the browser rejects the real request before it's ever sent.
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 function jsonResponse(status: number, body: Record<string, unknown>): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+  });
 }
 
 async function getAccessToken(): Promise<string> {
@@ -273,6 +288,10 @@ async function applyEdit(
 }
 
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
   const authHeader = req.headers.get("Authorization") ?? "";
   const token = authHeader.replace(/^Bearer\s+/i, "");
   if (!token) return jsonResponse(401, { error: "missing Authorization header" });
