@@ -47,7 +47,7 @@ without the user needing to re-explain anything — read this first.
   Starring is the one thing the app itself owns, scoped per mode: it
   `pushState`s `{templates, starred}` (starred = array of template ids)
   under that mode's app key, and each sync function preserves its own
-  `starred` across its daily overwrite of `templates` rather than
+  `starred` across its own periodic overwrite of `templates` rather than
   clobbering it. Starred templates surface in their own section above
   the category list on the home screen. Caches both modes'
   templates/starred/updatedAt in localStorage (namespaced per mode) so
@@ -244,8 +244,10 @@ via Drive's plain-text export (`files/{id}/export?mimeType=text/plain`)
 rather than the Sheets API, since that already gives clean
 paragraph-per-line text without walking Docs API structuralElements.
 
-One-way, doc → app, daily cadence (a little latency is fine — the doc
-doesn't change during a clinic day). Parsing relies on two things the doc
+One-way, doc → app, every 10 minutes (bumped up from a daily cadence so
+an in-progress doc edit shows up in the app almost immediately — the
+owner edits these mid-shift more often than the other synced sheets).
+Parsing relies on two things the doc
 already has: each template is separated from the next by a paragraph
 that's just a long run of `=` characters (title = the first non-blank
 line after it), and the doc's own table of contents lists every
@@ -267,7 +269,7 @@ structural anchor, category is still best-effort — occasionally a block
 can land one category off — while titles and bodies, read directly off
 the block, are always exact. If fewer than 20 templates parse out, the
 function aborts without writing, on the theory that's a doc-structure
-change rather than a real 0-template day — better to leave yesterday's
+change rather than a real 0-template day — better to leave the last
 synced copy in place than silently overwrite it with garbage.
 
 If the doc's variant naming ever needs actual "one condition, several
