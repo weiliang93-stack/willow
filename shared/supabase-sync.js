@@ -4,7 +4,11 @@
 // it shows a sign-in/sign-up form in `el` until the user is authenticated,
 // then calls onReady(user) so the app can boot. SupaSync.pullState/pushState
 // read and write that user's state as a single JSON blob, keyed by an
-// app name ("training", "expenses").
+// app name ("training", "expenses"). SupaSync.invokeFunction calls a
+// user-authenticated Edge Function (the session's access token is
+// attached automatically) — for functions like template-edit that need
+// to know who's calling, unlike the sheet-sync functions' cron-only
+// x-webhook-secret auth.
 //
 // Sync is whole-state, last-write-wins by timestamp — not a field-level
 // merge. pullState returns the state's server-side updated_at alongside
@@ -91,6 +95,21 @@
 
   function signOut() {
     return client ? client.auth.signOut() : Promise.resolve();
+  }
+
+  // Calls a Supabase Edge Function as the signed-in user (the client
+  // library attaches the current session's access token automatically),
+  // for functions that expect user auth rather than the cron-only
+  // x-webhook-secret pattern the sheet-sync functions use. Returns
+  // { ok: true, data } or { ok: false, error }.
+  async function invokeFunction(name, body) {
+    if (!client) return { ok: false, error: "not signed in" };
+    const { data, error } = await client.functions.invoke(name, { body });
+    if (error) {
+      const message = (error.context && (await error.context.json().catch(() => null))?.error) || error.message;
+      return { ok: false, error: message };
+    }
+    return { ok: true, data };
   }
 
   function escapeHtml(str) {
@@ -183,5 +202,5 @@
     });
   }
 
-  window.SupaSync = { configured, pullState, pushState, mountAuthGate, signOut };
+  window.SupaSync = { configured, pullState, pushState, mountAuthGate, signOut, invokeFunction };
 })();

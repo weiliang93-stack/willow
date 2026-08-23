@@ -386,11 +386,19 @@ a {
   gap: 12px;
 }
 
+.detail-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: -11px -10px 0 0;
+}
+
+.edit-btn,
 .star-btn {
   flex-shrink: 0;
   width: 44px;
   height: 44px;
-  margin: -11px -10px 0 0;
   border-radius: 999px;
   background: none;
   border: none;
@@ -421,10 +429,68 @@ a {
   word-break: break-word;
 }
 
-.copy-bar {
+.detail-body-edit {
+  width: 100%;
+  min-height: 60vh;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14.5px;
+  line-height: 1.65;
+  padding: 12px 14px;
+  resize: vertical;
+}
+
+.detail-body-edit:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.edit-error {
+  margin-top: 10px;
+  color: #c0392b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.copy-bar,
+.edit-bar {
   flex-shrink: 0;
   padding: 14px 20px 20px;
   border-top: 1px solid var(--border);
+}
+
+.edit-bar {
+  display: flex;
+  gap: 10px;
+}
+
+.cancel-edit-btn {
+  flex: 1;
+  padding: 15px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-dim);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.save-edit-btn {
+  flex: 2;
+  padding: 15px;
+  border-radius: 12px;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.save-edit-btn:disabled {
+  opacity: 0.6;
 }
 
 .copy-btn {

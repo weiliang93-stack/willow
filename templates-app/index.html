@@ -77,17 +77,27 @@
             <div id="detailCategory" class="detail-category"></div>
             <h2 id="detailTitle" class="detail-title"></h2>
           </div>
-          <button id="starBtn" class="star-btn" type="button" aria-label="Star this template">
-            <svg id="starIcon" width="22" height="22" viewBox="0 0 24 24" fill="none">
-              <path d="M12 3.5l2.55 5.6 6.15.65-4.6 4.2 1.25 6.05L12 16.9l-5.35 3.1 1.25-6.05-4.6-4.2 6.15-.65z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-            </svg>
-          </button>
+          <div class="detail-actions">
+            <button id="editBtn" class="edit-btn" type="button" aria-label="Edit this template">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
+                <path d="M4 20l.9-3.6L16.3 5 19 7.7 7.6 19.1z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+                <path d="M14.2 6.8l3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <button id="starBtn" class="star-btn" type="button" aria-label="Star this template">
+              <svg id="starIcon" width="22" height="22" viewBox="0 0 24 24" fill="none">
+                <path d="M12 3.5l2.55 5.6 6.15.65-4.6 4.2 1.25 6.05L12 16.9l-5.35 3.1 1.25-6.05-4.6-4.2 6.15-.65z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
       <div class="detail-body-wrap">
         <div id="detailBody" class="detail-body"></div>
+        <textarea id="detailBodyEdit" class="detail-body-edit hidden"></textarea>
+        <div id="editError" class="edit-error hidden"></div>
       </div>
-      <div class="copy-bar">
+      <div id="copyBar" class="copy-bar">
         <button id="copyBtn" class="copy-btn" type="button">
           <svg id="copyIcon" width="18" height="18" viewBox="0 0 24 24" fill="none">
             <rect x="8" y="8" width="11" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/>
@@ -95,6 +105,10 @@
           </svg>
           <span id="copyLabel">Copy template</span>
         </button>
+      </div>
+      <div id="editBar" class="edit-bar hidden">
+        <button id="cancelEditBtn" class="cancel-edit-btn" type="button">Cancel</button>
+        <button id="saveEditBtn" class="save-edit-btn" type="button">Save to doc</button>
       </div>
     </div>
   </div>
