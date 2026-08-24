@@ -1,32 +1,39 @@
-// Supabase Edge Function: one-time maintenance operation that strips
-// stray blank paragraphs out of every teleconsult template's body in the
-// live WILLOW TM Google Doc — the doc was originally typed with a blank
-// paragraph after nearly every line, which sheet-teletemplates-sync
-// faithfully carries into each template's `body` (30-50+ blank lines per
-// template, vs. single digits in the WILLOW doc, which wasn't typed that
-// way). Fixing app_state alone wouldn't stick: the next periodic sync
-// would just re-pull the doc's still-unedited spacing and overwrite it,
-// so this edits the doc itself.
+// Supabase Edge Function: one-time maintenance operation that zeroes
+// out paragraph spacing (spaceAbove/spaceBelow) across every teleconsult
+// template's body in the live WILLOW TM Google Doc. The visible "extra
+// spacing between lines" is NOT literal blank paragraphs — a diagnostic
+// pass (`diagnoseTitle` below) found every body paragraph carrying
+// spaceAbove/spaceBelow: 6pt styling, which Google's Markdown exporter
+// renders as a blank line between paragraphs. (An earlier version of
+// this function deleted literal empty paragraphs based on the wrong
+// theory: it found and removed 0 blank paragraphs on its second run,
+// yet the exported body was byte-identical before and after — the
+// giveaway that spacing, not blank paragraphs, was the real cause.)
+// Fixing app_state alone wouldn't stick either way: the next periodic
+// sync would just re-pull the doc's still-unedited styling, so this
+// edits the doc itself.
 //
 // Admin/cron-style function (not called by the app) — same
 // x-webhook-secret pattern as budget-alert/sheet-*-sync, triggered
 // manually for this one-off cleanup rather than on a schedule.
 //
-// Pass `dryRun: true` to just report how many blank paragraphs would be
-// removed, across how many templates, without writing anything — meant
-// to be reviewed before the real (non-dry-run) call.
+// Pass `dryRun: true` to just report how many templates have non-zero
+// paragraph spacing, without writing anything — meant to be reviewed
+// before the real (non-dry-run) call. Pass `diagnoseTitle: "<title>"`
+// to dump raw paragraph text + spaceAbove/spaceBelow for one template's
+// body.
 //
-// Safety: only ever deletes a paragraph that is already empty once
-// trimmed (so there is never any real content to lose), and only when
-// it falls strictly inside a recognized template's body range (between
-// one boundary/title paragraph and the next) — titles, headings, and
-// the doc's "Table of Contents" block (skipped by title, same as
-// sheet-teletemplates-sync) are never touched. All deletions are sent
-// as one batchUpdate, highest paragraph index first (so earlier
-// deletions never invalidate indices used by later ones in the same
-// call), locked to the doc's revisionId read at the start of the call —
-// if the doc changes mid-operation, the whole call fails cleanly rather
-// than applying half the edit.
+// Safety: only ever touches paragraph spacing (spaceAbove/spaceBelow),
+// never paragraph text — there is no content to lose. Only applies
+// within a recognized template's body range (between one boundary/title
+// paragraph and the next) — titles, headings, and the doc's "Table of
+// Contents" block (skipped by title, same as sheet-teletemplates-sync)
+// are never touched. All updates are sent as one batchUpdate, locked to
+// the doc's revisionId read at the start of the call — if the doc
+// changes mid-operation, the whole call fails cleanly rather than
+// applying half the edit. These are style-only updates (no text
+// inserted or deleted), so unlike a content edit, the document's length
+// never changes and request order/index-shifting are non-issues.
 //
 // On a successful real run, also immediately re-triggers
 // sheet-teletemplates-sync (using the same secret, read from this
@@ -65,7 +72,7 @@ interface ParagraphElement {
 }
 interface DocParagraph {
   elements?: ParagraphElement[];
-  paragraphStyle?: { namedStyleType?: string };
+  paragraphStyle?: { namedStyleType?: string; spaceAbove?: { magnitude?: number }; spaceBelow?: { magnitude?: number } };
 }
 interface DocStructuralElement {
   startIndex?: number;
@@ -83,6 +90,8 @@ interface Para {
   trimmed: string;
   headingLevel: number | null;
   boldOnly: boolean;
+  spaceAbove: number;
+  spaceBelow: number;
 }
 
 function extractParagraphs(doc: DocsDocument): Para[] {
@@ -101,6 +110,8 @@ function extractParagraphs(doc: DocsDocument): Para[] {
       trimmed: text.trim(),
       headingLevel: headingMatch ? Number(headingMatch[1]) : null,
       boldOnly,
+      spaceAbove: el.paragraph.paragraphStyle?.spaceAbove?.magnitude ?? 0,
+      spaceBelow: el.paragraph.paragraphStyle?.spaceBelow?.magnitude ?? 0,
     });
   }
   return out;
@@ -116,31 +127,39 @@ function titleText(p: Para): string {
 }
 
 async function fetchDoc(accessToken: string): Promise<DocsDocument> {
-  const fields = "revisionId,body(content(startIndex,endIndex,paragraph(paragraphStyle.namedStyleType,elements(textRun(content,textStyle.bold)))))";
+  const fields =
+    "revisionId,body(content(startIndex,endIndex,paragraph(paragraphStyle(namedStyleType,spaceAbove,spaceBelow),elements(textRun(content,textStyle.bold)))))";
   const url = `https://docs.googleapis.com/v1/documents/${DOC_ID}?fields=${encodeURIComponent(fields)}`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new Error(`Docs get failed: ${res.status} ${await res.text()}`);
   return await res.json();
 }
 
-interface BlankTarget {
+interface SpacingRange {
   startIndex: number;
   endIndex: number;
 }
 
-interface TemplateBlanks {
+interface TemplateSpacing {
   title: string;
-  blankCount: number;
+  paragraphCount: number;
 }
 
-function findBlankTargets(paras: Para[]): { targets: BlankTarget[]; perTemplate: TemplateBlanks[] } {
+// The visible "extra spacing" turns out to be paragraph-level
+// spaceAbove/spaceBelow styling (commonly 6pt on every paragraph in the
+// WILLOW TM doc), not literal blank paragraphs — Google's Markdown
+// exporter renders that styling as a blank line between paragraphs.
+// Finds, per template, the single outer range spanning its whole body
+// (title's end to the next boundary's start) so spaceAbove/spaceBelow
+// can be zeroed for the whole block in one updateParagraphStyle request.
+function findSpacingRanges(paras: Para[]): { ranges: SpacingRange[]; perTemplate: TemplateSpacing[] } {
   const boundaryIdxs: number[] = [];
   paras.forEach((p, i) => {
     if (isBoundary(p)) boundaryIdxs.push(i);
   });
 
-  const targets: BlankTarget[] = [];
-  const perTemplate: TemplateBlanks[] = [];
+  const ranges: SpacingRange[] = [];
+  const perTemplate: TemplateSpacing[] = [];
 
   for (let b = 0; b < boundaryIdxs.length; b++) {
     const titleIdx = boundaryIdxs[b];
@@ -148,25 +167,41 @@ function findBlankTargets(paras: Para[]): { targets: BlankTarget[]; perTemplate:
     if (title.toLowerCase() === "table of contents") continue; // mirrors sheet-teletemplates-sync's own skip
 
     const bodyEnd = b + 1 < boundaryIdxs.length ? boundaryIdxs[b + 1] : paras.length;
-    let blankCount = 0;
-    for (let i = titleIdx + 1; i < bodyEnd; i++) {
-      if (paras[i].trimmed === "") {
-        targets.push({ startIndex: paras[i].startIndex, endIndex: paras[i].endIndex });
-        blankCount++;
-      }
-    }
-    if (blankCount > 0) perTemplate.push({ title, blankCount });
+    const bodyStart = titleIdx + 1;
+    if (bodyStart >= bodyEnd) continue;
+
+    const hasSpacing = paras.slice(bodyStart, bodyEnd).some((p) => p.spaceAbove !== 0 || p.spaceBelow !== 0);
+    if (!hasSpacing) continue;
+
+    // The Docs API refuses a range touching the very last newline of the
+    // document body segment — trim the range's end back by one
+    // character in that case (updateParagraphStyle only needs the range
+    // to overlap each paragraph, not span its exact boundary).
+    const lastParaIdx = bodyEnd - 1;
+    const endsAtDocEnd = lastParaIdx === paras.length - 1;
+    const startIndex = paras[bodyStart].startIndex;
+    const endIndex = endsAtDocEnd ? paras[lastParaIdx].endIndex - 1 : paras[lastParaIdx].endIndex;
+
+    ranges.push({ startIndex, endIndex });
+    perTemplate.push({ title, paragraphCount: bodyEnd - bodyStart });
   }
 
-  return { targets, perTemplate };
+  return { ranges, perTemplate };
 }
 
-async function applyDeletions(accessToken: string, revisionId: string, targets: BlankTarget[]): Promise<void> {
-  // Highest index first, so each deletion is applied against indices
-  // that haven't yet been shifted by any deletion later in this list.
-  const sorted = [...targets].sort((a, b) => b.startIndex - a.startIndex);
-  const requests = sorted.map((t) => ({
-    deleteContentRange: { range: { startIndex: t.startIndex, endIndex: t.endIndex } },
+async function applySpacingReset(accessToken: string, revisionId: string, ranges: SpacingRange[]): Promise<void> {
+  // Style-only updates, not insertions/deletions — the document's length
+  // never changes, so none of these ranges can invalidate each other and
+  // order doesn't matter.
+  const requests = ranges.map((r) => ({
+    updateParagraphStyle: {
+      range: { startIndex: r.startIndex, endIndex: r.endIndex },
+      paragraphStyle: {
+        spaceAbove: { magnitude: 0, unit: "PT" },
+        spaceBelow: { magnitude: 0, unit: "PT" },
+      },
+      fields: "spaceAbove,spaceBelow",
+    },
   }));
 
   const url = `https://docs.googleapis.com/v1/documents/${DOC_ID}:batchUpdate`;
@@ -195,7 +230,7 @@ Deno.serve(async (req) => {
     return new Response("Forbidden", { status: 403 });
   }
 
-  let payload: { dryRun?: boolean } = {};
+  let payload: { dryRun?: boolean; diagnoseTitle?: string } = {};
   try {
     payload = await req.json();
   } catch {
@@ -212,14 +247,30 @@ Deno.serve(async (req) => {
   }
 
   const paras = extractParagraphs(doc);
-  const { targets, perTemplate } = findBlankTargets(paras);
+
+  if (payload.diagnoseTitle) {
+    const boundaryIdxs: number[] = [];
+    paras.forEach((p, i) => {
+      if (isBoundary(p)) boundaryIdxs.push(i);
+    });
+    const b = boundaryIdxs.findIndex((idx) => titleText(paras[idx]) === payload.diagnoseTitle);
+    if (b === -1) return new Response(JSON.stringify({ ok: false, error: "title not found" }), { headers: { "Content-Type": "application/json" } });
+    const bodyEnd = b + 1 < boundaryIdxs.length ? boundaryIdxs[b + 1] : paras.length;
+    const dump = paras.slice(boundaryIdxs[b], bodyEnd).map((p) => ({
+      text: p.trimmed.slice(0, 40),
+      spaceAbove: p.spaceAbove,
+      spaceBelow: p.spaceBelow,
+    }));
+    return new Response(JSON.stringify({ ok: true, paragraphs: dump }), { headers: { "Content-Type": "application/json" } });
+  }
+
+  const { ranges, perTemplate } = findSpacingRanges(paras);
 
   if (payload.dryRun) {
     return new Response(
       JSON.stringify({
         ok: true,
         dryRun: true,
-        blankLinesFound: targets.length,
         templatesAffected: perTemplate.length,
         sample: perTemplate.slice(0, 10),
       }),
@@ -227,12 +278,12 @@ Deno.serve(async (req) => {
     );
   }
 
-  if (targets.length === 0) {
-    return new Response(JSON.stringify({ ok: true, blankLinesRemoved: 0 }), { headers: { "Content-Type": "application/json" } });
+  if (ranges.length === 0) {
+    return new Response(JSON.stringify({ ok: true, templatesAffected: 0 }), { headers: { "Content-Type": "application/json" } });
   }
 
   try {
-    await applyDeletions(accessToken, doc.revisionId, targets);
+    await applySpacingReset(accessToken, doc.revisionId, ranges);
   } catch (err) {
     return new Response(`error applying cleanup: ${err}`, { status: 500 });
   }
@@ -240,7 +291,7 @@ Deno.serve(async (req) => {
   await triggerResync();
 
   return new Response(
-    JSON.stringify({ ok: true, blankLinesRemoved: targets.length, templatesAffected: perTemplate.length }),
+    JSON.stringify({ ok: true, templatesAffected: perTemplate.length }),
     { headers: { "Content-Type": "application/json" } },
   );
 });
