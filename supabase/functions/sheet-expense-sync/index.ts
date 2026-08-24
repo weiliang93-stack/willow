@@ -36,7 +36,7 @@ import { JWT } from "npm:google-auth-library@9";
 
 const USER_ID = Deno.env.get("WILLOW_USER_ID")!;
 const WEBHOOK_SECRET = Deno.env.get("DB_WEBHOOK_SECRET")!;
-const SHEET_ID = Deno.env.get("GOOGLE_EXPENSE_SHEET_ID")!;
+const SHEET_ID = Deno.env.get("GOOGLE_EXPENSE_SHEET_ID")!.trim();
 const SERVICE_ACCOUNT_EMAIL = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_EMAIL")!;
 const SERVICE_ACCOUNT_KEY = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY")!.replace(/\\n/g, "\n");
 
@@ -58,7 +58,7 @@ async function getAccessToken(): Promise<string> {
 async function getLeftmostTabTitle(accessToken: string): Promise<string> {
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties(title,index)`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!res.ok) throw new Error(`sheets.get failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) throw new Error(`sheets.get failed for sheet id "${SHEET_ID}": ${res.status} ${await res.text()}`);
   const data = await res.json();
   const sheets = (data.sheets ?? []).map((s: any) => s.properties);
   if (sheets.length === 0) throw new Error("spreadsheet has no tabs");
