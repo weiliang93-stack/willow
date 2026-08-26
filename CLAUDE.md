@@ -138,6 +138,17 @@ without the user needing to re-explain anything — read this first.
     change re-enables it (`markShiftDirty`, called from both render
     functions so every state-changing action is covered in one place
     rather than needing to be wired at each call site individually).
+  - **"Check calendar"** auto-detects whether the owner is rostered for WC
+    TM / FHG TM on the "Logging for" date by reading their real Google
+    Calendar via the `teleconsult-check-roster` Edge Function (see its own
+    section below), instead of tapping the "Rostered" toggles by hand.
+    Auto-runs once on a genuinely fresh day (no same-day localStorage
+    state yet) right after boot; never re-runs automatically after that,
+    so a manual toggle change made mid-session is never silently
+    overridden — the button itself is always available for an on-demand
+    re-check (e.g. a roster added after the session was already open),
+    and a manual re-check's result does overwrite whatever's currently
+    set, same as the first auto-run would have.
 
 ## Sync architecture (shared/)
 
@@ -498,6 +509,43 @@ Required secret, beyond what the other sheet-sync functions already use:
 - `GOOGLE_ACCOUNTS_SHEET_ID` — the id from the Accounts sheet's URL
   (`docs.google.com/spreadsheets/d/<this>/edit`), set to
   `1qQf7-bPLkHpvVPSwAU1Mj8AXshOvdy85whs0fo61mAc`
+
+## Calendar reading (teleconsult-check-roster)
+
+The one place in this repo's sync architecture that *reads* Google
+Calendar via the shared service account rather than via `mcp__Google_Calendar__*`
+(Composio, the owner's own login) — teleconsult-tracker's "Check calendar"
+button and its once-per-fresh-day auto-run. Same `verify_jwt`-on +
+`WILLOW_USER_ID`-check pattern as the other user-invoked functions.
+
+Matching mirrors the `confirm-tm-income` skill's own documented rules
+exactly, so a day this function calls "rostered" agrees with how the
+owner's calendar is already interpreted everywhere else in this repo: an
+event summary containing "WC TM" (case-insensitive) → Whitecoat TM
+rostered; containing "FHG TM" → Fullerton TM rostered; trimmed/case-folded
+*exactly* "inspire medical" (not "INSPIRE COVER") → today is an Inspire
+day, which drops the suggested Whitecoat TM target from $650 to $250 (the
+same two figures the owner already logs against — this never invents a
+third). Events are read for the target date's Singapore calendar day
+specifically (`T00:00:00+08:00` to `T23:59:59+08:00` — Singapore has no
+DST, so this fixed offset needs no `Intl` timezone gymnastics), since the
+Edge Function runtime itself runs in UTC.
+
+Deliberately does not overwrite a rostered toggle the owner already
+changed by hand mid-session — the app only calls this automatically once,
+on a genuinely fresh day (see teleconsult-tracker's own entry above). A
+result the owner didn't ask for right now can't clobber one they did.
+
+Requires the calendar shared with the service account (Viewer / "See all
+event details" — this only reads) and the **Calendar API enabled** on
+whichever Google Cloud project the service account belongs to — a
+separate one-time toggle from the Sheets/Docs APIs the other functions
+use, easy to miss since nothing else in this repo needed it yet.
+
+Required secret, beyond what the other Google-touching functions already
+use:
+- `GOOGLE_CALENDAR_ID` — the owner's calendar id, which for a personal
+  Google Calendar is just their email address (`weiliang93@gmail.com`)
 
 ## Required secrets (Edge Functions)
 
