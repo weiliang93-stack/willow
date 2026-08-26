@@ -123,12 +123,12 @@ let editing = false;
 let saving = false;
 let addingTemplate = false; // true while an add-template save request is in flight
 
-// Categories the "Add template" flow can target — excludes "Standard
-// Blocks", which uses a different bold-only-paragraph doc convention
-// template-add doesn't support yet. In-Clinic isn't offered at all: its
-// category assignment is TOC-order-driven (see sheet-templates-sync),
-// so a brand-new title with no TOC entry can't be placed reliably.
-const ADD_TEMPLATE_CATEGORIES = MODES.tele.categoryOrder.filter((c) => c !== "Standard Blocks");
+// Categories the "Add template" flow can target for the current mode —
+// excludes Teleconsult's "Standard Blocks", which uses a different
+// bold-only-paragraph doc convention template-add doesn't support yet.
+function addTemplateCategories() {
+  return MODES[mode].categoryOrder.filter((c) => c !== "Standard Blocks");
+}
 
 function activeData() {
   return data[mode];
@@ -404,13 +404,12 @@ async function saveEdit() {
 }
 
 function populateAddCategorySelect() {
-  addCategorySelect.innerHTML = ADD_TEMPLATE_CATEGORIES.map(
+  addCategorySelect.innerHTML = addTemplateCategories().map(
     (c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`,
   ).join("");
 }
 
 function openAddTemplate() {
-  if (mode !== "tele") return;
   if (!confirmDiscardIfEditing()) return;
   view = "add";
   activeTemplate = null;
@@ -429,6 +428,7 @@ function closeAddView() {
 
 async function saveAddTemplate() {
   if (addingTemplate) return;
+  const addMode = mode; // captured up front — mode could change while the request is in flight
   const category = addCategorySelect.value;
   const title = addTitleInput.value.trim();
   const body = addBodyInput.value.trim();
@@ -443,7 +443,7 @@ async function saveAddTemplate() {
   saveAddBtn.textContent = "Adding…";
   addError.classList.add("hidden");
 
-  const result = await SupaSync.invokeFunction("template-add", { category, title, body });
+  const result = await SupaSync.invokeFunction("template-add", { app: MODES[addMode].app, category, title, body });
 
   addingTemplate = false;
   saveAddBtn.disabled = false;
@@ -456,11 +456,13 @@ async function saveAddTemplate() {
   }
 
   const id = (result.data && result.data.id) || `${category}-${title}`;
-  data.tele.templates.push({ id, category, title, body });
+  data[addMode].templates.push({ id, category, title, body });
 
-  view = "list";
-  activeCategory = category;
-  render();
+  if (addMode === mode) {
+    view = "list";
+    activeCategory = category;
+    render();
+  }
 }
 
 function toggleStar(t) {
@@ -566,8 +568,7 @@ function renderModeToggle() {
   modeToggle.querySelectorAll(".mode-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === mode);
   });
-  // Adding is Teleconsult-only for now — see ADD_TEMPLATE_CATEGORIES.
-  addTemplateBtn.classList.toggle("hidden", mode !== "tele");
+  addTemplateBtn.classList.remove("hidden");
 }
 
 function bindEvents() {
