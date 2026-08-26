@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Double Shift</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">Double Shift</div>
+        <h1 class="page-title">Today&rsquo;s session</h1>
+      </div>
+      <div class="combined">
+        <p class="label">Combined earnings</p>
+        <p class="figure num" id="combinedTotal">$0</p>
+      </div>
+    </header>
+
+    <div class="date-row">
+      <label for="sheetDate">Logging for</label>
+      <input class="field-input" type="text" id="sheetDate" placeholder="d/m/yyyy">
+      <span class="weekday" id="sheetWeekday"></span>
+      <div class="date-row-actions">
+        <button id="floatBtn" class="ghost-btn" type="button">Float tracker ⧉</button>
+        <button id="copyBothBtn" class="ghost-btn" type="button">Copy both rows ⧉</button>
+      </div>
+    </div>
+
+    <div class="cards">
+      <!-- WC TM CARD -->
+      <section class="card wc" id="wcCard" data-active="true">
+        <div class="card-head">
+          <div>
+            <h2>Whitecoat TM</h2>
+            <div class="sub">Per-patient, paid only when rostered</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="wcRostered" checked>
+            <span class="track"><span class="knob"></span></span>
+            <span class="switch-label" id="wcRosteredLabel">Rostered</span>
+          </label>
+        </div>
+        <div class="card-body">
+          <div class="offline-msg">Not rostered for WC TM &mdash; this session pays $0, even if you log on.</div>
+
+          <div class="live-only field-row">
+            <div class="field">
+              <label for="wcTarget">Target</label>
+              <span>$</span>
+              <input class="field-input" type="number" id="wcTarget" value="650" min="0" step="10">
+            </div>
+          </div>
+
+          <div class="live-only progress-block">
+            <div class="prow">
+              <span>Toward target</span>
+              <span><span class="num" id="wcProgressPct">0%</span></span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" id="wcBar"></div></div>
+          </div>
+
+          <div class="live-only tap-row two">
+            <button class="tap-btn" id="wcMedsBtn" type="button">
+              <span class="count-badge num" id="wcMedsCount">0</span>
+              <span class="name">With meds</span>
+              <span class="rate num">+$13</span>
+            </button>
+            <button class="tap-btn" id="wcNomedsBtn" type="button">
+              <span class="count-badge num" id="wcNomedsCount">0</span>
+              <span class="name">No meds</span>
+              <span class="rate num">+$10</span>
+            </button>
+          </div>
+
+          <div class="live-only stats">
+            <div class="stat">
+              <p class="k">Patients</p>
+              <p class="v num" id="wcPatients">0</p>
+            </div>
+            <div class="stat">
+              <p class="k">Avg / patient</p>
+              <p class="v num" id="wcAvg">&mdash;</p>
+            </div>
+            <div class="stat total">
+              <p class="k">Earned</p>
+              <p class="v num" id="wcTotal">$0</p>
+            </div>
+          </div>
+
+          <div class="live-only copy-block">
+            <button class="copy-btn" id="wcCopyBtn" type="button">
+              <span>⧉</span><span id="wcCopyBtnText">Copy row for sheet</span>
+            </button>
+            <div class="copy-preview-row">
+              <span class="color-swatch" style="background:#f4cccc"></span>
+              <div class="copy-preview num" id="wcCopyPreview"></div>
+            </div>
+          </div>
+
+          <div class="card-foot">
+            <button class="text-btn" id="wcUndo" type="button">Undo last</button>
+            <button class="text-btn" id="wcReset" type="button">Reset session</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- FHG TM CARD -->
+      <section class="card fhg" id="fhgCard" data-active="true">
+        <div class="card-head">
+          <div>
+            <h2>Fullerton TM</h2>
+            <div class="sub" id="fhgSub">Rostered &mdash; hourly + bonus</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="fhgRostered" checked>
+            <span class="track"><span class="knob"></span></span>
+            <span class="switch-label" id="fhgRosteredLabel">Rostered</span>
+          </label>
+        </div>
+        <div class="card-body">
+
+          <div class="rostered-only field-row">
+            <div class="field">
+              <label for="fhgHours">Shift length</label>
+              <input class="field-input" type="number" id="fhgHours" value="5" min="1" max="12" step="1">
+              <span>hrs</span>
+            </div>
+          </div>
+
+          <div class="rostered-only derived" id="fhgDerived"></div>
+
+          <div class="rostered-only pace-row">
+            <span class="pill idle" id="fhgPacePill">Timer idle</span>
+            <span id="fhgElapsed" class="num">00:00</span>
+            <div class="timer-controls">
+              <button class="btn-ghost" id="fhgTimerBtn" type="button">Start shift timer</button>
+            </div>
+          </div>
+
+          <div class="progress-block">
+            <div class="prow">
+              <span id="fhgProgressLabel">Toward 25 patients</span>
+              <span class="num" id="fhgProgressPct">0%</span>
+            </div>
+            <div class="bar-track"><div class="bar-fill" id="fhgBar"></div></div>
+            <div class="bonus-note" id="fhgBonusNote"></div>
+          </div>
+
+          <div class="tap-row">
+            <button class="tap-btn solo" id="fhgPatientBtn" type="button">
+              <span class="count-badge num" id="fhgPatientCount">0</span>
+              <span class="name">Patient seen</span>
+              <span class="rate num" id="fhgRateHint">counts toward hourly shift</span>
+            </button>
+          </div>
+
+          <div class="stats">
+            <div class="stat">
+              <p class="k">Patients</p>
+              <p class="v num" id="fhgPatients">0</p>
+            </div>
+            <div class="stat" id="fhgBaseStat">
+              <p class="k">Base</p>
+              <p class="v num" id="fhgBase">$350</p>
+            </div>
+            <div class="stat total">
+              <p class="k">Earned</p>
+              <p class="v num" id="fhgTotal">$0</p>
+            </div>
+          </div>
+
+          <div class="copy-block">
+            <button class="copy-btn" id="fhgCopyBtn" type="button">
+              <span>⧉</span><span id="fhgCopyBtnText">Copy row for sheet</span>
+            </button>
+            <div class="copy-preview-row">
+              <span class="color-swatch" style="background:#9900ff"></span>
+              <div class="copy-preview num" id="fhgCopyPreview"></div>
+            </div>
+          </div>
+
+          <div class="card-foot">
+            <button class="text-btn" id="fhgUndo" type="button">Undo last</button>
+            <button class="text-btn" id="fhgReset" type="button">Reset session</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="note" id="pipNote"></footer>
+  </div>
+
+  <!-- Combined floating tracker: moved wholesale into a real Document Picture-in-Picture
+       window on Chrome (documentPictureInPicture); falls back to an in-page draggable
+       panel elsewhere. One combined panel (not one per job) because Chrome only allows
+       a single Document PiP window per page at a time. -->
+  <div class="float-panel" id="floatPanel">
+    <div class="fp-head" id="floatHead">
+      <span>⠿ Double Shift</span>
+      <button class="fp-close" id="floatClose" type="button" aria-label="Close floating tracker">✕</button>
+    </div>
+    <div class="fp-body">
+      <div class="fp-job" id="floatWcJob">
+        <div class="fp-job-row">
+          <span class="fp-job-label wc">Whitecoat TM</span>
+          <span class="fp-total num wc" id="floatWcTotal">$0</span>
+        </div>
+        <div class="fp-sub num" id="floatWcSub">0 patients</div>
+        <div class="fp-buttons two">
+          <button class="fp-btn wc" id="floatWcMeds" type="button">Meds +$13</button>
+          <button class="fp-btn wc" id="floatWcNomeds" type="button">No meds +$10</button>
+        </div>
+      </div>
+      <div class="fp-divider"></div>
+      <div class="fp-job" id="floatFhgJob">
+        <div class="fp-job-row">
+          <span class="fp-job-label fhg">Fullerton TM</span>
+          <span class="fp-total num fhg" id="floatFhgTotal">$0</span>
+        </div>
+        <div class="fp-sub num" id="floatFhgSub">0 patients</div>
+        <button class="fp-btn fhg wide" id="floatFhgBtn" type="button">Patient seen</button>
+      </div>
+      <div class="fp-combined">
+        <span>Combined</span>
+        <span class="num" id="floatCombinedTotal">$0</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

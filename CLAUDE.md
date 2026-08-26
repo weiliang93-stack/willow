@@ -59,6 +59,66 @@ without the user needing to re-explain anything — read this first.
   selected mode. Not connected to the Telegram bot. Light/dark follows
   the OS via `prefers-color-scheme` rather than a fixed palette, unlike
   the other apps — this one gets opened at all hours.
+- **teleconsult-tracker/** — live per-patient earnings clicker for running two
+  simultaneous teleconsult jobs, Whitecoat TM and Fullerton TM. Standalone —
+  not connected to Supabase or the Telegram bot; state lives in
+  `localStorage` only, keyed to the current calendar date (a new day resets
+  patient counts/history but keeps the target-$ and shift-length settings).
+  Pay logic, validated against the real Accounts Google Sheet before
+  building:
+  - **Whitecoat TM** — $13/patient with meds, $10/patient without, tallied
+    against an editable $ target (not a fixed patient count, since the
+    with-meds/no-meds mix varies). Pays $0 for the whole session whenever
+    the "Rostered" toggle is off, even if the owner logs on and sees
+    patients — this card's tap buttons disable entirely in that state.
+  - **Fullerton TM** — when rostered: base pay is `hours × $70`, paid in
+    full regardless of pace (this mirrors the real monthly locum-claim
+    formula in the `telemed-locum-claims` skill: `E24 = B24*C24`, i.e.
+    hours × rate with no per-hour forfeiture — not the "only if you hit
+    5/hr" rule the owner first described it as). A $10/patient bonus starts
+    once patient count exceeds `hours × 5`. A shift timer/pace pill is
+    informational only (on-pace/behind-pace vs elapsed time), it doesn't
+    change the math. When not rostered: flat $10/patient, no base, no
+    threshold — the owner can still log on ad hoc.
+  - Because the real FHG TM claim nets hours and patients across the whole
+    month (see `telemed-locum-claims`), this app's per-session bonus figure
+    is only an estimate for that one session — the monthly claim is what
+    actually reconciles pay.
+  - **"Copy for sheet"** buttons build a row matching the owner's Accounts
+    sheet's daily transaction log exactly (columns A–J: Date, Day, blank
+    Start/End, Company, Venue, blank Pay/h, Hours, Pay, Comment), written
+    to the clipboard as real HTML (not just tab-separated plain text) so
+    pasting into Sheets carries the sheet's own real formatting — read
+    directly off the Aug 2026 tab rather than guessed: Whitecoat rows fill
+    E:I with `#f4cccc`, Fullerton rows with `#9900ff`, columns A–D and J
+    stay white; Date/Day are center-aligned, Start/End/Company/Venue left,
+    Pay-h/Hours/Pay right, and Comment left-aligned with a black box
+    border (the only column with an explicit border). The Whitecoat
+    comment is `{no-meds count}/{meds count}` — confirmed against 8+ of
+    the owner's real logged rows (e.g. `694` ⇄ comment `7/48` = 7×$10 +
+    48×$13). The Fullerton comment/pay is bonus-only when rostered
+    (`{n} over` / `n×$10`) since the owner still enters that session's
+    base-pay row into the sheet themselves, the same way the existing
+    `-650`-style rows already work; it's the full `patients×$10` with an
+    "`{n} adhoc`" comment when not rostered, since there's no separate
+    base row for that case.
+  - **"Float tracker"** opens both jobs' live totals and tap buttons in a
+    single combined always-on-top window via Chrome's Document
+    Picture-in-Picture API (`documentPictureInPicture.requestWindow`) —
+    deliberately one combined window rather than one per job, because
+    Chrome only allows a single Document PiP window per page at a time.
+    The existing `#floatPanel` DOM node is moved wholesale into the PiP
+    window (carrying its live event listeners/state with it, not a copy)
+    and moved back to the main page on close. Falls back to an in-page
+    draggable panel (pinned via `position:fixed`, dragged by its header)
+    on browsers without the API — the owner uses Chrome exclusively so
+    this is a safety net, not the primary path. Chrome's Document PiP
+    windows don't inherit the page's stylesheet, so `copyStylesInto` clones
+    matching `<link rel="stylesheet">` tags into the new window's
+    `<head>`.
+  - Light/dark follows the OS via `prefers-color-scheme`, same reasoning
+    as templates-app — this gets opened at whatever hour the owner is
+    doing teleconsults.
 
 ## Sync architecture (shared/)
 
