@@ -29,24 +29,30 @@
 // Always appends to the leftmost tab — same "no fixed tab name, a new one
 // is added every month" convention as sheet-budget-sync/sheet-training-
 // sync, confirmed against the real Accounts sheet (newest month tab is
-// always frontmost). Row formatting (background color per column E-I,
-// alignment, and the Comment column's black box border) is read directly
-// off the real sheet — see teleconsult-tracker/CLAUDE.md entry — and
-// applied via a batchUpdate right after the values.append, using the
-// appended range's own row numbers so it never touches unrelated rows.
-// If that formatting call fails after the values already landed, this
-// still reports success (with a warning) rather than implying nothing was
-// written — the numbers are correct in the sheet either way, just possibly
-// uncoloured.
+// always frontmost). The append position itself is found by explicitly
+// scanning column A for the first blank row once the log's own data has
+// begun (see findLogEndRow) rather than trusting values.append's built-in
+// table auto-detection — that auto-detection inserted new rows at the very
+// top of the sheet once already, since the real per-day log doesn't start
+// at row 1 (rows above it are a header + summary/bonus block with a blank
+// column A throughout, which the auto-detection read as "empty table").
+// Row formatting (background color per column E-I, alignment, and the
+// Comment column's black box border) is read directly off the real sheet
+// — see teleconsult-tracker/CLAUDE.md entry — and applied via a
+// batchUpdate right after the values write, using that same computed row
+// number so it never touches unrelated rows. If that formatting call fails
+// after the values already landed, this still reports success (with a
+// warning) rather than implying nothing was written — the numbers are
+// correct in the sheet either way, just possibly uncoloured.
 //
 // Required secrets, beyond what the other sheet-sync functions already use:
 //   GOOGLE_ACCOUNTS_SHEET_ID - the id from the Accounts sheet's URL
 //                              (docs.google.com/spreadsheets/d/<this>/edit)
 // The service account needs Editor (not just Viewer) access to this sheet
-// — it's very likely NOT already shared with it, since every other place
-// that's touched this sheet (the telemed-locum-claims skill etc.) used the
-// owner's own Google login via Composio, not this repo's shared service
-// account.
+// — already granted as of this feature shipping (confirmed via the
+// sheet's own Share dialog), despite every *other* thing that's touched
+// this sheet (the telemed-locum-claims skill etc.) going through the
+// owner's own Google login via Composio instead.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { JWT } from "npm:google-auth-library@9";
@@ -142,24 +148,49 @@ function validateRow(r: unknown, i: number): InputRow {
   return row as unknown as InputRow;
 }
 
-async function appendRows(
-  accessToken: string,
-  tabTitle: string,
-  valuesRows: unknown[][],
-): Promise<{ startRow: number; endRow: number }> {
-  const range = `${tabTitle}!A1`;
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ values: valuesRows }),
-  });
-  if (!res.ok) throw new Error(`values.append failed: ${res.status} ${await res.text()}`);
+// Finds the row right after the daily log's last real entry. Deliberately
+// does NOT use values.append's own "find the table automatically" behavior
+// (insertDataOption=INSERT_ROWS anchored at A1) — that auto-detection
+// looks at whether the anchor cell/row has data, and this sheet's real
+// per-day log doesn't start at row 1: rows above it are a header + summary/
+// bonus block where column A is blank throughout. Anchoring table-detection
+// at A1 saw that blank column and decided the table was empty, inserting
+// new rows at the very top instead of after the real log (hit once already
+// — see git history). Scanning column A explicitly for "first blank row
+// after data has been seen" sidesteps that entirely, matching the same
+// approach the confirm-tm-income skill already uses by hand.
+async function findLogEndRow(accessToken: string, tabTitle: string): Promise<number> {
+  const range = `${tabTitle}!A1:A1000`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) throw new Error(`values.get failed: ${res.status} ${await res.text()}`);
   const data = await res.json();
-  const updatedRange: string | undefined = data?.updates?.updatedRange;
-  const match = updatedRange && /![A-Z]+(\d+):[A-Z]+(\d+)/.exec(updatedRange);
-  if (!match) throw new Error(`couldn't parse updatedRange from append response: ${updatedRange}`);
-  return { startRow: Number(match[1]), endRow: Number(match[2]) };
+  const rows: unknown[][] = data.values ?? [];
+  let seenData = false;
+  for (let i = 0; i < rows.length; i++) {
+    const cell = rows[i]?.[0];
+    const hasValue = cell !== undefined && cell !== null && String(cell).trim() !== "";
+    if (hasValue) {
+      seenData = true;
+    } else if (seenData) {
+      return i + 1; // 1-indexed sheet row: first blank once the log's own data has begun
+    }
+  }
+  // No gap found within the fetched window (no log yet, or it runs to the
+  // very end of what was fetched) — append right after the last row seen.
+  return rows.length + 1;
+}
+
+async function writeRows(accessToken: string, tabTitle: string, startRow: number, valuesRows: unknown[][]): Promise<void> {
+  const endRow = startRow + valuesRows.length - 1;
+  const range = `${tabTitle}!A${startRow}:J${endRow}`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ range, values: valuesRows }),
+  });
+  if (!res.ok) throw new Error(`values.update failed: ${res.status} ${await res.text()}`);
 }
 
 // Column layout read directly off the real sheet (see the CLAUDE.md entry
@@ -300,15 +331,16 @@ Deno.serve(async (req) => {
   const dateSerial = sheetsDateSerial(year!, month!, day!);
   const valuesRows = rows.map((r) => [dateSerial, weekday, "", "", r.company, r.venue, "", r.hours, r.pay, r.comment]);
 
-  let appended: { startRow: number; endRow: number };
+  let startRow: number;
   try {
-    appended = await appendRows(accessToken, tab.title, valuesRows);
+    startRow = await findLogEndRow(accessToken, tab.title);
+    await writeRows(accessToken, tab.title, startRow, valuesRows);
   } catch (err) {
     return jsonResponse(500, { error: `error writing rows: ${err}` });
   }
 
   try {
-    await applyFormatting(accessToken, tab.sheetId, appended.startRow, rows);
+    await applyFormatting(accessToken, tab.sheetId, startRow, rows);
   } catch (err) {
     console.error("teleconsult-end-shift formatting failed after successful append:", err);
     return jsonResponse(200, {
