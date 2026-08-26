@@ -44,6 +44,7 @@
 // Required secrets: none new — reuses GOOGLE_SERVICE_ACCOUNT_EMAIL/
 // PRIVATE_KEY, GOOGLE_WILLOW_TM_DOC_ID, DB_WEBHOOK_SECRET, SUPABASE_URL.
 
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { JWT } from "npm:google-auth-library@9";
 
 const WEBHOOK_SECRET = Deno.env.get("DB_WEBHOOK_SECRET")!;
@@ -51,16 +52,37 @@ const DOC_ID = Deno.env.get("GOOGLE_WILLOW_TM_DOC_ID")!;
 const SERVICE_ACCOUNT_EMAIL = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_EMAIL")!;
 const SERVICE_ACCOUNT_KEY = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY")!.replace(/\\n/g, "\n");
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const USER_ID = Deno.env.get("WILLOW_USER_ID")!;
+
+const supabase = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+// pg_net (used to trigger this function from SQL) hard-caps its client
+// wait at 5000ms regardless of requested timeout, and Drive markdown
+// export + a diagnostic pass sometimes runs close to or over that — so
+// diagnostic output is written here instead of just returned in the
+// response, to read back reliably via a plain SQL select afterward.
+async function writeDebugSnippet(data: unknown): Promise<void> {
+  await supabase
+    .from("app_state")
+    .upsert({ user_id: USER_ID, app: "template_cleanup_debug", state: { data }, updated_at: new Date().toISOString() });
+}
 
 async function getAccessToken(): Promise<string> {
   const jwt = new JWT({
     email: SERVICE_ACCOUNT_EMAIL,
     key: SERVICE_ACCOUNT_KEY,
-    scopes: ["https://www.googleapis.com/auth/documents"],
+    scopes: ["https://www.googleapis.com/auth/documents", "https://www.googleapis.com/auth/drive.readonly"],
   });
   const { token } = await jwt.getAccessToken();
   if (!token) throw new Error("failed to obtain Google access token");
   return token;
+}
+
+async function fetchMarkdownExport(accessToken: string): Promise<string> {
+  const url = `https://www.googleapis.com/drive/v3/files/${DOC_ID}/export?mimeType=text%2Fmarkdown`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) throw new Error(`Drive export failed: ${res.status} ${await res.text()}`);
+  return await res.text();
 }
 
 interface TextRun {
@@ -213,6 +235,29 @@ async function applySpacingReset(accessToken: string, revisionId: string, ranges
   if (!res.ok) throw new Error(`Docs batchUpdate failed: ${res.status} ${await res.text()}`);
 }
 
+async function applySpacingRestore(accessToken: string, revisionId: string, range: SpacingRange): Promise<void> {
+  const requests = [
+    {
+      updateParagraphStyle: {
+        range: { startIndex: range.startIndex, endIndex: range.endIndex },
+        paragraphStyle: {
+          spaceAbove: { magnitude: 6, unit: "PT" },
+          spaceBelow: { magnitude: 6, unit: "PT" },
+        },
+        fields: "spaceAbove,spaceBelow",
+      },
+    },
+  ];
+
+  const url = `https://docs.googleapis.com/v1/documents/${DOC_ID}:batchUpdate`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ requests, writeControl: { requiredRevisionId: revisionId } }),
+  });
+  if (!res.ok) throw new Error(`Docs batchUpdate failed: ${res.status} ${await res.text()}`);
+}
+
 async function triggerResync(): Promise<void> {
   try {
     await fetch(`${SUPABASE_URL}/functions/v1/sheet-teletemplates-sync`, {
@@ -230,7 +275,14 @@ Deno.serve(async (req) => {
     return new Response("Forbidden", { status: 403 });
   }
 
-  let payload: { dryRun?: boolean; diagnoseTitle?: string } = {};
+  let payload: {
+    dryRun?: boolean;
+    diagnoseTitle?: string;
+    diagnoseAround?: string;
+    restoreAll?: boolean;
+    diagnoseMarkdown?: string;
+    previewAdd?: { category: string; title: string };
+  } = {};
   try {
     payload = await req.json();
   } catch {
@@ -238,15 +290,129 @@ Deno.serve(async (req) => {
   }
 
   let accessToken: string;
-  let doc: DocsDocument;
   try {
     accessToken = await getAccessToken();
+  } catch (err) {
+    return new Response(`error getting access token: ${err}`, { status: 500 });
+  }
+
+  if (payload.previewAdd) {
+    // Mirrors template-add's own category-matching + insertion-point
+    // logic exactly, run here (read-only, no write) so it can be
+    // verified against the real live doc via this admin-secret-only
+    // function — template-add itself needs real user auth to call,
+    // which can't be faked to test it directly.
+    let doc: DocsDocument;
+    try {
+      doc = await fetchDoc(accessToken);
+    } catch (err) {
+      await writeDebugSnippet({ error: `error reading doc: ${err}` });
+      return new Response("ok", { headers: { "Content-Type": "application/json" } });
+    }
+    const paras = extractParagraphs(doc);
+    const { category, title } = payload.previewAdd;
+    const categoryIdxs: number[] = [];
+    paras.forEach((p, i) => {
+      if (p.headingLevel === 2 && p.trimmed === category) categoryIdxs.push(i);
+    });
+    if (categoryIdxs.length !== 1) {
+      await writeDebugSnippet({ previewAdd: true, error: `found category "${category}" ${categoryIdxs.length} times` });
+      return new Response("ok", { headers: { "Content-Type": "application/json" } });
+    }
+    const categoryIdx = categoryIdxs[0];
+    let nextHeadingIdx = paras.length;
+    for (let i = categoryIdx + 1; i < paras.length; i++) {
+      if (paras[i].headingLevel !== null && paras[i].headingLevel! <= 2) {
+        nextHeadingIdx = i;
+        break;
+      }
+    }
+    const atDocEnd = nextHeadingIdx === paras.length;
+    const insertAt = atDocEnd ? paras[paras.length - 1].endIndex - 1 : paras[nextHeadingIdx].startIndex;
+    const beforeCtx = paras
+      .slice(Math.max(0, (atDocEnd ? paras.length : nextHeadingIdx) - 3), atDocEnd ? paras.length : nextHeadingIdx)
+      .map((p) => ({ text: p.trimmed.slice(0, 40), headingLevel: p.headingLevel, boldOnly: p.boldOnly }));
+    const afterCtx = atDocEnd
+      ? []
+      : paras.slice(nextHeadingIdx, nextHeadingIdx + 2).map((p) => ({ text: p.trimmed.slice(0, 40), headingLevel: p.headingLevel, boldOnly: p.boldOnly }));
+    await writeDebugSnippet({
+      previewAdd: true,
+      category,
+      title,
+      insertAt,
+      atDocEnd,
+      docLength: paras.length ? paras[paras.length - 1].endIndex : 0,
+      beforeInsertionPoint: beforeCtx,
+      afterInsertionPoint: afterCtx,
+    });
+    return new Response("ok", { headers: { "Content-Type": "application/json" } });
+  }
+
+  if (payload.diagnoseMarkdown) {
+    let md: string;
+    try {
+      md = await fetchMarkdownExport(accessToken);
+    } catch (err) {
+      await writeDebugSnippet({ error: `error reading markdown: ${err}` });
+      return new Response("ok", { headers: { "Content-Type": "application/json" } });
+    }
+    const idxs: number[] = [];
+    let from = 0;
+    while (idxs.length < 5) {
+      const i = md.indexOf(payload.diagnoseMarkdown, from);
+      if (i === -1) break;
+      idxs.push(i);
+      from = i + payload.diagnoseMarkdown.length;
+    }
+    const snippets = idxs.map((idx) => md.slice(Math.max(0, idx - 100), idx + 500));
+    await writeDebugSnippet({ query: payload.diagnoseMarkdown, matchCount: idxs.length, mdLength: md.length, snippets });
+    return new Response("ok", { headers: { "Content-Type": "application/json" } });
+  }
+
+  let doc: DocsDocument;
+  try {
     doc = await fetchDoc(accessToken);
   } catch (err) {
     return new Response(`error reading doc: ${err}`, { status: 500 });
   }
 
   const paras = extractParagraphs(doc);
+
+  // Emergency revert: the spacing-removal cleanup below turned out to
+  // also strip spacing from bold Table-of-Contents category labels
+  // (never excluded — only a block literally titled "Table of
+  // Contents" was skipped), which changed how those paragraphs render
+  // in Markdown export and broke sheet-teletemplates-sync's regex-based
+  // boundary detection (604 garbage "templates" instead of ~74, most
+  // with empty bodies). This restores the original 6pt spacing across
+  // the whole document body in one shot, undoing exactly what the
+  // cleanup changed, rather than trying to selectively fix scope.
+  if (payload.restoreAll) {
+    const first = paras[0];
+    const last = paras[paras.length - 1];
+    if (!first || !last) return new Response(JSON.stringify({ ok: true, restored: false }), { headers: { "Content-Type": "application/json" } });
+    const range = { startIndex: first.startIndex, endIndex: last.endIndex - 1 };
+    try {
+      await applySpacingRestore(accessToken, doc.revisionId, range);
+    } catch (err) {
+      return new Response(`error restoring spacing: ${err}`, { status: 500 });
+    }
+    await triggerResync();
+    return new Response(JSON.stringify({ ok: true, restored: true }), { headers: { "Content-Type": "application/json" } });
+  }
+
+  if (payload.diagnoseAround) {
+    const idx = paras.findIndex((p) => p.trimmed === payload.diagnoseAround);
+    if (idx === -1) return new Response(JSON.stringify({ ok: false, error: "text not found" }), { headers: { "Content-Type": "application/json" } });
+    const dump = paras.slice(Math.max(0, idx - 2), idx + 20).map((p) => ({
+      text: p.trimmed.slice(0, 50),
+      headingLevel: p.headingLevel,
+      boldOnly: p.boldOnly,
+      spaceAbove: p.spaceAbove,
+      spaceBelow: p.spaceBelow,
+    }));
+    return new Response(JSON.stringify({ ok: true, paragraphs: dump }), { headers: { "Content-Type": "application/json" } });
+  }
 
   if (payload.diagnoseTitle) {
     const boundaryIdxs: number[] = [];

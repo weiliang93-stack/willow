@@ -109,8 +109,26 @@ const editBar = document.getElementById("editBar");
 const cancelEditBtn = document.getElementById("cancelEditBtn");
 const saveEditBtn = document.getElementById("saveEditBtn");
 
+const addTemplateBtn = document.getElementById("addTemplateBtn");
+const addView = document.getElementById("addView");
+const addBackBtn = document.getElementById("addBackBtn");
+const addCategorySelect = document.getElementById("addCategorySelect");
+const addTitleInput = document.getElementById("addTitleInput");
+const addBodyInput = document.getElementById("addBodyInput");
+const addError = document.getElementById("addError");
+const cancelAddBtn = document.getElementById("cancelAddBtn");
+const saveAddBtn = document.getElementById("saveAddBtn");
+
 let editing = false;
 let saving = false;
+let addingTemplate = false; // true while an add-template save request is in flight
+
+// Categories the "Add template" flow can target — excludes "Standard
+// Blocks", which uses a different bold-only-paragraph doc convention
+// template-add doesn't support yet. In-Clinic isn't offered at all: its
+// category assignment is TOC-order-driven (see sheet-templates-sync),
+// so a brand-new title with no TOC entry can't be placed reliably.
+const ADD_TEMPLATE_CATEGORIES = MODES.tele.categoryOrder.filter((c) => c !== "Standard Blocks");
 
 function activeData() {
   return data[mode];
@@ -165,13 +183,22 @@ function formatSyncedAt(iso) {
 function render() {
   if (view === "detail" && activeTemplate) {
     renderDetail();
+  } else if (view === "add") {
+    renderAddView();
   } else {
     renderList();
   }
 }
 
+function renderAddView() {
+  listView.classList.add("hidden");
+  detailView.classList.add("hidden");
+  addView.classList.remove("hidden");
+}
+
 function renderList() {
   detailView.classList.add("hidden");
+  addView.classList.add("hidden");
   listView.classList.remove("hidden");
   listRows.innerHTML = "";
 
@@ -287,6 +314,7 @@ function renderCategories() {
 
 function renderDetail() {
   listView.classList.add("hidden");
+  addView.classList.add("hidden");
   detailView.classList.remove("hidden");
   detailCategory.textContent = activeTemplate.category;
   detailTitle.textContent = activeTemplate.title;
@@ -306,13 +334,20 @@ function renderEditMode() {
   editError.textContent = "";
 }
 
-// Returns false (and leaves `editing` untouched) if there's an unsaved
-// edit and the user chose not to discard it — callers should bail out
-// without navigating away in that case.
+// Returns false (and leaves state untouched) if there's an unsaved edit
+// or a part-filled "add template" form and the user chose not to
+// discard it — callers should bail out without navigating away in that
+// case.
 function confirmDiscardIfEditing() {
-  if (!editing) return true;
-  if (!confirm("Discard unsaved changes to this template?")) return false;
-  editing = false;
+  if (editing) {
+    if (!confirm("Discard unsaved changes to this template?")) return false;
+    editing = false;
+    return true;
+  }
+  if (view === "add" && (addTitleInput.value.trim() || addBodyInput.value.trim())) {
+    if (!confirm("Discard this new template?")) return false;
+    return true;
+  }
   return true;
 }
 
@@ -365,6 +400,66 @@ async function saveEdit() {
   if (idx !== -1) templates[idx] = { ...templates[idx], body: newBody };
 
   editing = false;
+  render();
+}
+
+function populateAddCategorySelect() {
+  addCategorySelect.innerHTML = ADD_TEMPLATE_CATEGORIES.map(
+    (c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`,
+  ).join("");
+}
+
+function openAddTemplate() {
+  if (mode !== "tele") return;
+  if (!confirmDiscardIfEditing()) return;
+  view = "add";
+  activeTemplate = null;
+  populateAddCategorySelect();
+  addTitleInput.value = "";
+  addBodyInput.value = "";
+  addError.classList.add("hidden");
+  render();
+}
+
+function closeAddView() {
+  if (!confirmDiscardIfEditing()) return;
+  view = "list";
+  render();
+}
+
+async function saveAddTemplate() {
+  if (addingTemplate) return;
+  const category = addCategorySelect.value;
+  const title = addTitleInput.value.trim();
+  const body = addBodyInput.value.trim();
+  if (!title || !body) {
+    addError.textContent = "Title and body are required.";
+    addError.classList.remove("hidden");
+    return;
+  }
+
+  addingTemplate = true;
+  saveAddBtn.disabled = true;
+  saveAddBtn.textContent = "Adding…";
+  addError.classList.add("hidden");
+
+  const result = await SupaSync.invokeFunction("template-add", { category, title, body });
+
+  addingTemplate = false;
+  saveAddBtn.disabled = false;
+  saveAddBtn.textContent = "Add to doc";
+
+  if (!result.ok) {
+    addError.textContent = result.error || "Something went wrong adding the template.";
+    addError.classList.remove("hidden");
+    return;
+  }
+
+  const id = (result.data && result.data.id) || `${category}-${title}`;
+  data.tele.templates.push({ id, category, title, body });
+
+  view = "list";
+  activeCategory = category;
   render();
 }
 
@@ -471,6 +566,8 @@ function renderModeToggle() {
   modeToggle.querySelectorAll(".mode-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === mode);
   });
+  // Adding is Teleconsult-only for now — see ADD_TEMPLATE_CATEGORIES.
+  addTemplateBtn.classList.toggle("hidden", mode !== "tele");
 }
 
 function bindEvents() {
@@ -481,7 +578,7 @@ function bindEvents() {
   searchBoxes.forEach(({ input, clearBtn }) => {
     input.addEventListener("input", () => setQuery(input.value, { fromInput: input }));
     input.addEventListener("focus", () => {
-      if (view === "detail") setQuery(query);
+      if (view === "detail" || view === "add") setQuery(query);
     });
     clearBtn.addEventListener("click", clearQuery);
   });
@@ -495,6 +592,11 @@ function bindEvents() {
   editBtn.addEventListener("click", enterEdit);
   cancelEditBtn.addEventListener("click", cancelEdit);
   saveEditBtn.addEventListener("click", saveEdit);
+
+  addTemplateBtn.addEventListener("click", openAddTemplate);
+  addBackBtn.addEventListener("click", closeAddView);
+  cancelAddBtn.addEventListener("click", closeAddView);
+  saveAddBtn.addEventListener("click", saveAddTemplate);
 }
 
 async function loadMode(key) {
