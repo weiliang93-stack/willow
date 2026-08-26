@@ -60,10 +60,19 @@ without the user needing to re-explain anything — read this first.
   the OS via `prefers-color-scheme` rather than a fixed palette, unlike
   the other apps — this one gets opened at all hours.
 - **teleconsult-tracker/** — live per-patient earnings clicker for running two
-  simultaneous teleconsult jobs, Whitecoat TM and Fullerton TM. Standalone —
-  not connected to Supabase or the Telegram bot; state lives in
-  `localStorage` only, keyed to the current calendar date (a new day resets
-  patient counts/history but keeps the target-$ and shift-length settings).
+  simultaneous teleconsult jobs, Whitecoat TM and Fullerton TM. Not connected
+  to the Telegram bot. Session state lives in `localStorage` only, keyed to
+  the current calendar date (a new day resets patient counts/history but
+  keeps the target-$ and shift-length settings) — it is *not* synced to
+  `app_state` like the other apps. It does sit behind the same Supabase
+  Auth gate as templates-app/training-app/expense-tracker (`#authGate` +
+  `SupaSync.mountAuthGate`, whole app hidden until signed in), added
+  specifically so **"End shift"** can call the `teleconsult-end-shift` Edge
+  Function as the signed-in user — see its own bullet below. If Supabase is
+  unreachable (offline, CDN blocked), `mountAuthGate`'s existing no-op
+  fallback boots the app straight into local-only mode same as before; only
+  "End shift" itself needs a working, signed-in session — everything else
+  (tallying, copy-for-sheet, float tracker) works without one.
   Pay logic, validated against the real Accounts Google Sheet before
   building:
   - **Whitecoat TM** — $13/patient with meds, $10/patient without, tallied
@@ -119,6 +128,16 @@ without the user needing to re-explain anything — read this first.
   - Light/dark follows the OS via `prefers-color-scheme`, same reasoning
     as templates-app — this gets opened at whatever hour the owner is
     doing teleconsults.
+  - **"End shift"** writes the same rows "Copy for sheet"/"Copy both rows"
+    build straight into the real Accounts sheet via the
+    `teleconsult-end-shift` Edge Function (see its own section below),
+    instead of the owner pasting them by hand — the copy buttons remain as
+    a fallback. The button disables itself after a successful write
+    (label flips to "Shift added ✓") so a second accidental click can't
+    double-log the same numbers; any further count/target/hours/rostered
+    change re-enables it (`markShiftDirty`, called from both render
+    functions so every state-changing action is covered in one place
+    rather than needing to be wired at each call site individually).
 
 ## Sync architecture (shared/)
 
@@ -417,6 +436,66 @@ Requires Editor (not just Viewer) access on both docs for the shared
 Google service account — no new secrets beyond what the sheet-sync
 functions already use.
 
+## Accounts sheet writing (teleconsult-end-shift)
+
+The other place an app writes rather than reads: teleconsult-tracker's
+"End shift" button. Same `verify_jwt`-on + `WILLOW_USER_ID`-check pattern
+as `template-edit` (called by the app as the signed-in user via
+`SupaSync.invokeFunction`, not by cron), but simpler — it doesn't re-derive
+Whitecoat/Fullerton pay logic server-side at all. The client sends
+already-computed rows (same shape "Copy for sheet" builds:
+company/venue/hours/pay/comment/bg) plus the session's `{year, month, day,
+weekday}`, and the function only writes exactly what it's given. Trusting
+the client like this is a deliberate single-user-app tradeoff — duplicating
+the pay-rate math here would just be a second place for it to drift out of
+sync with `teleconsult-tracker/script.js`.
+
+Always targets the leftmost tab of the Accounts sheet — same "no fixed tab
+name, a new one is added every month" convention as
+sheet-budget-sync/sheet-training-sync, confirmed against the real sheet
+(newest month tab is always frontmost, e.g. "Aug 2026").
+
+Two things it deliberately avoids doing the "obvious" way, both learned
+from bugs already hit once in this app's clipboard-copy path:
+
+- **The date is sent as `{year, month, day}` integers, converted to a
+  Sheets serial number (`days since 1899-12-30`) server-side**, not sent
+  as a "D/M/YYYY" string for `values.append` to smart-parse — a string
+  would depend on the spreadsheet's locale actually being day-first to
+  parse correctly, which the served value is never allowed to gamble on.
+  A separate `batchUpdate` right after sets that cell's `numberFormat` to
+  `d/m/yyyy` explicitly, matching the sheet's existing date columns.
+- **Column J (Comment) values like `7/48` or `2 over` are appended under
+  `valueInputOption=RAW` as genuine JSON strings**, not left to Sheets'
+  own smart-parsing (which is what turned a real comment like `13/5` into
+  a right-aligned "number" once already, via the clipboard-paste path —
+  see the git history around that fix). Hours/Pay are sent as genuine
+  JSON numbers instead of numeric-looking strings, which under RAW still
+  land as real numbers (RAW only suppresses *string* reinterpretation,
+  not the JSON value's own type) — this is what keeps them usable by any
+  `SUMIF`-style formula elsewhere in the sheet that reads column I.
+
+Row formatting — the background fill per column E–I (`#f4cccc` Whitecoat /
+`#9900ff` Fullerton), alignment, and the Comment column's black box
+border — is applied via a `batchUpdate` `repeatCell` request per
+row/column-group, using the exact row numbers `values.append`'s own
+response (`updates.updatedRange`) reports back, so it can never touch a
+row it didn't just write. If that formatting call fails after the
+`values.append` already succeeded, the function still reports success
+(with a warning) — the numbers are correctly in the sheet either way, just
+possibly uncoloured; reporting failure there would wrongly imply nothing
+was written.
+
+Requires **Editor** (not just Viewer) access to the Accounts sheet for the
+shared Google service account — almost certainly not already granted,
+since every other thing that's touched this sheet (the
+`telemed-locum-claims` skill, etc.) used the owner's own Google login via
+Composio, not this repo's service account.
+
+Required secret, beyond what the other sheet-sync functions already use:
+- `GOOGLE_ACCOUNTS_SHEET_ID` — the id from the Accounts sheet's URL
+  (`docs.google.com/spreadsheets/d/<this>/edit`)
+
 ## Required secrets (Edge Functions)
 
 - `TELEGRAM_BOT_TOKEN` — from @BotFather
@@ -433,7 +512,10 @@ functions already use.
   prefix on manual secrets)
 
 No MCP tool manages Edge Function secrets — even with Supabase MCP
-connected, secrets still have to be set via the dashboard.
+connected, secrets still have to be set via the dashboard. Supabase MCP
+*can* deploy function code directly (`deploy_edge_function`, project id
+`fozipnpmmjmmlthkdplf`) — that part doesn't need the dashboard, only the
+secrets themselves do.
 
 ## Schema files
 

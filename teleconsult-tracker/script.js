@@ -1,4 +1,4 @@
-(function () {
+function bootApp() {
   "use strict";
 
   /* ---------------- persistence ---------------- */
@@ -57,11 +57,24 @@
     weekdayEl.textContent = WEEKDAYS[now.getDay()];
   })();
 
-  function updateWeekdayFromInput() {
+  // Parses the "Logging for" field (d/m/yyyy) into numeric components for
+  // the End Shift payload — a single source of truth shared with the
+  // weekday display, so both agree on what date was actually typed.
+  function parsedDateComponents() {
     var parts = dateInput.value.split("/");
-    if (parts.length === 3) {
-      var d = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
-      if (!isNaN(d.getTime())) { weekdayEl.textContent = WEEKDAYS[d.getDay()]; return; }
+    if (parts.length !== 3) return null;
+    var day = Number(parts[0]), month = Number(parts[1]), year = Number(parts[2]);
+    var d = new Date(year, month - 1, day);
+    if (isNaN(d.getTime())) return null;
+    return { year: year, month: month, day: day };
+  }
+
+  function updateWeekdayFromInput() {
+    var parts = parsedDateComponents();
+    if (parts) {
+      var d = new Date(parts.year, parts.month - 1, parts.day);
+      weekdayEl.textContent = WEEKDAYS[d.getDay()];
+      return;
     }
     weekdayEl.textContent = "?";
   }
@@ -94,6 +107,21 @@
     });
   }
   function cellsToTabText(cells) { return cells.map(function (c) { return c.text; }).join("\t"); }
+
+  // Same 10-cell array "Copy for sheet" builds, reduced to what the
+  // End Shift Edge Function needs: it only writes what it's given, so
+  // Date/Day are sent once at the payload's top level (see endShiftBtn
+  // below) rather than repeated per row.
+  function cellsToEndShiftRow(cells) {
+    return {
+      company: cells[4].text,
+      venue: cells[5].text,
+      hours: Number(cells[7].text),
+      pay: Number(cells[8].text),
+      comment: cells[9].text,
+      bg: cells[4].bg
+    };
+  }
 
   function escapeHtml(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -214,6 +242,7 @@
   }
 
   function wcRenderStats() {
+    markShiftDirty();
     var total = wc.meds * 13 + wc.nomeds * 10;
     var patients = wc.meds + wc.nomeds;
     wcEls.medsCount.textContent = wc.meds;
@@ -317,6 +346,7 @@
   }
 
   function fhgRenderStats() {
+    markShiftDirty();
     var threshold = fhg.hours * 5;
     var base = fhg.hours * 70;
     var bonusPatients = Math.max(0, fhg.patients - threshold);
@@ -477,6 +507,71 @@
     copyRows(rows, copyBothBtn, copyBothBtn, copyBothLabel);
   });
 
+  /* ---------------- end shift: write straight into the Accounts sheet ---------------- */
+  var endShiftBtn = document.getElementById("endShiftBtn");
+  var endShiftMsg = document.getElementById("endShiftMsg");
+  var endShiftLabel = endShiftBtn.textContent;
+  var shiftEnded = false;
+
+  // Any action that changes what would be written invalidates a prior
+  // "Shift added" state, so a second real change can be logged again —
+  // this is what stops an accidental second click from double-logging
+  // the same numbers, without permanently locking the button.
+  function markShiftDirty() {
+    if (!shiftEnded) return;
+    shiftEnded = false;
+    endShiftBtn.disabled = false;
+    endShiftBtn.classList.remove("done");
+    endShiftBtn.textContent = endShiftLabel;
+    endShiftMsg.textContent = "";
+    endShiftMsg.className = "end-shift-msg";
+  }
+
+  endShiftBtn.addEventListener("click", function () {
+    if (shiftEnded) return;
+    var dateParts = parsedDateComponents();
+    if (!dateParts) {
+      endShiftMsg.textContent = "Fix the date field before ending shift.";
+      endShiftMsg.className = "end-shift-msg error";
+      return;
+    }
+    if (!window.SupaSync || !SupaSync.configured) {
+      endShiftMsg.textContent = "Not signed in — sign in above to write to the sheet.";
+      endShiftMsg.className = "end-shift-msg error";
+      return;
+    }
+
+    var rows = wcRowsForCopy().concat([fhgRowCells()]).map(cellsToEndShiftRow);
+
+    endShiftBtn.disabled = true;
+    endShiftBtn.textContent = "Adding to sheet…";
+    endShiftMsg.textContent = "";
+    endShiftMsg.className = "end-shift-msg";
+
+    SupaSync.invokeFunction("teleconsult-end-shift", {
+      year: dateParts.year,
+      month: dateParts.month,
+      day: dateParts.day,
+      weekday: weekdayEl.textContent,
+      rows: rows
+    }).then(function (result) {
+      if (!result.ok) {
+        endShiftBtn.disabled = false;
+        endShiftBtn.textContent = endShiftLabel;
+        endShiftMsg.textContent = result.error || "Something went wrong writing to the sheet.";
+        endShiftMsg.className = "end-shift-msg error";
+        return;
+      }
+      shiftEnded = true;
+      endShiftBtn.classList.add("done");
+      endShiftBtn.textContent = "Shift added ✓";
+      endShiftMsg.textContent = result.data && result.data.warning
+        ? result.data.warning
+        : "Added " + rows.length + " row(s) to \"" + (result.data && result.data.tab) + "\".";
+      endShiftMsg.className = result.data && result.data.warning ? "end-shift-msg error" : "end-shift-msg success";
+    });
+  });
+
   /* ---------------- combined floating tracker ---------------- */
   // One combined panel (not one per job): Chrome only allows a single Document
   // Picture-in-Picture window per page at a time, so both jobs live in it together.
@@ -588,4 +683,9 @@
 
   wcRenderStats();
   fhgRenderStats();
-})();
+}
+
+SupaSync.mountAuthGate(document.getElementById("authGate"), function () {
+  document.getElementById("app").style.display = "";
+  bootApp();
+});
