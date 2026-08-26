@@ -36,6 +36,21 @@
 //      namedStyleType / bold respectively) — never a broad range, unlike
 //      the earlier template-cleanup incident that corrupted heading
 //      levels doc-wide via an imprecise style update.
+//      IMPORTANT caveat learned the hard way (see incident below): the
+//      insertion point sits at the START of the next boundary paragraph
+//      (the next "## " category heading, or "### " for a mid-section
+//      insert). Docs' insertText SPLITS that paragraph at the insertion
+//      point, and every new paragraph created by the inserted text's own
+//      newlines inherits that split paragraph's style — i.e. the whole
+//      inserted block (blank lead-in, title, every body line) silently
+//      came back as HEADING_2 + bold, not NORMAL_TEXT, because that's
+//      what the following category heading was. The title-only override
+//      masked this for the title line but left the body corrupted. Fix:
+//      explicitly reset the ENTIRE inserted range to NORMAL_TEXT + not
+//      bold FIRST, then re-apply HEADING_3 + bold to only the title
+//      paragraph as a later, overriding request — never rely on "plain
+//      insertText defaults to plain style," since it inherits neighbor
+//      style instead.
 //   5. writeControl.requiredRevisionId locks the whole batchUpdate to the
 //      revision just read, so a concurrent doc edit fails the call
 //      cleanly instead of clobbering it.
@@ -269,8 +284,32 @@ Deno.serve(async (req) => {
     });
   }
 
+  // The full inserted block, in the post-insertText document — spans the
+  // leading blank paragraph through the trailing blank paragraph.
+  const insertedRangeStart = insertAt;
+  const insertedRangeEnd = insertAt + insertTextStr.length;
+
   const requests = [
     { insertText: { location: { index: insertAt }, text: insertTextStr } },
+    // Force the WHOLE inserted block back to plain style first — it
+    // otherwise inherits the style of whichever paragraph it split (see
+    // the caveat in the header comment above), not NORMAL_TEXT.
+    {
+      updateParagraphStyle: {
+        range: { startIndex: insertedRangeStart, endIndex: insertedRangeEnd },
+        paragraphStyle: { namedStyleType: "NORMAL_TEXT" },
+        fields: "namedStyleType",
+      },
+    },
+    {
+      updateTextStyle: {
+        range: { startIndex: insertedRangeStart, endIndex: insertedRangeEnd },
+        textStyle: { bold: false },
+        fields: "bold",
+      },
+    },
+    // Then re-apply Heading 3 + bold to only the title paragraph, as a
+    // later (overriding) request.
     {
       updateParagraphStyle: {
         range: { startIndex: titleParaStart, endIndex: titleParaEnd },
