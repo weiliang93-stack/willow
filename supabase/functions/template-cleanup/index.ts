@@ -282,6 +282,7 @@ Deno.serve(async (req) => {
     restoreAll?: boolean;
     diagnoseMarkdown?: string;
     previewAdd?: { category: string; title: string };
+    fixCorruptedBody?: { title: string; untilTitle?: string };
   } = {};
   try {
     payload = await req.json();
@@ -346,6 +347,90 @@ Deno.serve(async (req) => {
       afterInsertionPoint: afterCtx,
     });
     return new Response("ok", { headers: { "Content-Type": "application/json" } });
+  }
+
+  if (payload.fixCorruptedBody) {
+    // Narrow, single-template repair for the template-edit/template-add
+    // "inserted body inherited the next boundary's heading style" bug
+    // (see those functions' own fix commits): resets ONLY the body
+    // paragraphs of the one named template back to NORMAL_TEXT + not
+    // bold — the title paragraph and every other template are untouched.
+    // The corruption itself promotes every body LINE to its own
+    // heading/bold "boundary" paragraph, so the immediate next boundary
+    // after the title is usually still part of the SAME corrupted body,
+    // not the next real template — pass `untilTitle` (the next real
+    // template's title, e.g. from the doc's own table of contents) to
+    // extend the reset range up to (not including) that boundary
+    // instead of stopping at the first one.
+    let doc: DocsDocument;
+    try {
+      doc = await fetchDoc(accessToken);
+    } catch (err) {
+      return new Response(`error reading doc: ${err}`, { status: 500 });
+    }
+    const paras = extractParagraphs(doc);
+    const boundaryIdxs: number[] = [];
+    paras.forEach((p, i) => {
+      if (isBoundary(p)) boundaryIdxs.push(i);
+    });
+    const { title, untilTitle } = payload.fixCorruptedBody;
+    const b = boundaryIdxs.findIndex((idx) => titleText(paras[idx]) === title);
+    if (b === -1) {
+      return new Response(JSON.stringify({ ok: false, error: `title "${title}" not found among boundary paragraphs` }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    const titleIdx = boundaryIdxs[b];
+    let nextBoundaryIdx: number;
+    if (untilTitle) {
+      const stopB = boundaryIdxs.findIndex((idx, i) => i > b && titleText(paras[idx]) === untilTitle);
+      if (stopB === -1) {
+        return new Response(JSON.stringify({ ok: false, error: `untilTitle "${untilTitle}" not found after "${title}"` }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      nextBoundaryIdx = boundaryIdxs[stopB];
+    } else {
+      nextBoundaryIdx = b + 1 < boundaryIdxs.length ? boundaryIdxs[b + 1] : paras.length;
+    }
+    if (titleIdx + 1 >= nextBoundaryIdx) {
+      return new Response(JSON.stringify({ ok: true, fixed: false, reason: "no body paragraphs found" }), { headers: { "Content-Type": "application/json" } });
+    }
+    const bodyStart = paras[titleIdx + 1].startIndex;
+    const lastBodyParaIdx = nextBoundaryIdx - 1;
+    const atDocEnd = lastBodyParaIdx === paras.length - 1;
+    const bodyEnd = atDocEnd ? paras[lastBodyParaIdx].endIndex - 1 : paras[lastBodyParaIdx].endIndex;
+
+    const requests = [
+      {
+        updateParagraphStyle: {
+          range: { startIndex: bodyStart, endIndex: bodyEnd },
+          paragraphStyle: { namedStyleType: "NORMAL_TEXT" },
+          fields: "namedStyleType",
+        },
+      },
+      {
+        updateTextStyle: {
+          range: { startIndex: bodyStart, endIndex: bodyEnd },
+          textStyle: { bold: false },
+          fields: "bold",
+        },
+      },
+    ];
+
+    const url = `https://docs.googleapis.com/v1/documents/${DOC_ID}:batchUpdate`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ requests, writeControl: { requiredRevisionId: doc.revisionId } }),
+    });
+    if (!res.ok) {
+      return new Response(`error applying fix: ${res.status} ${await res.text()}`, { status: 500 });
+    }
+    await triggerResync();
+    return new Response(JSON.stringify({ ok: true, fixed: true, title, bodyStart, bodyEnd }), {
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   if (payload.diagnoseMarkdown) {
