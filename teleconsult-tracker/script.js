@@ -201,6 +201,18 @@
     return buildRowCells("Whitecoat", "TM", 0, Math.round(total), wc.nomeds + "/" + wc.meds, WC_BG);
   }
 
+  // The Accounts sheet's real rows always carry a "Fullerton" reservation row just
+  // above the day's Whitecoat row, valued at minus that day's WC TM shift rate
+  // (-$650 for a normal 5hr shift, -$250 for a 4hr Inspire-day shift, etc — in
+  // practice just -target, since the target IS that day's expected WC TM value).
+  // Only makes sense when WC TM is actually rostered.
+  function wcReservationRowCells() {
+    return buildRowCells("Fullerton", "TM", 0, -wc.target, "", FHG_BG);
+  }
+  function wcRowsForCopy() {
+    return wc.rostered ? [wcReservationRowCells(), wcRowCells()] : [];
+  }
+
   function wcRenderStats() {
     var total = wc.meds * 13 + wc.nomeds * 10;
     var patients = wc.meds + wc.nomeds;
@@ -213,7 +225,7 @@
     wcEls.bar.style.width = (pct * 100) + "%";
     wcEls.bar.classList.toggle("met", total >= wc.target && wc.target > 0);
     wcEls.pct.textContent = Math.round(pct * 100) + "%" + (total >= wc.target && wc.target > 0 ? " — hit!" : "");
-    wcEls.copyPreview.textContent = cellsToTabText(wcRowCells());
+    wcEls.copyPreview.textContent = wcRowsForCopy().map(cellsToTabText).join("\n");
 
     floatEls.wcTotal.textContent = fmtMoney(total);
     floatEls.wcSub.textContent = patients + " patients · " + Math.round(pct * 100) + "% of target";
@@ -250,7 +262,7 @@
   });
   armReset(wcEls.reset, function () { wc.meds = 0; wc.nomeds = 0; wc.history = []; wcRenderStats(); persist(); });
   wcEls.copyBtn.addEventListener("click", function () {
-    copyRows([wcRowCells()], wcEls.copyBtn, wcEls.copyBtnText, "Copy row for sheet");
+    copyRows(wcRowsForCopy(), wcEls.copyBtn, wcEls.copyBtnText, "Copy rows for sheet");
   });
 
   /* ---------------- FHG TM ---------------- */
@@ -461,9 +473,7 @@
   var copyBothBtn = document.getElementById("copyBothBtn");
   var copyBothLabel = copyBothBtn.textContent;
   copyBothBtn.addEventListener("click", function () {
-    var rows = [];
-    if (wc.rostered) rows.push(wcRowCells());
-    rows.push(fhgRowCells());
+    var rows = wcRowsForCopy().concat([fhgRowCells()]);
     copyRows(rows, copyBothBtn, copyBothBtn, copyBothLabel);
   });
 
