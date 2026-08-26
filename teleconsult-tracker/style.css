@@ -674,3 +674,119 @@ footer.note {
   border-top: 1px solid var(--line);
   padding-top: 14px;
 }
+
+/* ---- auth gate (shared pattern, see templates-app) ---- */
+.auth-gate {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  max-width: 920px;
+  margin: 0 auto;
+}
+.auth-gate-signedin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+}
+.auth-signedin-label {
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+.auth-signedin-label.num { font-family: "IBM Plex Mono", monospace; }
+.auth-signout-btn {
+  background: none;
+  border: none;
+  color: var(--wc);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+.auth-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 360px;
+  margin: 40px auto;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.auth-box h2 {
+  color: var(--ink);
+  font-size: 18px;
+  margin: 0;
+}
+.auth-hint {
+  color: var(--ink-muted);
+  font-size: 13px;
+  margin: 0;
+}
+.auth-box input {
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 14px;
+}
+.auth-actions {
+  display: flex;
+  gap: 8px;
+}
+.auth-actions button {
+  background: var(--wc);
+  color: var(--wc-on);
+  border: 1px solid var(--wc);
+  border-radius: var(--radius-sm);
+  padding: 9px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.auth-actions button.secondary {
+  background: none;
+  color: var(--wc);
+}
+.auth-error {
+  color: var(--critical);
+  font-size: 12.5px;
+  min-height: 1em;
+}
+
+/* ---- end shift ---- */
+.end-shift-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.end-shift-btn {
+  border: none;
+  background: var(--ink);
+  color: var(--paper);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 12px 18px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: transform 0.08s ease, opacity 0.15s ease;
+}
+.end-shift-btn:hover { opacity: 0.92; }
+.end-shift-btn:active { transform: scale(0.98); }
+.end-shift-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+.end-shift-btn.done { background: var(--good); }
+.end-shift-msg {
+  font-size: 12.5px;
+  color: var(--ink-muted);
+}
+.end-shift-msg.error { color: var(--critical); font-weight: 600; }
+.end-shift-msg.success { color: var(--good); font-weight: 600; }

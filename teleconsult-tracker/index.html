@@ -10,7 +10,8 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="wrap">
+  <div id="authGate" class="auth-gate"></div>
+  <div id="app" class="wrap" style="display:none">
     <header class="topbar">
       <div>
         <div class="eyebrow">Double Shift</div>
@@ -30,6 +31,11 @@
         <button id="floatBtn" class="ghost-btn" type="button">Float tracker ⧉</button>
         <button id="copyBothBtn" class="ghost-btn" type="button">Copy both rows ⧉</button>
       </div>
+    </div>
+
+    <div class="end-shift-row">
+      <button id="endShiftBtn" class="end-shift-btn" type="button">End shift &mdash; add to Accounts sheet</button>
+      <div id="endShiftMsg" class="end-shift-msg"></div>
     </div>
 
     <div class="cards">
@@ -233,6 +239,9 @@
     </div>
   </div>
 
+  <script src="../shared/supabase-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="../shared/supabase-sync.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
