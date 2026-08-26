@@ -507,6 +507,72 @@ function bootApp() {
     copyRows(rows, copyBothBtn, copyBothBtn, copyBothLabel);
   });
 
+  /* ---------------- check calendar: auto-detect rostering ---------------- */
+  var checkCalendarBtn = document.getElementById("checkCalendarBtn");
+  var calendarMsg = document.getElementById("calendarMsg");
+  var calendarCheckLabel = checkCalendarBtn.textContent;
+
+  // Applies a teleconsult-check-roster result to both cards, reusing the
+  // same setters a manual toggle tap already goes through (so UI state,
+  // rendering, and persistence all stay in the one place).
+  function applyRosterResult(data) {
+    if (typeof data.wcTarget === "number") {
+      wc.target = data.wcTarget;
+      wcEls.target.value = data.wcTarget;
+    }
+    wcEls.rosteredInput.checked = !!data.wcRostered;
+    wcSetActive(!!data.wcRostered);
+
+    fhgEls.rosteredInput.checked = !!data.fhgRostered;
+    fhgSetActive(!!data.fhgRostered);
+  }
+
+  function checkCalendar(auto) {
+    var dateParts = parsedDateComponents();
+    if (!dateParts) {
+      if (!auto) {
+        calendarMsg.textContent = "Fix the date field before checking the calendar.";
+        calendarMsg.className = "calendar-msg error";
+      }
+      return;
+    }
+    if (!window.SupaSync || !SupaSync.configured) {
+      if (!auto) {
+        calendarMsg.textContent = "Not signed in — sign in above to check your calendar.";
+        calendarMsg.className = "calendar-msg error";
+      }
+      return;
+    }
+
+    checkCalendarBtn.disabled = true;
+    checkCalendarBtn.textContent = "Checking…";
+    calendarMsg.textContent = "";
+    calendarMsg.className = "calendar-msg";
+
+    SupaSync.invokeFunction("teleconsult-check-roster", {
+      year: dateParts.year,
+      month: dateParts.month,
+      day: dateParts.day
+    }).then(function (result) {
+      checkCalendarBtn.disabled = false;
+      checkCalendarBtn.textContent = calendarCheckLabel;
+      if (!result.ok) {
+        calendarMsg.textContent = result.error || "Something went wrong checking the calendar.";
+        calendarMsg.className = "calendar-msg error";
+        return;
+      }
+      applyRosterResult(result.data);
+      var wcPart = result.data.wcRostered
+        ? "Whitecoat rostered (" + (result.data.isInspireDay ? "Inspire, $250" : "$650") + ")"
+        : "Whitecoat not rostered";
+      var fhgPart = result.data.fhgRostered ? "Fullerton rostered" : "Fullerton not rostered";
+      calendarMsg.textContent = wcPart + " · " + fhgPart;
+      calendarMsg.className = "calendar-msg success";
+    });
+  }
+
+  checkCalendarBtn.addEventListener("click", function () { checkCalendar(false); });
+
   /* ---------------- end shift: write straight into the Accounts sheet ---------------- */
   var endShiftBtn = document.getElementById("endShiftBtn");
   var endShiftMsg = document.getElementById("endShiftMsg");
@@ -683,6 +749,13 @@ function bootApp() {
 
   wcRenderStats();
   fhgRenderStats();
+
+  // Auto-check the calendar once, only on a genuinely fresh day — never on
+  // a reload of a day already in progress, so a manual toggle change never
+  // gets silently overridden by a stale or re-run check. Re-checking later
+  // the same day (e.g. a roster added after this session started) is what
+  // the "Check calendar" button itself is for.
+  if (!sameDay) checkCalendar(true);
 }
 
 SupaSync.mountAuthGate(document.getElementById("authGate"), function () {
