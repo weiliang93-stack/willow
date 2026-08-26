@@ -275,7 +275,14 @@ Deno.serve(async (req) => {
     return new Response("Forbidden", { status: 403 });
   }
 
-  let payload: { dryRun?: boolean; diagnoseTitle?: string; diagnoseAround?: string; restoreAll?: boolean; diagnoseMarkdown?: string } = {};
+  let payload: {
+    dryRun?: boolean;
+    diagnoseTitle?: string;
+    diagnoseAround?: string;
+    restoreAll?: boolean;
+    diagnoseMarkdown?: string;
+    previewAdd?: { category: string; title: string };
+  } = {};
   try {
     payload = await req.json();
   } catch {
@@ -287,6 +294,58 @@ Deno.serve(async (req) => {
     accessToken = await getAccessToken();
   } catch (err) {
     return new Response(`error getting access token: ${err}`, { status: 500 });
+  }
+
+  if (payload.previewAdd) {
+    // Mirrors template-add's own category-matching + insertion-point
+    // logic exactly, run here (read-only, no write) so it can be
+    // verified against the real live doc via this admin-secret-only
+    // function — template-add itself needs real user auth to call,
+    // which can't be faked to test it directly.
+    let doc: DocsDocument;
+    try {
+      doc = await fetchDoc(accessToken);
+    } catch (err) {
+      await writeDebugSnippet({ error: `error reading doc: ${err}` });
+      return new Response("ok", { headers: { "Content-Type": "application/json" } });
+    }
+    const paras = extractParagraphs(doc);
+    const { category, title } = payload.previewAdd;
+    const categoryIdxs: number[] = [];
+    paras.forEach((p, i) => {
+      if (p.headingLevel === 2 && p.trimmed === category) categoryIdxs.push(i);
+    });
+    if (categoryIdxs.length !== 1) {
+      await writeDebugSnippet({ previewAdd: true, error: `found category "${category}" ${categoryIdxs.length} times` });
+      return new Response("ok", { headers: { "Content-Type": "application/json" } });
+    }
+    const categoryIdx = categoryIdxs[0];
+    let nextHeadingIdx = paras.length;
+    for (let i = categoryIdx + 1; i < paras.length; i++) {
+      if (paras[i].headingLevel !== null && paras[i].headingLevel! <= 2) {
+        nextHeadingIdx = i;
+        break;
+      }
+    }
+    const atDocEnd = nextHeadingIdx === paras.length;
+    const insertAt = atDocEnd ? paras[paras.length - 1].endIndex - 1 : paras[nextHeadingIdx].startIndex;
+    const beforeCtx = paras
+      .slice(Math.max(0, (atDocEnd ? paras.length : nextHeadingIdx) - 3), atDocEnd ? paras.length : nextHeadingIdx)
+      .map((p) => ({ text: p.trimmed.slice(0, 40), headingLevel: p.headingLevel, boldOnly: p.boldOnly }));
+    const afterCtx = atDocEnd
+      ? []
+      : paras.slice(nextHeadingIdx, nextHeadingIdx + 2).map((p) => ({ text: p.trimmed.slice(0, 40), headingLevel: p.headingLevel, boldOnly: p.boldOnly }));
+    await writeDebugSnippet({
+      previewAdd: true,
+      category,
+      title,
+      insertAt,
+      atDocEnd,
+      docLength: paras.length ? paras[paras.length - 1].endIndex : 0,
+      beforeInsertionPoint: beforeCtx,
+      afterInsertionPoint: afterCtx,
+    });
+    return new Response("ok", { headers: { "Content-Type": "application/json" } });
   }
 
   if (payload.diagnoseMarkdown) {
