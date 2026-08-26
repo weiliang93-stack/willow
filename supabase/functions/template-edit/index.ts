@@ -309,6 +309,31 @@ async function applyEdit(
     requests.push({ deleteContentRange: { range: { startIndex: range.bodyContentStart, endIndex: range.bodyContentEnd } } });
   }
   requests.push({ insertText: { location: { index: range.bodyContentStart }, text: textToInsert } });
+  // After the delete, bodyContentStart sits right at the start of the
+  // NEXT template's title/heading paragraph — insertText SPLITS that
+  // paragraph at the insertion point, and every new paragraph created by
+  // the inserted text's own newlines inherits that heading's style
+  // (bold + HEADING_n), not NORMAL_TEXT. Force the whole inserted range
+  // back to plain style explicitly — bodies here are always plain text,
+  // never headings or bold. (Discovered when an edited template's body
+  // came back with every line turned into its own bold heading, which
+  // sheet-teletemplates-sync then parsed as separate empty templates —
+  // the same visible symptom as the earlier template-cleanup incident,
+  // but this is a distinct bug in this function.)
+  requests.push({
+    updateParagraphStyle: {
+      range: { startIndex: range.bodyContentStart, endIndex: range.bodyContentStart + textToInsert.length },
+      paragraphStyle: { namedStyleType: "NORMAL_TEXT" },
+      fields: "namedStyleType",
+    },
+  });
+  requests.push({
+    updateTextStyle: {
+      range: { startIndex: range.bodyContentStart, endIndex: range.bodyContentStart + textToInsert.length },
+      textStyle: { bold: false },
+      fields: "bold",
+    },
+  });
 
   const url = `https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`;
   const res = await fetch(url, {
