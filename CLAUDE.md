@@ -487,14 +487,17 @@ possibly uncoloured; reporting failure there would wrongly imply nothing
 was written.
 
 Requires **Editor** (not just Viewer) access to the Accounts sheet for the
-shared Google service account — almost certainly not already granted,
-since every other thing that's touched this sheet (the
-`telemed-locum-claims` skill, etc.) used the owner's own Google login via
-Composio, not this repo's service account.
+shared Google service account (`sheet-budget-sync@willow-budget-sync.iam.gserviceaccount.com`)
+— already granted as of this feature shipping, confirmed via the sheet's
+own Share dialog (turned out this account already had Editor on Accounts,
+despite every *other* thing that's touched this sheet — the
+`telemed-locum-claims` skill, etc. — going through the owner's own Google
+login via Composio instead).
 
 Required secret, beyond what the other sheet-sync functions already use:
 - `GOOGLE_ACCOUNTS_SHEET_ID` — the id from the Accounts sheet's URL
-  (`docs.google.com/spreadsheets/d/<this>/edit`)
+  (`docs.google.com/spreadsheets/d/<this>/edit`), set to
+  `1qQf7-bPLkHpvVPSwAU1Mj8AXshOvdy85whs0fo61mAc`
 
 ## Required secrets (Edge Functions)
 
