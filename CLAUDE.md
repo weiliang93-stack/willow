@@ -64,6 +64,96 @@ without the user needing to re-explain anything — read this first.
   selected mode. Not connected to the Telegram bot. Light/dark follows
   the OS via `prefers-color-scheme` rather than a fixed palette, unlike
   the other apps — this one gets opened at all hours.
+- **teleconsult-tracker/** — live per-patient earnings clicker for running two
+  simultaneous teleconsult jobs, Whitecoat TM and Fullerton TM. Not connected
+  to the Telegram bot. Session state lives in `localStorage` only, keyed to
+  the current calendar date (a new day resets patient counts/history but
+  keeps the target-$ and shift-length settings) — it is *not* synced to
+  `app_state` like the other apps. It does sit behind the same Supabase
+  Auth gate as templates-app/training-app/expense-tracker (`#authGate` +
+  `SupaSync.mountAuthGate`, whole app hidden until signed in), added
+  specifically so **"End shift"** can call the `teleconsult-end-shift` Edge
+  Function as the signed-in user — see its own bullet below. If Supabase is
+  unreachable (offline, CDN blocked), `mountAuthGate`'s existing no-op
+  fallback boots the app straight into local-only mode same as before; only
+  "End shift" itself needs a working, signed-in session — everything else
+  (tallying, copy-for-sheet, float tracker) works without one.
+  Pay logic, validated against the real Accounts Google Sheet before
+  building:
+  - **Whitecoat TM** — $13/patient with meds, $10/patient without, tallied
+    against an editable $ target (not a fixed patient count, since the
+    with-meds/no-meds mix varies). Pays $0 for the whole session whenever
+    the "Rostered" toggle is off, even if the owner logs on and sees
+    patients — this card's tap buttons disable entirely in that state.
+  - **Fullerton TM** — when rostered: base pay is `hours × $70`, paid in
+    full regardless of pace (this mirrors the real monthly locum-claim
+    formula in the `telemed-locum-claims` skill: `E24 = B24*C24`, i.e.
+    hours × rate with no per-hour forfeiture — not the "only if you hit
+    5/hr" rule the owner first described it as). A $10/patient bonus starts
+    once patient count exceeds `hours × 5`. A shift timer/pace pill is
+    informational only (on-pace/behind-pace vs elapsed time), it doesn't
+    change the math. When not rostered: flat $10/patient, no base, no
+    threshold — the owner can still log on ad hoc.
+  - Because the real FHG TM claim nets hours and patients across the whole
+    month (see `telemed-locum-claims`), this app's per-session bonus figure
+    is only an estimate for that one session — the monthly claim is what
+    actually reconciles pay.
+  - **"Copy for sheet"** buttons build a row matching the owner's Accounts
+    sheet's daily transaction log exactly (columns A–J: Date, Day, blank
+    Start/End, Company, Venue, blank Pay/h, Hours, Pay, Comment), written
+    to the clipboard as real HTML (not just tab-separated plain text) so
+    pasting into Sheets carries the sheet's own real formatting — read
+    directly off the Aug 2026 tab rather than guessed: Whitecoat rows fill
+    E:I with `#f4cccc`, Fullerton rows with `#9900ff`, columns A–D and J
+    stay white; Date/Day are center-aligned, Start/End/Company/Venue left,
+    Pay-h/Hours/Pay right, and Comment left-aligned with a black box
+    border (the only column with an explicit border). The Whitecoat
+    comment is `{no-meds count}/{meds count}` — confirmed against 8+ of
+    the owner's real logged rows (e.g. `694` ⇄ comment `7/48` = 7×$10 +
+    48×$13). The Fullerton comment/pay is bonus-only when rostered
+    (`{n} over` / `n×$10`) since the owner still enters that session's
+    base-pay row into the sheet themselves, the same way the existing
+    `-650`-style rows already work; it's the full `patients×$10` with an
+    "`{n} adhoc`" comment when not rostered, since there's no separate
+    base row for that case.
+  - **"Float tracker"** opens both jobs' live totals and tap buttons in a
+    single combined always-on-top window via Chrome's Document
+    Picture-in-Picture API (`documentPictureInPicture.requestWindow`) —
+    deliberately one combined window rather than one per job, because
+    Chrome only allows a single Document PiP window per page at a time.
+    The existing `#floatPanel` DOM node is moved wholesale into the PiP
+    window (carrying its live event listeners/state with it, not a copy)
+    and moved back to the main page on close. Falls back to an in-page
+    draggable panel (pinned via `position:fixed`, dragged by its header)
+    on browsers without the API — the owner uses Chrome exclusively so
+    this is a safety net, not the primary path. Chrome's Document PiP
+    windows don't inherit the page's stylesheet, so `copyStylesInto` clones
+    matching `<link rel="stylesheet">` tags into the new window's
+    `<head>`.
+  - Light/dark follows the OS via `prefers-color-scheme`, same reasoning
+    as templates-app — this gets opened at whatever hour the owner is
+    doing teleconsults.
+  - **"End shift"** writes the same rows "Copy for sheet"/"Copy both rows"
+    build straight into the real Accounts sheet via the
+    `teleconsult-end-shift` Edge Function (see its own section below),
+    instead of the owner pasting them by hand — the copy buttons remain as
+    a fallback. The button disables itself after a successful write
+    (label flips to "Shift added ✓") so a second accidental click can't
+    double-log the same numbers; any further count/target/hours/rostered
+    change re-enables it (`markShiftDirty`, called from both render
+    functions so every state-changing action is covered in one place
+    rather than needing to be wired at each call site individually).
+  - **"Check calendar"** auto-detects whether the owner is rostered for WC
+    TM / FHG TM on the "Logging for" date by reading their real Google
+    Calendar via the `teleconsult-check-roster` Edge Function (see its own
+    section below), instead of tapping the "Rostered" toggles by hand.
+    Auto-runs once on a genuinely fresh day (no same-day localStorage
+    state yet) right after boot; never re-runs automatically after that,
+    so a manual toggle change made mid-session is never silently
+    overridden — the button itself is always available for an on-demand
+    re-check (e.g. a roster added after the session was already open),
+    and a manual re-check's result does overwrite whatever's currently
+    set, same as the first auto-run would have.
 
 ## Sync architecture (shared/)
 
@@ -446,6 +536,106 @@ doc's own re-parse is cross-checked against what was just written.
 Requires the same Editor access already granted for `template-edit` —
 no new secrets.
 
+## Accounts sheet writing (teleconsult-end-shift)
+
+The other place an app writes rather than reads: teleconsult-tracker's
+"End shift" button. Same `verify_jwt`-on + `WILLOW_USER_ID`-check pattern
+as `template-edit` (called by the app as the signed-in user via
+`SupaSync.invokeFunction`, not by cron), but simpler — it doesn't re-derive
+Whitecoat/Fullerton pay logic server-side at all. The client sends
+already-computed rows (same shape "Copy for sheet" builds:
+company/venue/hours/pay/comment/bg) plus the session's `{year, month, day,
+weekday}`, and the function only writes exactly what it's given. Trusting
+the client like this is a deliberate single-user-app tradeoff — duplicating
+the pay-rate math here would just be a second place for it to drift out of
+sync with `teleconsult-tracker/script.js`.
+
+Always targets the leftmost tab of the Accounts sheet — same "no fixed tab
+name, a new one is added every month" convention as
+sheet-budget-sync/sheet-training-sync, confirmed against the real sheet
+(newest month tab is always frontmost, e.g. "Aug 2026").
+
+Two things it deliberately avoids doing the "obvious" way, both learned
+from bugs already hit once in this app's clipboard-copy path:
+
+- **The date is sent as `{year, month, day}` integers, converted to a
+  Sheets serial number (`days since 1899-12-30`) server-side**, not sent
+  as a "D/M/YYYY" string for `values.append` to smart-parse — a string
+  would depend on the spreadsheet's locale actually being day-first to
+  parse correctly, which the served value is never allowed to gamble on.
+  A separate `batchUpdate` right after sets that cell's `numberFormat` to
+  `d/m/yyyy` explicitly, matching the sheet's existing date columns.
+- **Column J (Comment) values like `7/48` or `2 over` are appended under
+  `valueInputOption=RAW` as genuine JSON strings**, not left to Sheets'
+  own smart-parsing (which is what turned a real comment like `13/5` into
+  a right-aligned "number" once already, via the clipboard-paste path —
+  see the git history around that fix). Hours/Pay are sent as genuine
+  JSON numbers instead of numeric-looking strings, which under RAW still
+  land as real numbers (RAW only suppresses *string* reinterpretation,
+  not the JSON value's own type) — this is what keeps them usable by any
+  `SUMIF`-style formula elsewhere in the sheet that reads column I.
+
+Row formatting — the background fill per column E–I (`#f4cccc` Whitecoat /
+`#9900ff` Fullerton), alignment, and the Comment column's black box
+border — is applied via a `batchUpdate` `repeatCell` request per
+row/column-group, using the exact row numbers `values.append`'s own
+response (`updates.updatedRange`) reports back, so it can never touch a
+row it didn't just write. If that formatting call fails after the
+`values.append` already succeeded, the function still reports success
+(with a warning) — the numbers are correctly in the sheet either way, just
+possibly uncoloured; reporting failure there would wrongly imply nothing
+was written.
+
+Requires **Editor** (not just Viewer) access to the Accounts sheet for the
+shared Google service account (`sheet-budget-sync@willow-budget-sync.iam.gserviceaccount.com`)
+— already granted as of this feature shipping, confirmed via the sheet's
+own Share dialog (turned out this account already had Editor on Accounts,
+despite every *other* thing that's touched this sheet — the
+`telemed-locum-claims` skill, etc. — going through the owner's own Google
+login via Composio instead).
+
+Required secret, beyond what the other sheet-sync functions already use:
+- `GOOGLE_ACCOUNTS_SHEET_ID` — the id from the Accounts sheet's URL
+  (`docs.google.com/spreadsheets/d/<this>/edit`), set to
+  `1qQf7-bPLkHpvVPSwAU1Mj8AXshOvdy85whs0fo61mAc`
+
+## Calendar reading (teleconsult-check-roster)
+
+The one place in this repo's sync architecture that *reads* Google
+Calendar via the shared service account rather than via `mcp__Google_Calendar__*`
+(Composio, the owner's own login) — teleconsult-tracker's "Check calendar"
+button and its once-per-fresh-day auto-run. Same `verify_jwt`-on +
+`WILLOW_USER_ID`-check pattern as the other user-invoked functions.
+
+Matching mirrors the `confirm-tm-income` skill's own documented rules
+exactly, so a day this function calls "rostered" agrees with how the
+owner's calendar is already interpreted everywhere else in this repo: an
+event summary containing "WC TM" (case-insensitive) → Whitecoat TM
+rostered; containing "FHG TM" → Fullerton TM rostered; trimmed/case-folded
+*exactly* "inspire medical" (not "INSPIRE COVER") → today is an Inspire
+day, which drops the suggested Whitecoat TM target from $650 to $250 (the
+same two figures the owner already logs against — this never invents a
+third). Events are read for the target date's Singapore calendar day
+specifically (`T00:00:00+08:00` to `T23:59:59+08:00` — Singapore has no
+DST, so this fixed offset needs no `Intl` timezone gymnastics), since the
+Edge Function runtime itself runs in UTC.
+
+Deliberately does not overwrite a rostered toggle the owner already
+changed by hand mid-session — the app only calls this automatically once,
+on a genuinely fresh day (see teleconsult-tracker's own entry above). A
+result the owner didn't ask for right now can't clobber one they did.
+
+Requires the calendar shared with the service account (Viewer / "See all
+event details" — this only reads) and the **Calendar API enabled** on
+whichever Google Cloud project the service account belongs to — a
+separate one-time toggle from the Sheets/Docs APIs the other functions
+use, easy to miss since nothing else in this repo needed it yet.
+
+Required secret, beyond what the other Google-touching functions already
+use:
+- `GOOGLE_CALENDAR_ID` — the owner's calendar id, which for a personal
+  Google Calendar is just their email address (`weiliang93@gmail.com`)
+
 ## Required secrets (Edge Functions)
 
 - `TELEGRAM_BOT_TOKEN` — from @BotFather
@@ -462,7 +652,10 @@ no new secrets.
   prefix on manual secrets)
 
 No MCP tool manages Edge Function secrets — even with Supabase MCP
-connected, secrets still have to be set via the dashboard.
+connected, secrets still have to be set via the dashboard. Supabase MCP
+*can* deploy function code directly (`deploy_edge_function`, project id
+`fozipnpmmjmmlthkdplf`) — that part doesn't need the dashboard, only the
+secrets themselves do.
 
 ## Schema files
 
