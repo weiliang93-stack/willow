@@ -49,12 +49,16 @@ import { JWT } from "npm:google-auth-library@9";
 
 const WEBHOOK_SECRET = Deno.env.get("DB_WEBHOOK_SECRET")!;
 const DOC_ID = Deno.env.get("GOOGLE_WILLOW_TM_DOC_ID")!;
+const CLINIC_DOC_ID = Deno.env.get("GOOGLE_WILLOW_DOC_ID")!;
 const SERVICE_ACCOUNT_EMAIL = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_EMAIL")!;
 const SERVICE_ACCOUNT_KEY = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY")!.replace(/\\n/g, "\n");
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const USER_ID = Deno.env.get("WILLOW_USER_ID")!;
 
 const supabase = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+const SEPARATOR_RE = /^=+$/;
+const MIN_SEPARATOR_LEN = 10;
 
 // pg_net (used to trigger this function from SQL) hard-caps its client
 // wait at 5000ms regardless of requested timeout, and Drive markdown
@@ -155,6 +159,67 @@ async function fetchDoc(accessToken: string): Promise<DocsDocument> {
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new Error(`Docs get failed: ${res.status} ${await res.text()}`);
   return await res.json();
+}
+
+async function fetchDocById(accessToken: string, docId: string): Promise<DocsDocument> {
+  const fields =
+    "revisionId,body(content(startIndex,endIndex,paragraph(paragraphStyle(namedStyleType,spaceAbove,spaceBelow),elements(textRun(content,textStyle.bold)))))";
+  const url = `https://docs.googleapis.com/v1/documents/${docId}?fields=${encodeURIComponent(fields)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) throw new Error(`Docs get failed: ${res.status} ${await res.text()}`);
+  return await res.json();
+}
+
+// "separator" (In-Clinic / WILLOW) kind boundary helpers — mirrors
+// template-add's own, kept separate from this file's existing
+// isBoundary/titleText (which are "heading" kind, for WILLOW TM).
+const CLINIC_SEPARATOR_TITLE_SCAN_LINES = 4;
+
+function isClinicSeparator(p: Para): boolean {
+  return p.trimmed.length >= MIN_SEPARATOR_LEN && SEPARATOR_RE.test(p.trimmed);
+}
+
+function isClinicAgeVariantMarker(p: Para): boolean {
+  const s = p.trimmed;
+  if (!s || s.length > 30 || s.endsWith(":")) return false;
+  const firstWord = (s.split(/\s+/)[0] ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  const AGE_KEYWORDS = new Set(["paeds", "paed", "paediatric", "pediatric", "child", "children", "kids", "kid", "adults", "adult"]);
+  if (AGE_KEYWORDS.has(firstWord)) return true;
+  const m = s.match(/\(([a-zA-Z]+)\)\s*$/);
+  return m !== null && AGE_KEYWORDS.has(m[1].toLowerCase());
+}
+
+function isClinicBoundary(p: Para): boolean {
+  return isClinicSeparator(p) || isClinicAgeVariantMarker(p);
+}
+
+// Finds a title paragraph's index for a known title, requiring EXACTLY
+// one match — mirrors template-add's own findTitleParagraphIndex.
+function findClinicTitleParagraphIndex(paras: Para[], title: string): number | { matches: number } {
+  const candidateIdxs = new Set<number>();
+  paras.forEach((p, i) => {
+    if (!isClinicBoundary(p)) return;
+    if (!isClinicSeparator(p)) {
+      if (p.trimmed === title) candidateIdxs.add(i); // age-variant marker
+      return;
+    }
+    let j = i + 1;
+    let scanned = 0;
+    while (j < paras.length && scanned < CLINIC_SEPARATOR_TITLE_SCAN_LINES && !isClinicBoundary(paras[j])) {
+      if (paras[j].trimmed === "") {
+        j++;
+        continue;
+      }
+      if (paras[j].trimmed === title) {
+        candidateIdxs.add(j);
+        break;
+      }
+      scanned++;
+      j++;
+    }
+  });
+  if (candidateIdxs.size !== 1) return { matches: candidateIdxs.size };
+  return [...candidateIdxs][0];
 }
 
 interface SpacingRange {
@@ -282,6 +347,7 @@ Deno.serve(async (req) => {
     restoreAll?: boolean;
     diagnoseMarkdown?: string;
     previewAdd?: { category: string; title: string };
+    previewAddClinic?: { category: string; title: string };
     fixCorruptedBody?: { title: string; untilTitle?: string };
   } = {};
   try {
@@ -345,6 +411,77 @@ Deno.serve(async (req) => {
       docLength: paras.length ? paras[paras.length - 1].endIndex : 0,
       beforeInsertionPoint: beforeCtx,
       afterInsertionPoint: afterCtx,
+    });
+    return new Response("ok", { headers: { "Content-Type": "application/json" } });
+  }
+
+  if (payload.previewAddClinic) {
+    // Mirrors template-add's own "separator" (In-Clinic) anchor-finding +
+    // insertion-point logic exactly, run here (read-only, no write) so it
+    // can be verified against the real live WILLOW doc — template-add
+    // itself needs real user auth to call, which can't be faked to test
+    // it directly.
+    const { category, title } = payload.previewAddClinic;
+    const { data: row } = await supabase
+      .from("app_state")
+      .select("state")
+      .eq("user_id", USER_ID)
+      .eq("app", "templates")
+      .maybeSingle();
+    const templates: Array<{ id: string; category: string; title: string; body: string }> = row?.state?.templates ?? [];
+    const categoryTemplates = templates.filter((t) => t.category === category);
+    const anchor = categoryTemplates[categoryTemplates.length - 1];
+    if (!anchor) {
+      await writeDebugSnippet({ previewAddClinic: true, error: `no existing template found under "${category}"` });
+      return new Response("ok", { headers: { "Content-Type": "application/json" } });
+    }
+
+    let doc: DocsDocument;
+    try {
+      doc = await fetchDocById(accessToken, CLINIC_DOC_ID);
+    } catch (err) {
+      await writeDebugSnippet({ error: `error reading clinic doc: ${err}` });
+      return new Response("ok", { headers: { "Content-Type": "application/json" } });
+    }
+    const paras = extractParagraphs(doc);
+    const anchorIdx = findClinicTitleParagraphIndex(paras, anchor.title);
+    if (typeof anchorIdx !== "number") {
+      await writeDebugSnippet({
+        previewAddClinic: true,
+        error: `anchor "${anchor.title}" matched ${anchorIdx.matches} times`,
+      });
+      return new Response("ok", { headers: { "Content-Type": "application/json" } });
+    }
+
+    let separatorIdx = paras.length;
+    for (let i = anchorIdx + 1; i < paras.length; i++) {
+      if (isClinicSeparator(paras[i])) {
+        separatorIdx = i;
+        break;
+      }
+    }
+    const atDocEnd = separatorIdx === paras.length;
+    const insertAt = atDocEnd ? paras[paras.length - 1].endIndex - 1 : paras[separatorIdx].endIndex;
+
+    const beforeCtx = paras
+      .slice(Math.max(0, anchorIdx - 1), Math.min(paras.length, (atDocEnd ? paras.length : separatorIdx) + 1))
+      .map((p) => ({ text: p.trimmed.slice(0, 50), isSeparator: isClinicSeparator(p), isAgeVariant: isClinicAgeVariantMarker(p) }));
+    const afterCtx = atDocEnd
+      ? []
+      : paras.slice(separatorIdx, separatorIdx + 3).map((p) => ({ text: p.trimmed.slice(0, 50), isSeparator: isClinicSeparator(p), isAgeVariant: isClinicAgeVariantMarker(p) }));
+
+    await writeDebugSnippet({
+      previewAddClinic: true,
+      category,
+      title,
+      anchorTitle: anchor.title,
+      anchorIdx,
+      separatorIdx,
+      insertAt,
+      atDocEnd,
+      docLength: paras.length ? paras[paras.length - 1].endIndex : 0,
+      contextAroundAnchor: beforeCtx,
+      contextAfterSeparator: afterCtx,
     });
     return new Response("ok", { headers: { "Content-Type": "application/json" } });
   }

@@ -1,74 +1,110 @@
 // Supabase Edge Function: lets templates-app add a brand-new template to
-// the live WILLOW TM (Teleconsult) Google Doc, rather than only editing
-// an existing one (see template-edit). Scoped to Teleconsult only for
-// now — WILLOW's (In-Clinic) category assignment is driven by matching
-// each block's title against the doc's own table of contents in order
-// (see sheet-templates-sync), so a brand-new title with no TOC entry
-// would silently inherit whatever category happens to precede it in the
-// doc rather than the category the user actually chose. WILLOW TM's
-// categories are plain "## " headings instead, so inserting within the
-// chosen category's own heading-bounded section is straightforward and
-// safe. Also excludes the "Standard Blocks" category, which uses a
-// different bold-only-paragraph convention (see sheet-teletemplates-
-// sync's STANDARD_BLOCKS_HEADING handling) rather than "### " headings.
+// the live source Google Doc — WILLOW TM for Teleconsult, or WILLOW for
+// In-Clinic — rather than only editing an existing one (see
+// template-edit). Excludes "Standard Blocks" (Teleconsult only), which
+// uses a different bold-only-paragraph convention (see sheet-
+// teletemplates-sync's STANDARD_BLOCKS_HEADING handling) rather than
+// "### " headings.
 //
 // Called by the app itself as the signed-in user (SupaSync.invokeFunction),
 // same auth pattern as template-edit: verify_jwt on, resolved user id
 // checked against WILLOW_USER_ID, CORS handled explicitly since this is
 // a cross-origin browser call unlike the cron-only sheet-sync functions.
 //
-// Safety design, mirroring template-edit's caution:
-//   1. The target category must match an EXISTING "## " heading in the
-//      doc's live paragraph structure — exactly one match required (0 or
-//      >1 aborts with a clear error) — so a stale/renamed category can't
-//      silently create a new, wrong section.
+// The two docs need genuinely different insertion strategies, mirroring
+// how sheet-templates-sync and sheet-teletemplates-sync parse them
+// differently:
+//
+//   Teleconsult (WILLOW TM, "heading" kind) — categories are their own
+//   "## " headings in the live doc, so the target category is looked up
+//   directly: exactly one "## " heading matching the category name is
+//   required (0 or >1 aborts), and the new template is appended right
+//   before the next "## "-or-higher heading (or end of doc).
+//
+//   In-Clinic (WILLOW, "separator" kind) — categories are NOT headings
+//   in the doc at all; sheet-templates-sync assigns each block's category
+//   by walking the doc's own table of contents in step with the body (see
+//   that function's own comments), so there's no single heading to anchor
+//   on. Instead: take the LAST existing template already stored under the
+//   chosen category (app_state's own array order mirrors doc order, since
+//   sheet-templates-sync appends templates as it encounters them
+//   top-to-bottom) as an anchor, locate that exact template's title
+//   paragraph in the live doc (same title-matching logic as
+//   template-edit's own locateTemplate, since an anchor's "title" may
+//   itself be an embedded age-variant marker line rather than a
+//   "===="-preceded one), then scan forward for the next REAL "===="
+//   separator — deliberately skipping over any embedded age-variant
+//   marker lines along the way, so a new entry never gets spliced into
+//   the middle of an existing multi-variant block (which would otherwise
+//   carve a variant like "Balanitis (Paeds)" out into its own separate
+//   raw block and change how the doc's *existing* content parses). The
+//   new template is appended right after that real separator's line —
+//   i.e. right after the anchor's own combined block ends — with its own
+//   new "====" separator so the following block's boundary is preserved
+//   unchanged. Since sheet-templates-sync assigns category purely by
+//   sequential TOC-matching (a title with no TOC entry just inherits
+//   whatever category is "current" when that block is reached — the same
+//   fallback age-variants rely on), appending right after the last real
+//   block of the chosen category makes the parser assign it that same
+//   category correctly, with no TOC entry required.
+//
+// Safety design, mirroring template-edit's caution for both doc kinds:
+//   1. The insertion anchor (a "## " heading for Teleconsult, an existing
+//      template's title paragraph for In-Clinic) must match EXACTLY once
+//      in the doc's live paragraph structure — 0 or >1 aborts with a
+//      clear error — so a stale/renamed doc can't silently insert in the
+//      wrong place.
 //   2. The new template's title must not already exist among the
-//      currently-synced templates (case-insensitive) — refuses to create
-//      an accidental duplicate.
-//   3. Insertion point is the very end of the chosen category's section
-//      (right before the next "## "-or-higher heading, or end of doc if
-//      it's the last category) — appends only, never touches or
-//      reorders any existing content.
-//   4. The inserted text is PLAIN text only — heading level (Heading 3)
-//      and bold are applied afterward via separate, narrowly-scoped
-//      updateParagraphStyle/updateTextStyle requests targeting only the
-//      new title paragraph's own exact range (fields limited to
-//      namedStyleType / bold respectively) — never a broad range, unlike
-//      the earlier template-cleanup incident that corrupted heading
-//      levels doc-wide via an imprecise style update.
-//      IMPORTANT caveat learned the hard way (see incident below): the
-//      insertion point sits at the START of the next boundary paragraph
-//      (the next "## " category heading, or "### " for a mid-section
-//      insert). Docs' insertText SPLITS that paragraph at the insertion
-//      point, and every new paragraph created by the inserted text's own
-//      newlines inherits that split paragraph's style — i.e. the whole
-//      inserted block (blank lead-in, title, every body line) silently
-//      came back as HEADING_2 + bold, not NORMAL_TEXT, because that's
-//      what the following category heading was. The title-only override
-//      masked this for the title line but left the body corrupted. Fix:
-//      explicitly reset the ENTIRE inserted range to NORMAL_TEXT + not
-//      bold FIRST, then re-apply HEADING_3 + bold to only the title
-//      paragraph as a later, overriding request — never rely on "plain
-//      insertText defaults to plain style," since it inherits neighbor
-//      style instead.
+//      currently-synced templates for that app (case-insensitive) —
+//      refuses to create an accidental duplicate.
+//   3. Insertion only ever appends at a section boundary already computed
+//      from the live doc — never touches or reorders any existing
+//      content.
+//   4. The inserted text is PLAIN text only. For Teleconsult, heading
+//      level (Heading 3) and bold are applied afterward via separate,
+//      narrowly-scoped updateParagraphStyle/updateTextStyle requests
+//      targeting only the new title paragraph's own exact range — never a
+//      broad range, unlike the earlier template-cleanup incident that
+//      corrupted heading levels doc-wide via an imprecise style update.
+//      IMPORTANT caveat learned the hard way: the insertion point sits at
+//      the START of the next boundary paragraph. Docs' insertText SPLITS
+//      that paragraph at the insertion point, and every new paragraph
+//      created by the inserted text's own newlines inherits that split
+//      paragraph's style — i.e. the whole inserted block silently came
+//      back as HEADING_2 + bold, not NORMAL_TEXT, because that's what the
+//      following category heading was. Fix, for both doc kinds: explicitly
+//      reset the ENTIRE inserted range to NORMAL_TEXT + not bold FIRST,
+//      then (Teleconsult only) re-apply HEADING_3 + bold to only the title
+//      paragraph as a later, overriding request. In-Clinic's own parser
+//      (sheet-templates-sync) never looks at paragraph style at all — it's
+//      a plain-text export parsed purely by "====" separator text and
+//      table-of-contents matching — so this reset there is a cosmetic
+//      safeguard against an ugly inherited style, not a correctness fix,
+//      but it's cheap enough to apply uniformly rather than special-case.
 //   5. writeControl.requiredRevisionId locks the whole batchUpdate to the
 //      revision just read, so a concurrent doc edit fails the call
 //      cleanly instead of clobbering it.
 //
 // Pass `dryRun: true` to compute and return the insertion point and
 // preview text without writing anything — used to verify correctness
-// against the real live doc before ever issuing a real write.
+// against the real live docs before ever issuing a real write. In-Clinic
+// verification, in particular, went through a read-only preview mode
+// added temporarily to template-cleanup (an already admin-secret-
+// authenticated function) since this function itself needs real user
+// auth that can't be faked to test it directly — same pattern used to
+// verify the Teleconsult version originally.
 //
 // On a successful real write, the new template is also appended to
-// app_state.teletemplates.templates immediately (preserving `starred`
-// and every other existing template unchanged), and
-// sheet-teletemplates-sync is re-triggered so the doc's own re-parse is
-// cross-checked against what this function just wrote.
+// app_state[app].templates immediately (preserving `starred` and every
+// other existing template unchanged), and the matching sheet sync
+// (sheet-templates-sync or sheet-teletemplates-sync) is re-triggered so
+// the doc's own re-parse is cross-checked against what this function just
+// wrote.
 //
 // Required secrets: none new — reuses GOOGLE_SERVICE_ACCOUNT_EMAIL/
-// PRIVATE_KEY, GOOGLE_WILLOW_TM_DOC_ID, WILLOW_USER_ID, DB_WEBHOOK_SECRET,
-// SUPABASE_URL. Same Editor access on WILLOW TM already granted for
-// template-edit.
+// PRIVATE_KEY, GOOGLE_WILLOW_DOC_ID, GOOGLE_WILLOW_TM_DOC_ID,
+// WILLOW_USER_ID, DB_WEBHOOK_SECRET, SUPABASE_URL. Same Editor access on
+// both docs already granted for template-edit.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { JWT } from "npm:google-auth-library@9";
@@ -76,13 +112,30 @@ import { JWT } from "npm:google-auth-library@9";
 const USER_ID = Deno.env.get("WILLOW_USER_ID")!;
 const SERVICE_ACCOUNT_EMAIL = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_EMAIL")!;
 const SERVICE_ACCOUNT_KEY = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY")!.replace(/\\n/g, "\n");
-const DOC_ID = Deno.env.get("GOOGLE_WILLOW_TM_DOC_ID")!;
 const WEBHOOK_SECRET = Deno.env.get("DB_WEBHOOK_SECRET")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 
 const supabase = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
 const STANDARD_BLOCKS_CATEGORY = "Standard Blocks";
+
+type DocKind = "separator" | "heading";
+
+interface AppConfig {
+  docIdEnv: string;
+  kind: DocKind;
+  syncFunction: string;
+}
+
+const APP_CONFIGS: Record<string, AppConfig> = {
+  templates: { docIdEnv: "GOOGLE_WILLOW_DOC_ID", kind: "separator", syncFunction: "sheet-templates-sync" },
+  teletemplates: { docIdEnv: "GOOGLE_WILLOW_TM_DOC_ID", kind: "heading", syncFunction: "sheet-teletemplates-sync" },
+};
+
+const SEPARATOR_RE = /^=+$/;
+const MIN_SEPARATOR_LEN = 10;
+const NEW_SEPARATOR_LINE = "=".repeat(20);
+const AGE_KEYWORDS = new Set(["paeds", "paed", "paediatric", "pediatric", "child", "children", "kids", "kid", "adults", "adult"]);
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -155,10 +208,68 @@ function extractParagraphs(doc: DocsDocument): Para[] {
   return out;
 }
 
-async function fetchDoc(accessToken: string): Promise<DocsDocument> {
+function isSeparator(p: Para): boolean {
+  return p.trimmed.length >= MIN_SEPARATOR_LEN && SEPARATOR_RE.test(p.trimmed);
+}
+
+function isAgeVariantMarker(p: Para): boolean {
+  const s = p.trimmed;
+  if (!s || s.length > 30 || s.endsWith(":")) return false;
+  const firstWord = (s.split(/\s+/)[0] ?? "").toLowerCase().replace(/[^a-z]/g, "");
+  if (AGE_KEYWORDS.has(firstWord)) return true;
+  const m = s.match(/\(([a-zA-Z]+)\)\s*$/);
+  return m !== null && AGE_KEYWORDS.has(m[1].toLowerCase());
+}
+
+// A "boundary" paragraph marks the start of the next template (or
+// sub-template) for TITLE-MATCHING purposes — mirrors template-edit's own
+// isBoundary exactly, since an anchor's title may itself be an embedded
+// age-variant marker line.
+function isBoundary(p: Para, kind: DocKind): boolean {
+  if (kind === "separator") return isSeparator(p) || isAgeVariantMarker(p);
+  return p.headingLevel !== null || p.boldOnly;
+}
+
+const SEPARATOR_TITLE_SCAN_LINES = 4;
+
+// Finds the title paragraph index for a known title, requiring EXACTLY
+// one match — mirrors template-edit's own locateTemplate title-finding
+// (not the body-range part, which this function doesn't need).
+function findTitleParagraphIndex(paras: Para[], kind: DocKind, title: string): number | { matches: number } {
+  const candidateIdxs = new Set<number>();
+  paras.forEach((p, i) => {
+    if (!isBoundary(p, kind)) return;
+    if (kind === "heading") {
+      if (p.trimmed === title) candidateIdxs.add(i);
+      return;
+    }
+    if (!isSeparator(p)) {
+      if (p.trimmed === title) candidateIdxs.add(i); // age-variant marker
+      return;
+    }
+    let j = i + 1;
+    let scanned = 0;
+    while (j < paras.length && scanned < SEPARATOR_TITLE_SCAN_LINES && !isBoundary(paras[j], kind)) {
+      if (paras[j].trimmed === "") {
+        j++;
+        continue;
+      }
+      if (paras[j].trimmed === title) {
+        candidateIdxs.add(j);
+        break;
+      }
+      scanned++;
+      j++;
+    }
+  });
+  if (candidateIdxs.size !== 1) return { matches: candidateIdxs.size };
+  return [...candidateIdxs][0];
+}
+
+async function fetchDoc(accessToken: string, docId: string): Promise<DocsDocument> {
   const fields =
     "revisionId,body(content(startIndex,endIndex,paragraph(paragraphStyle.namedStyleType,elements(textRun(content,textStyle.bold)))))";
-  const url = `https://docs.googleapis.com/v1/documents/${DOC_ID}?fields=${encodeURIComponent(fields)}`;
+  const url = `https://docs.googleapis.com/v1/documents/${docId}?fields=${encodeURIComponent(fields)}`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new Error(`Docs get failed: ${res.status} ${await res.text()}`);
   return await res.json();
@@ -168,9 +279,9 @@ function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-async function triggerResync(): Promise<void> {
+async function triggerResync(syncFunction: string): Promise<void> {
   try {
-    await fetch(`${SUPABASE_URL}/functions/v1/sheet-teletemplates-sync`, {
+    await fetch(`${SUPABASE_URL}/functions/v1/${syncFunction}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-webhook-secret": WEBHOOK_SECRET },
       body: "{}",
@@ -194,12 +305,16 @@ Deno.serve(async (req) => {
     return jsonResponse(403, { error: "not authorized" });
   }
 
-  let payload: { category?: string; title?: string; body?: string; dryRun?: boolean };
+  let payload: { app?: string; category?: string; title?: string; body?: string; dryRun?: boolean };
   try {
     payload = await req.json();
   } catch {
     return jsonResponse(400, { error: "invalid JSON body" });
   }
+
+  const app = payload.app ?? "";
+  const config = APP_CONFIGS[app];
+  if (!config) return jsonResponse(400, { error: `unknown app "${app}"` });
 
   const category = (payload.category ?? "").trim();
   const title = (payload.title ?? "").trim();
@@ -207,15 +322,18 @@ Deno.serve(async (req) => {
   if (!category || !title || !bodyText) {
     return jsonResponse(400, { error: "category, title, and body are required" });
   }
-  if (category === STANDARD_BLOCKS_CATEGORY) {
+  if (app === "teletemplates" && category === STANDARD_BLOCKS_CATEGORY) {
     return jsonResponse(400, { error: "adding to Standard Blocks isn't supported yet" });
   }
+
+  const docId = Deno.env.get(config.docIdEnv);
+  if (!docId) return jsonResponse(500, { error: `${config.docIdEnv} is not set` });
 
   const { data: row, error: rowError } = await supabase
     .from("app_state")
     .select("state")
     .eq("user_id", USER_ID)
-    .eq("app", "teletemplates")
+    .eq("app", app)
     .maybeSingle();
   if (rowError) return jsonResponse(500, { error: `error reading app_state: ${rowError.message}` });
 
@@ -232,50 +350,100 @@ Deno.serve(async (req) => {
   let doc: DocsDocument;
   try {
     accessToken = await getAccessToken();
-    doc = await fetchDoc(accessToken);
+    doc = await fetchDoc(accessToken, docId);
   } catch (err) {
     return jsonResponse(500, { error: `error reading doc: ${err}` });
   }
 
   const paras = extractParagraphs(doc);
-  const categoryIdxs: number[] = [];
-  paras.forEach((p, i) => {
-    if (p.headingLevel === 2 && p.trimmed === category) categoryIdxs.push(i);
-  });
-  if (categoryIdxs.length === 0) {
-    return jsonResponse(409, { error: `couldn't find "${category}" in the doc — it may have been renamed; refresh and try again` });
-  }
-  if (categoryIdxs.length > 1) {
-    return jsonResponse(409, { error: `found "${category}" more than once in the doc — refusing to guess which one` });
-  }
-  const categoryIdx = categoryIdxs[0];
 
-  let nextHeadingIdx = paras.length;
-  for (let i = categoryIdx + 1; i < paras.length; i++) {
-    if (paras[i].headingLevel !== null && paras[i].headingLevel! <= 2) {
-      nextHeadingIdx = i;
-      break;
+  let insertAt: number;
+  let atDocEnd: boolean;
+  let titleParaStart: number | null = null; // only meaningful for "heading" kind
+  let titleParaEnd = 0;
+  let insertTextStr: string;
+
+  if (config.kind === "heading") {
+    const categoryIdxs: number[] = [];
+    paras.forEach((p, i) => {
+      if (p.headingLevel === 2 && p.trimmed === category) categoryIdxs.push(i);
+    });
+    if (categoryIdxs.length === 0) {
+      return jsonResponse(409, { error: `couldn't find "${category}" in the doc — it may have been renamed; refresh and try again` });
     }
+    if (categoryIdxs.length > 1) {
+      return jsonResponse(409, { error: `found "${category}" more than once in the doc — refusing to guess which one` });
+    }
+    const categoryIdx = categoryIdxs[0];
+
+    let nextHeadingIdx = paras.length;
+    for (let i = categoryIdx + 1; i < paras.length; i++) {
+      if (paras[i].headingLevel !== null && paras[i].headingLevel! <= 2) {
+        nextHeadingIdx = i;
+        break;
+      }
+    }
+
+    // The Docs API refuses a range/insertion touching the very last
+    // newline of the document body segment — insert one character before
+    // the true end in that case, same rule template-edit/template-cleanup
+    // already established.
+    atDocEnd = nextHeadingIdx === paras.length;
+    insertAt = atDocEnd ? paras[paras.length - 1].endIndex - 1 : paras[nextHeadingIdx].startIndex;
+
+    // Plain text only — no markdown syntax, no style embedded in the
+    // string itself. Heading level and bold are applied afterward via
+    // their own narrowly-scoped requests below.
+    insertTextStr = `\n${title}\n${bodyText}\n\n`;
+    titleParaStart = insertAt + 1; // past the leading blank-paragraph newline
+    titleParaEnd = titleParaStart + title.length + 1; // past the title's own newline
+  } else {
+    // "separator" kind (In-Clinic) — anchor on the LAST existing template
+    // already stored under this category (app_state's array order mirrors
+    // doc order), locate its title paragraph, then scan forward for the
+    // next REAL separator only — skipping over any embedded age-variant
+    // marker lines so a new entry can't get spliced into the middle of an
+    // existing multi-variant block.
+    const categoryTemplates = templates.filter((t) => t.category === category);
+    const anchor = categoryTemplates[categoryTemplates.length - 1];
+    if (!anchor) return jsonResponse(500, { error: `no existing template found under "${category}" to anchor on` });
+
+    const anchorIdx = findTitleParagraphIndex(paras, config.kind, anchor.title);
+    if (typeof anchorIdx !== "number") {
+      return jsonResponse(409, {
+        error:
+          anchorIdx.matches === 0
+            ? `couldn't find the anchor template "${anchor.title}" in the doc — it may have been renamed; refresh and try again`
+            : `found the anchor template "${anchor.title}" more than once in the doc — refusing to guess which one`,
+      });
+    }
+
+    let separatorIdx = paras.length;
+    for (let i = anchorIdx + 1; i < paras.length; i++) {
+      if (isSeparator(paras[i])) {
+        separatorIdx = i;
+        break;
+      }
+    }
+
+    atDocEnd = separatorIdx === paras.length;
+    insertAt = atDocEnd ? paras[paras.length - 1].endIndex - 1 : paras[separatorIdx].endIndex;
+
+    // No leading blank paragraph needed — insertAt already sits right at
+    // the start of the paragraph following the real separator (or right
+    // before the doc's own final newline), so the separator itself
+    // already provides visual spacing. A trailing separator closes off
+    // the new block the same way every other block is closed.
+    insertTextStr = `${title}\n${bodyText}\n\n${NEW_SEPARATOR_LINE}\n\n`;
+    titleParaStart = insertAt;
+    titleParaEnd = titleParaStart + title.length + 1;
   }
-
-  // The Docs API refuses a range/insertion touching the very last
-  // newline of the document body segment — insert one character before
-  // the true end in that case, same rule template-edit/template-cleanup
-  // already established.
-  const atDocEnd = nextHeadingIdx === paras.length;
-  const insertAt = atDocEnd ? paras[paras.length - 1].endIndex - 1 : paras[nextHeadingIdx].startIndex;
-
-  // Plain text only — no markdown syntax, no style embedded in the
-  // string itself. Heading level and bold are applied afterward via
-  // their own narrowly-scoped requests below.
-  const insertTextStr = `\n${title}\n${bodyText}\n\n`;
-  const titleParaStart = insertAt + 1; // past the leading blank-paragraph newline
-  const titleParaEnd = titleParaStart + title.length + 1; // past the title's own newline
 
   if (payload.dryRun) {
     return jsonResponse(200, {
       ok: true,
       dryRun: true,
+      app,
       category,
       title,
       insertAt,
@@ -284,16 +452,18 @@ Deno.serve(async (req) => {
     });
   }
 
-  // The full inserted block, in the post-insertText document — spans the
-  // leading blank paragraph through the trailing blank paragraph.
+  // The full inserted block, in the post-insertText document.
   const insertedRangeStart = insertAt;
   const insertedRangeEnd = insertAt + insertTextStr.length;
 
-  const requests = [
+  const requests: unknown[] = [
     { insertText: { location: { index: insertAt }, text: insertTextStr } },
     // Force the WHOLE inserted block back to plain style first — it
     // otherwise inherits the style of whichever paragraph it split (see
-    // the caveat in the header comment above), not NORMAL_TEXT.
+    // the caveat in the header comment above), not NORMAL_TEXT. For
+    // "separator" kind this is a cosmetic safeguard only (sheet-
+    // templates-sync's parser never looks at paragraph style), but it's
+    // cheap to apply uniformly.
     {
       updateParagraphStyle: {
         range: { startIndex: insertedRangeStart, endIndex: insertedRangeEnd },
@@ -308,25 +478,30 @@ Deno.serve(async (req) => {
         fields: "bold",
       },
     },
-    // Then re-apply Heading 3 + bold to only the title paragraph, as a
-    // later (overriding) request.
-    {
-      updateParagraphStyle: {
-        range: { startIndex: titleParaStart, endIndex: titleParaEnd },
-        paragraphStyle: { namedStyleType: "HEADING_3" },
-        fields: "namedStyleType",
-      },
-    },
-    {
-      updateTextStyle: {
-        range: { startIndex: titleParaStart, endIndex: titleParaStart + title.length },
-        textStyle: { bold: true },
-        fields: "bold",
-      },
-    },
   ];
 
-  const batchUrl = `https://docs.googleapis.com/v1/documents/${DOC_ID}:batchUpdate`;
+  if (config.kind === "heading") {
+    // Then re-apply Heading 3 + bold to only the title paragraph, as a
+    // later (overriding) request.
+    requests.push(
+      {
+        updateParagraphStyle: {
+          range: { startIndex: titleParaStart, endIndex: titleParaEnd },
+          paragraphStyle: { namedStyleType: "HEADING_3" },
+          fields: "namedStyleType",
+        },
+      },
+      {
+        updateTextStyle: {
+          range: { startIndex: titleParaStart!, endIndex: titleParaStart! + title.length },
+          textStyle: { bold: true },
+          fields: "bold",
+        },
+      },
+    );
+  }
+
+  const batchUrl = `https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`;
   const batchRes = await fetch(batchUrl, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
@@ -352,9 +527,9 @@ Deno.serve(async (req) => {
   const updatedTemplates = [...templates, { id, category, title, body: bodyText }];
   const { error: updateError } = await supabase
     .from("app_state")
-    .upsert({ user_id: USER_ID, app: "teletemplates", state: { ...row!.state, templates: updatedTemplates }, updated_at: new Date().toISOString() });
+    .upsert({ user_id: USER_ID, app, state: { ...row!.state, templates: updatedTemplates }, updated_at: new Date().toISOString() });
 
-  await triggerResync();
+  await triggerResync(config.syncFunction);
 
   if (updateError) {
     return jsonResponse(200, { ok: true, id, warning: `doc updated, but app_state refresh failed: ${updateError.message}` });

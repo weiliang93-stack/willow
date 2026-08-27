@@ -44,10 +44,15 @@ without the user needing to re-explain anything — read this first.
     `sheet-teletemplates-sync` into app `"teletemplates"`.
   Templates themselves are one-way, doc → app, for both — each sync
   function is its data's only writer, the app just `pullState`s them —
-  with one exception: an edit button on the detail view lets the owner
-  fix a template's body in-app, which writes straight back into the live
-  source doc via the `template-edit` Edge Function (see its own section
-  below for the safety design) rather than just updating the local copy.
+  with two exceptions, both for either mode: an edit button on the
+  detail view lets the owner fix a template's body in-app, which writes
+  straight back into the live source doc via the `template-edit` Edge
+  Function (see its own section below for the safety design) rather
+  than just updating the local copy; and an "Add template" button lets
+  the owner create a brand-new template in-app, appended into the live
+  source doc via the `template-add` Edge Function (see its own section
+  below — it needs a different insertion strategy per doc, since
+  In-Clinic's categories aren't headings the way Teleconsult's are).
   Starring is the one thing the app itself owns, scoped per mode: it
   `pushState`s `{templates, starred}` (starred = array of template ids)
   under that mode's app key, and each sync function preserves its own
@@ -446,6 +451,90 @@ and everything else), rather than waiting for the next periodic sync.
 Requires Editor (not just Viewer) access on both docs for the shared
 Google service account — no new secrets beyond what the sheet-sync
 functions already use.
+
+## Doc adding (template-add)
+
+The other place an app writes *into* a doc rather than reading from
+it — templates-app's "Add template" button lets the owner create a
+brand-new template in-app and have it appended straight into the live
+WILLOW or WILLOW TM doc, for both In-Clinic and Teleconsult. Same
+auth pattern as `template-edit` (`verify_jwt` on, resolved user id
+checked against `WILLOW_USER_ID`, CORS handled explicitly for the
+browser call).
+
+The two docs need genuinely different insertion strategies, mirroring
+how their read syncs parse them:
+- **Teleconsult (WILLOW TM)** — categories are their own `"## "`
+  headings in the doc, so the target category is looked up directly
+  (exactly one match required) and the new template is appended right
+  before the next `"## "`-or-higher heading. Excludes "Standard
+  Blocks" (different bold-only-paragraph convention).
+- **In-Clinic (WILLOW)** — categories aren't headings at all;
+  `sheet-templates-sync` assigns category by walking the doc's table
+  of contents in step with the body, so there's no single heading to
+  anchor a new entry on. Instead, `template-add` takes the *last*
+  existing template already stored under the chosen category
+  (`app_state`'s array order mirrors doc order), locates that exact
+  template's title paragraph live in the doc, then scans forward for
+  the next real `"===="` separator — deliberately skipping over any
+  embedded age-variant marker lines along the way, so a new entry can
+  never get spliced into the middle of an existing multi-variant block
+  (which would otherwise carve something like "Balanitis (Paeds)" out
+  into its own raw block and change how *existing* content parses).
+  The new template is appended right after that separator, with its
+  own new `"===="` closing it off. Since `sheet-templates-sync`
+  assigns category purely by sequential TOC-matching — a title with no
+  TOC entry just inherits whatever category is "current" when that
+  block is reached, the same fallback age-variants rely on — appending
+  right after the category's last known block makes the parser assign
+  the new entry that same category correctly, with no TOC entry
+  required.
+
+Safety design mirrors `template-edit`: the insertion anchor must match
+**exactly once** in the doc (0 or >1 aborts with a clear error); the
+new title must not already exist (case-insensitive); insertion only
+ever appends at a boundary already computed from the live doc, never
+touching or reordering existing content; and
+`writeControl.requiredRevisionId` locks the whole `batchUpdate` to the
+revision just read.
+
+The inserted text is always plain — no markdown syntax, no style
+embedded in the string. This was learned the hard way: the insertion
+point sits at the start of the *next* boundary paragraph, and Docs'
+`insertText` splits that paragraph at the insertion point, so every
+new paragraph created by the inserted text's own newlines inherits
+that split paragraph's style (bold + heading, not `NORMAL_TEXT`) —
+first found when a real "TEST" addition in Teleconsult came back with
+its whole body silently turned into bold headings, which
+`sheet-teletemplates-sync` then parsed as separate empty templates.
+The same bug turned out to already be live in `template-edit` too
+(its delete-then-insert lands at the same kind of boundary), and had
+silently corrupted a real "Primary Dysmenorrhoea" template's body at
+some point before it was caught. Fix in both functions: explicitly
+reset the *entire* inserted range to `NORMAL_TEXT` + not bold first,
+then (Teleconsult only) re-apply Heading 3 + bold to just the title
+paragraph as a later, overriding request. In-Clinic's own parser never
+looks at paragraph style at all — it's a plain-text export parsed
+purely by `"===="` text and TOC matching — so the reset there is a
+cosmetic safeguard against an ugly inherited style, not a correctness
+fix, but cheap enough to apply uniformly.
+
+`template-cleanup` (see its own header comment) carries a
+`fixCorruptedBody` mode that narrowly repairs one named template's
+body back to plain text if this class of bug ever recurs, and a
+`previewAddClinic`/`previewAdd` read-only mode used to verify
+`template-add`'s anchor-finding and insertion-point math against the
+real live docs before trusting a real write — needed since
+`template-add` itself requires real user auth that can't be faked to
+test directly.
+
+On a successful real write, the new template is also appended to
+`app_state[app].templates` immediately (preserving `starred` and
+everything else), and the matching sheet sync is re-triggered so the
+doc's own re-parse is cross-checked against what was just written.
+
+Requires the same Editor access already granted for `template-edit` —
+no new secrets.
 
 ## Accounts sheet writing (teleconsult-end-shift)
 
