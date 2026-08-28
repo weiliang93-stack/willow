@@ -321,18 +321,19 @@ function parsePlannedWeight(weightStr) {
 }
 
 // Pre-fills weight/reps the first time a set is shown untouched this
-// session: from the previous session's logged numbers when available
-// (more useful once you have real history), falling back to the planned
-// weight/reps when there's none yet (e.g. a brand-new exercise) so the
-// field still starts from something sensible instead of blank. RPE is
+// session: from the planned weight/reps (the target to hit today), falling
+// back to the previous session's logged numbers when the plan has no
+// weight for this exercise (e.g. bodyweight moves). The previous session's
+// actual numbers are already shown separately below each input (see
+// prevEl/set-prev), so this only controls what the input starts at. RPE is
 // left for manual entry since it varies day to day. Only fills fields
 // that have never been touched (key absent), so a deliberately cleared
 // field stays cleared.
 function autofillFromPrev(k, exIdx, setIdx, prevEntry, ex) {
   let changed = false;
 
-  const fallbackWeight = (prevEntry && prevEntry.weight) || parsePlannedWeight(ex.weight);
-  const fallbackReps = (prevEntry && prevEntry.reps) || String(ex.reps);
+  const fallbackWeight = parsePlannedWeight(ex.weight) || (prevEntry && prevEntry.weight) || "";
+  const fallbackReps = (ex.reps ? String(ex.reps) : "") || (prevEntry && prevEntry.reps) || "";
 
   if (!(k in state.actualWeight) && fallbackWeight) {
     state.actualWeight[k] = fallbackWeight;
