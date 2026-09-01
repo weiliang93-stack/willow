@@ -29,14 +29,13 @@
 // Always appends to the leftmost tab — same "no fixed tab name, a new one
 // is added every month" convention as sheet-budget-sync/sheet-training-
 // sync, confirmed against the real Accounts sheet (newest month tab is
-// always frontmost). The append position itself is found by explicitly
-// scanning column A for the first blank row once the log's own data has
-// begun (see findLogEndRow) rather than trusting values.append's built-in
-// table auto-detection — that auto-detection inserted new rows at the very
-// top of the sheet once already, since the real per-day log doesn't start
-// at row 1 (rows above it are a header + summary/bonus block with a blank
-// column A throughout, which the auto-detection read as "empty table").
-// Row formatting (background color per column E-I, alignment, and the
+// always frontmost). The append position itself is found by scanning
+// column A downward from the log's fixed start (row 11 — see
+// findLogEndRow) for the first blank row, rather than trusting
+// values.append's built-in table auto-detection or scanning from row 1:
+// both put new rows at the very top of the sheet at least once each (see
+// findLogEndRow's own comment for why). Row formatting (background color
+// per column E-I, alignment, and the
 // Comment column's black box border) is read directly off the real sheet
 // — see teleconsult-tracker/CLAUDE.md entry — and applied via a
 // batchUpdate right after the values write, using that same computed row
@@ -148,37 +147,48 @@ function validateRow(r: unknown, i: number): InputRow {
   return row as unknown as InputRow;
 }
 
-// Finds the row right after the daily log's last real entry. Deliberately
-// does NOT use values.append's own "find the table automatically" behavior
-// (insertDataOption=INSERT_ROWS anchored at A1) — that auto-detection
-// looks at whether the anchor cell/row has data, and this sheet's real
-// per-day log doesn't start at row 1: rows above it are a header + summary/
-// bonus block where column A is blank throughout. Anchoring table-detection
-// at A1 saw that blank column and decided the table was empty, inserting
-// new rows at the very top instead of after the real log (hit once already
-// — see git history). Scanning column A explicitly for "first blank row
-// after data has been seen" sidesteps that entirely, matching the same
-// approach the confirm-tm-income skill already uses by hand.
+// Every month's tab has the same fixed shape: rows 1-10 are a header +
+// summary/bonus block (column A blank throughout, regardless of what's in
+// the other columns), and the real per-day log always starts at row 11 —
+// this is the same fixed row the telemed-locum-claims/confirm-tm-income
+// skills already scan from by hand, not something that varies month to
+// month or needs auto-detecting.
+const LOG_START_ROW = 11;
+
+// Finds the row right after the daily log's last real entry, by scanning
+// column A downward from LOG_START_ROW for the first blank row. Two
+// things this deliberately avoids:
+//   - values.append's own "find the table automatically" behavior
+//     (insertDataOption=INSERT_ROWS anchored at A1) — that auto-detection
+//     looks at whether the anchor cell/row has data, and A1 itself sits in
+//     the always-blank header block, so it read the table as empty and
+//     inserted new rows at the very top instead of after the real log
+//     (hit once already — see git history).
+//   - scanning from row 1 for "first blank once *some* data has been
+//     seen" (an earlier version of this fix) — that still anchors on A1
+//     and fails identically on a brand-new month's tab, where the real
+//     log hasn't started at all yet: column A is blank for its *entire*
+//     fetched range, "seen some data" never becomes true, and the
+//     fallback resolved to row 1 again (hit a second time — see git
+//     history). Anchoring the scan at the fixed LOG_START_ROW instead of
+//     row 1 sidesteps this: everything from row 11 down is unambiguously
+//     either a real logged day or genuinely unused, never a header row.
 async function findLogEndRow(accessToken: string, tabTitle: string): Promise<number> {
-  const range = `${tabTitle}!A1:A1000`;
+  const range = `${tabTitle}!A${LOG_START_ROW}:A1000`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new Error(`values.get failed: ${res.status} ${await res.text()}`);
   const data = await res.json();
   const rows: unknown[][] = data.values ?? [];
-  let seenData = false;
   for (let i = 0; i < rows.length; i++) {
     const cell = rows[i]?.[0];
     const hasValue = cell !== undefined && cell !== null && String(cell).trim() !== "";
-    if (hasValue) {
-      seenData = true;
-    } else if (seenData) {
-      return i + 1; // 1-indexed sheet row: first blank once the log's own data has begun
-    }
+    if (!hasValue) return LOG_START_ROW + i; // 1-indexed sheet row of the first blank
   }
-  // No gap found within the fetched window (no log yet, or it runs to the
-  // very end of what was fetched) — append right after the last row seen.
-  return rows.length + 1;
+  // No blank found within the fetched window (log runs to the very end of
+  // what was fetched, or hasn't started yet) — append right after the
+  // last row seen.
+  return LOG_START_ROW + rows.length;
 }
 
 async function writeRows(accessToken: string, tabTitle: string, startRow: number, valuesRows: unknown[][]): Promise<void> {

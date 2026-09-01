@@ -555,8 +555,30 @@ name, a new one is added every month" convention as
 sheet-budget-sync/sheet-training-sync, confirmed against the real sheet
 (newest month tab is always frontmost, e.g. "Aug 2026").
 
-Two things it deliberately avoids doing the "obvious" way, both learned
-from bugs already hit once in this app's clipboard-copy path:
+**Where in the tab new rows land** has bitten this function twice, both
+times because the real per-day log doesn't start at row 1 — rows 1-10 are
+always a header + summary/bonus block with column A blank throughout,
+regardless of what month or how much data exists:
+- First: `values.append`'s own table auto-detection (anchored at A1) read
+  that blank column A as "table is empty" and inserted new rows at the
+  very top of a tab that already had ~55 rows of real log data.
+  Fixed by dropping `values.append` for a targeted `values.update` (PUT),
+  with the write position found by explicitly scanning column A for the
+  first blank row once the log's own data had been seen.
+- Second: that scan itself still anchored at row 1, so it failed
+  identically on a brand-new month's tab with *no* log rows logged yet —
+  column A is blank for the entire fetched range, "seen some data" never
+  becomes true, and the fallback resolved to row 1 again.
+  Fixed by anchoring the scan to a fixed `LOG_START_ROW = 11` constant
+  (`findLogEndRow` in `teleconsult-end-shift/index.ts`) instead of
+  scanning from row 1 — this matches the same fixed row the
+  `telemed-locum-claims`/`confirm-tm-income` skills already use by hand,
+  rather than something to auto-detect. Everything from row 11 down is
+  unambiguously either a real logged day or genuinely unused, never a
+  header row.
+
+Two more things it deliberately avoids doing the "obvious" way, both
+learned from bugs already hit once in this app's clipboard-copy path:
 
 - **The date is sent as `{year, month, day}` integers, converted to a
   Sheets serial number (`days since 1899-12-30`) server-side**, not sent
@@ -578,13 +600,12 @@ from bugs already hit once in this app's clipboard-copy path:
 Row formatting — the background fill per column E–I (`#f4cccc` Whitecoat /
 `#9900ff` Fullerton), alignment, and the Comment column's black box
 border — is applied via a `batchUpdate` `repeatCell` request per
-row/column-group, using the exact row numbers `values.append`'s own
-response (`updates.updatedRange`) reports back, so it can never touch a
-row it didn't just write. If that formatting call fails after the
-`values.append` already succeeded, the function still reports success
-(with a warning) — the numbers are correctly in the sheet either way, just
-possibly uncoloured; reporting failure there would wrongly imply nothing
-was written.
+row/column-group, using the same `startRow` the values write itself just
+used (from `findLogEndRow`), so it can never touch a row it didn't just
+write. If that formatting call fails after the values write already
+succeeded, the function still reports success (with a warning) — the
+numbers are correctly in the sheet either way, just possibly uncoloured;
+reporting failure there would wrongly imply nothing was written.
 
 Requires **Editor** (not just Viewer) access to the Accounts sheet for the
 shared Google service account (`sheet-budget-sync@willow-budget-sync.iam.gserviceaccount.com`)
