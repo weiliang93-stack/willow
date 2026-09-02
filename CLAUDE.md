@@ -192,19 +192,23 @@ never identified (suspected network/WAF layer specific to this
 project's edge). Pivoted permanently to polling `getUpdates`.
 
 **Polling cadence**: a `pg_cron` job (`telegram_poll_fast`, currently
-scheduled at `'15 seconds'` via `cron.alter_job`/`cron.schedule`) calls
-the `telegram-poll` function on an interval. This has to be set up via
-raw SQL in the SQL Editor, not the dashboard's cron UI, which only
-exposes 5-field cron expressions (1-minute minimum) — interval literals
-like `'15 seconds'` require calling `cron.schedule`/`cron.alter_job`
-directly. Originally ran at `'2 seconds'` for max responsiveness, but
-that alone burns ~43k Edge Function invocations/day and pushed the
-Supabase project over its Fair Use Policy invocation quota (Sept 2026)
-with the bot barely being used — dialed back to 15s since responsiveness
-matters less than staying under quota right now. Bump it back down
-(`select cron.alter_job(job_id := (select jobid from cron.job where
-jobname = 'telegram_poll_fast'), schedule := '2 seconds');`) if the bot
-becomes the primary interface again and quota allows it.
+scheduled at `'* * * * *'`, i.e. once a minute, via `cron.alter_job`)
+calls the `telegram-poll` function on an interval. Sub-minute cadences
+have to be set up via raw SQL in the SQL Editor as an interval literal
+(e.g. `'2 seconds'`, `'15 seconds'` — max 59) rather than the dashboard's
+cron UI, which only exposes 5-field cron expressions (1-minute minimum,
+`pg_cron` rejects an interval literal above 59 seconds so 60s+ has to be
+the standard 5-field form instead). Originally ran at `'2 seconds'` for
+max responsiveness, then briefly `'15 seconds'`, both burning enough
+Edge Function invocations/day (43k at 2s) to push the Supabase project
+over its Fair Use Policy invocation quota (Sept 2026). Dialed back to
+once a minute (~1,440 invocations/day) since Sept 2026 usage is
+job-posting-keyword-watch only — `/exp`, `/set`, and `/diary` still work
+at this cadence but now lag up to ~60s, which matters if that usage
+picks back up. Speed it back up (`select cron.alter_job(job_id :=
+(select jobid from cron.job where jobname = 'telegram_poll_fast'),
+schedule := '15 seconds');` or `'2 seconds'`) if responsiveness matters
+again and quota allows it.
 
 **Why each invocation is a single quick poll-and-exit**, not a loop:
 `pg_net` (which the cron job uses to call the function) hard-caps its
@@ -707,10 +711,12 @@ Run once each, in order, via the SQL Editor:
 - Prefer fewer/cheaper cron invocations when a little latency is fine;
   `telegram_poll_fast` started at a deliberate 2-second responsiveness
   tradeoff the user asked for explicitly, then got dialed back to 15s
-  (Sept 2026) once light bot usage made that cost not worth the Edge
-  Function invocation quota it was burning — check the current interval
-  in the DB/see the Telegram bot section above rather than assuming
-  either number, and don't change it without asking.
+  and then to once a minute (both Sept 2026) as bot usage narrowed to
+  job-posting-keyword-watch only, trading `/exp`/`/set`/`/diary`
+  responsiveness (now ~60s lag) for staying under the Edge Function
+  invocation quota — check the current interval in the DB/see the
+  Telegram bot section above rather than assuming any of these numbers,
+  and don't change it without asking.
 - Job-posting monitoring is scoped to public groups/channels the owner
   can add their own bot to — never private DMs or groups they don't
   control.
