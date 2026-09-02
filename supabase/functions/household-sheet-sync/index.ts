@@ -100,7 +100,10 @@ async function tabIsEmpty(accessToken: string, tabTitle: string): Promise<boolea
 
 async function appendRows(accessToken: string, tabTitle: string, rows: unknown[][]): Promise<void> {
   const range = `${tabTitle}!A1`;
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+  // USER_ENTERED (not RAW) so the Date column is parsed as a real date —
+  // the Summary tab's SUMIFS formula needs real dates to compare against
+  // EOMONTH(), not text that merely looks like one.
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
   const res = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
