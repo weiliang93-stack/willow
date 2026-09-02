@@ -187,7 +187,11 @@ Deno.serve(async (req) => {
   }
 
   const state = row?.state ?? { excludedExpenses: [], exclusionRules: [], categoryRules: [] };
-  const excludedExpenses: any[] = state.excludedExpenses ?? [];
+  // Only "combined" (shared-with-wife) entries belong on a joint sheet —
+  // excludedExpenses can also hold "fixed" entries (Wei Liang's own known
+  // recurring personal bills, excluded from his variable-spend calc for
+  // an unrelated reason), which have no business showing up here.
+  const excludedExpenses: any[] = (state.excludedExpenses ?? []).filter((e: any) => e.type === "combined");
   const cardLabels = cardLabelsFromRules(state.exclusionRules ?? []);
 
   const { data: syncRow, error: syncError } = await supabase
