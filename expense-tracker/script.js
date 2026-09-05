@@ -514,16 +514,11 @@ function renderExpenseCardPicker() {
     selectedExpensePaymentMethod = null;
   }
 
-  expenseCardPickerEl.innerHTML = "";
   const options = [{ id: "cash", name: "Cash / Other" }, ...cards];
-  for (const option of options) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "chip-option" + (selectedExpensePaymentMethod === option.id ? " selected" : "");
-    btn.textContent = option.name;
-    btn.dataset.id = option.id;
-    expenseCardPickerEl.appendChild(btn);
-  }
+  expenseCardPickerEl.innerHTML =
+    '<option value="" disabled hidden>Choose a payment method</option>' +
+    options.map((o) => `<option value="${escapeHtml(o.id)}">${escapeHtml(o.name)}</option>`).join("");
+  expenseCardPickerEl.value = selectedExpensePaymentMethod || "";
 }
 
 function renderCategories() {
@@ -550,15 +545,10 @@ function renderExpenseCategoryPicker() {
     selectedExpenseCategory = null;
   }
 
-  expenseCategoryPickerEl.innerHTML = "";
-  for (const category of categories) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "chip-option" + (selectedExpenseCategory === category ? " selected" : "");
-    btn.textContent = category;
-    btn.dataset.category = category;
-    expenseCategoryPickerEl.appendChild(btn);
-  }
+  expenseCategoryPickerEl.innerHTML =
+    '<option value="" disabled hidden>Choose a category</option>' +
+    categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+  expenseCategoryPickerEl.value = selectedExpenseCategory || "";
 }
 
 function buildExpenseRow(expense) {
@@ -912,18 +902,12 @@ categoriesListEl.addEventListener("click", (event) => {
   }
 });
 
-expenseCategoryPickerEl.addEventListener("click", (event) => {
-  const btn = event.target.closest(".chip-option");
-  if (!btn) return;
-  selectedExpenseCategory = btn.dataset.category;
-  renderExpenseCategoryPicker();
+expenseCategoryPickerEl.addEventListener("change", () => {
+  selectedExpenseCategory = expenseCategoryPickerEl.value || null;
 });
 
-expenseCardPickerEl.addEventListener("click", (event) => {
-  const btn = event.target.closest(".chip-option");
-  if (!btn) return;
-  selectedExpensePaymentMethod = btn.dataset.id;
-  renderExpenseCardPicker();
+expenseCardPickerEl.addEventListener("change", () => {
+  selectedExpensePaymentMethod = expenseCardPickerEl.value || null;
 });
 
 expenseForm.addEventListener("submit", (event) => {
