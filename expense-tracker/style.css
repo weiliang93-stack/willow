@@ -514,3 +514,11 @@ button.secondary:hover {
 .category-bar-amount {
   color: #556;
 }
+
+/* Combined/shared expenses */
+.combined-panel h3 {
+  font-size: 13px;
+  margin: 0;
+  color: #33463b;
+  font-weight: 600;
+}

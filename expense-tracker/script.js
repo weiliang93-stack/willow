@@ -15,6 +15,13 @@ let monthlyBudget = load(STORAGE_KEYS.monthlyBudget, null);
 let editingCardId = null;
 let editingExpenseId = null;
 
+// Combined/shared expenses and the rules that route them there are owned
+// by the email-alert automation (app_state app "expenses_automation"),
+// not by this app — read-only here, pulled fresh on boot/refresh, never
+// pushed back by save().
+let excludedExpenses = [];
+let exclusionRules = [];
+
 function load(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -187,6 +194,125 @@ function render() {
   renderSearchCategorySelect();
   renderSearchCardSelect();
   renderSearchResults();
+  renderCombinedExpenses();
+}
+
+// --- combined/shared expenses (read-only, from expenses_automation) ---
+
+function combinedCardLabel(cardId) {
+  const card = cards.find((c) => c.id === cardId);
+  if (card) return card.name;
+  const rule = exclusionRules.find((r) => r.cardId === cardId);
+  if (rule) return rule.reason.replace(/\s*-\s*combined.*$/i, "").trim() || rule.matchValue;
+  return cardId;
+}
+
+function combinedGroups() {
+  const combined = excludedExpenses.filter((e) => e.type === "combined");
+  const cardIds = new Set([...exclusionRules.map((r) => r.cardId), ...combined.map((e) => e.cardId)]);
+
+  return [...cardIds]
+    .map((cardId) => {
+      const rule = exclusionRules.find((r) => r.cardId === cardId) || null;
+      const entries = combined.filter((e) => e.cardId === cardId);
+      let spent, cap, cycleText;
+
+      if (rule && rule.cap) {
+        const { start, end } = getCardCycleRange(rule, todayStr());
+        spent = entries.filter((e) => e.date >= start && e.date <= end).reduce((sum, e) => sum + e.amount, 0);
+        cap = rule.cap;
+        cycleText = cycleLabel(rule);
+      } else {
+        spent = entries.filter((e) => currentMonthKey(e.date) === thisMonth).reduce((sum, e) => sum + e.amount, 0);
+        cap = null;
+        cycleText = "This month";
+      }
+
+      return { cardId, label: combinedCardLabel(cardId), spent, cap, cycleText, entries };
+    })
+    .filter((g) => g.entries.length > 0 || g.cap);
+}
+
+function renderCombinedExpenses() {
+  const container = document.getElementById("combined-summary");
+  const groups = combinedGroups();
+
+  if (groups.length === 0) {
+    container.innerHTML = '<p class="empty-state">No combined/shared expenses yet.</p>';
+  } else {
+    container.innerHTML = groups
+      .map((g) => {
+        let progressBlock = "";
+        if (g.cap) {
+          const pct = g.cap > 0 ? Math.min((g.spent / g.cap) * 100, 100) : 0;
+          let fillClass = "";
+          if (g.spent >= g.cap) fillClass = "over";
+          else if (g.spent >= g.cap * 0.7) fillClass = "warn";
+          progressBlock = `
+            <div class="progress-track">
+              <div class="progress-fill ${fillClass}" style="width: ${pct}%"></div>
+            </div>
+          `;
+        }
+        const amounts = g.cap ? `${formatMoney(g.spent)} / ${formatMoney(g.cap)}` : formatMoney(g.spent);
+        return `
+          <div class="card-item">
+            <div class="card-item-top">
+              <span class="name">${escapeHtml(g.label)}</span>
+              <span class="amounts">${amounts}</span>
+            </div>
+            ${progressBlock}
+            <span class="cycle-label">${escapeHtml(g.cycleText)}</span>
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  renderCombinedExpenseList();
+}
+
+function renderCombinedExpenseList() {
+  const listEl = document.getElementById("combined-expense-list");
+  const totalEl = document.getElementById("combined-month-total");
+
+  const monthEntries = excludedExpenses
+    .filter((e) => e.type === "combined" && currentMonthKey(e.date) === thisMonth)
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  const total = monthEntries.reduce((sum, e) => sum + e.amount, 0);
+  totalEl.textContent = monthEntries.length ? formatMoney(total) : "";
+
+  listEl.innerHTML = "";
+  if (monthEntries.length === 0) {
+    listEl.innerHTML = '<p class="empty-state">No combined expenses logged this month yet.</p>';
+    return;
+  }
+
+  listEl.innerHTML = monthEntries
+    .map(
+      (e) => `
+        <div class="expense-row">
+          <div>
+            <div>${escapeHtml(e.category)}${e.note ? " — " + escapeHtml(e.note) : ""}</div>
+            <div class="meta">${e.date} · ${escapeHtml(combinedCardLabel(e.cardId))}</div>
+          </div>
+          <div style="display:flex; align-items:center;">
+            <span class="amount">${formatMoney(e.amount)}</span>
+          </div>
+        </div>
+      `
+    )
+    .join("");
+}
+
+async function refreshCombinedExpenses() {
+  const remote = await SupaSync.pullState("expenses_automation");
+  if (remote && remote.state) {
+    excludedExpenses = remote.state.excludedExpenses || [];
+    exclusionRules = remote.state.exclusionRules || [];
+  }
+  renderCombinedExpenses();
 }
 
 function renderCategoryChart() {
@@ -913,6 +1039,8 @@ document.getElementById("export-csv-btn").addEventListener("click", () => {
   exportCsv(expenses, "all");
 });
 
+document.getElementById("refresh-combined-btn").addEventListener("click", refreshCombinedExpenses);
+
 document.getElementById("export-search-csv-btn").addEventListener("click", () => {
   const { results, hasFilter } = getSearchFilterResults();
   exportCsv(hasFilter ? results : expenses, hasFilter ? "filtered" : "all");
@@ -947,7 +1075,14 @@ function csvEscape(value) {
 // offline (saved locally, but not yet pushed) survives a reload instead
 // of being silently overwritten by the older cloud copy.
 async function bootExpenseApp() {
-  const remote = await SupaSync.pullState("expenses");
+  const [remote, automationRemote] = await Promise.all([
+    SupaSync.pullState("expenses"),
+    SupaSync.pullState("expenses_automation"),
+  ]);
+  if (automationRemote && automationRemote.state) {
+    excludedExpenses = automationRemote.state.excludedExpenses || [];
+    exclusionRules = automationRemote.state.exclusionRules || [];
+  }
   const localUpdatedAt = localStorage.getItem(STORAGE_KEYS.updatedAt);
   const remoteIsNewer = remote && (!localUpdatedAt || new Date(remote.updatedAt) > new Date(localUpdatedAt));
 
