@@ -522,3 +522,35 @@ button.secondary:hover {
   color: #33463b;
   font-weight: 600;
 }
+
+/* Tabs */
+.tab-nav {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.tab-btn {
+  flex: 1;
+  background: white;
+  color: #556;
+  border: 1px solid #e5e9e6;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tab-btn:hover {
+  background: #f2f4f3;
+}
+
+.tab-btn.active {
+  background: #1e5f3a;
+  color: white;
+  border-color: #1e5f3a;
+}
+
+.tab-panel.hidden {
+  display: none;
+}

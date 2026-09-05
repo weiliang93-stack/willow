@@ -1041,6 +1041,26 @@ document.getElementById("export-csv-btn").addEventListener("click", () => {
 
 document.getElementById("refresh-combined-btn").addEventListener("click", refreshCombinedExpenses);
 
+// --- tabs ---
+
+const TAB_STORAGE_KEY = "budgetTracker.activeTab";
+
+function setActiveTab(tab) {
+  document.getElementById("tab-btn-personal").classList.toggle("active", tab === "personal");
+  document.getElementById("tab-btn-combined").classList.toggle("active", tab === "combined");
+  document.getElementById("tab-panel-personal").classList.toggle("hidden", tab !== "personal");
+  document.getElementById("tab-panel-combined").classList.toggle("hidden", tab !== "combined");
+  localStorage.setItem(TAB_STORAGE_KEY, tab);
+}
+
+document.querySelector(".tab-nav").addEventListener("click", (event) => {
+  const btn = event.target.closest(".tab-btn");
+  if (!btn) return;
+  setActiveTab(btn.dataset.tab);
+});
+
+setActiveTab(localStorage.getItem(TAB_STORAGE_KEY) || "personal");
+
 document.getElementById("export-search-csv-btn").addEventListener("click", () => {
   const { results, hasFilter } = getSearchFilterResults();
   exportCsv(hasFilter ? results : expenses, hasFilter ? "filtered" : "all");

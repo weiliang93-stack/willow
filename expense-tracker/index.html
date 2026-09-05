@@ -14,140 +14,149 @@
       <p class="subtitle" id="month-label"></p>
     </header>
 
-    <section class="expense-panel">
-      <h2>Add expense</h2>
-      <form id="add-expense-form" class="expense-form">
-        <input id="expense-amount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Amount ($)" required>
+    <div class="tab-nav">
+      <button type="button" class="tab-btn active" id="tab-btn-personal" data-tab="personal">My Expenses</button>
+      <button type="button" class="tab-btn" id="tab-btn-combined" data-tab="combined">Combined</button>
+    </div>
 
-        <div class="field-label">Category</div>
-        <div id="expense-category-picker" class="chip-picker"></div>
+    <div id="tab-panel-personal" class="tab-panel">
+      <section class="expense-panel">
+        <h2>Add expense</h2>
+        <form id="add-expense-form" class="expense-form">
+          <input id="expense-amount" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Amount ($)" required>
 
-        <div class="field-label">Payment method</div>
-        <div id="expense-card-picker" class="chip-picker"></div>
+          <div class="field-label">Category</div>
+          <div id="expense-category-picker" class="chip-picker"></div>
 
-        <input id="expense-date" type="date" required>
-        <input id="expense-note" type="text" placeholder="Note (optional)">
-        <p id="expense-form-hint" class="form-error hidden">Pick a category and payment method above.</p>
-        <button type="submit">Add expense</button>
-      </form>
-    </section>
+          <div class="field-label">Payment method</div>
+          <div id="expense-card-picker" class="chip-picker"></div>
 
-    <section class="budget-panel">
-      <div class="panel-heading">
-        <h2>Monthly Budget</h2>
-        <button id="edit-budget-btn" class="link-btn">Edit</button>
-      </div>
-      <div id="budget-display"></div>
+          <input id="expense-date" type="date" required>
+          <input id="expense-note" type="text" placeholder="Note (optional)">
+          <p id="expense-form-hint" class="form-error hidden">Pick a category and payment method above.</p>
+          <button type="submit">Add expense</button>
+        </form>
+      </section>
 
-      <form id="edit-budget-form" class="inline-form hidden">
-        <input id="budget-input" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Monthly budget ($)" required>
-        <div class="form-actions">
-          <button type="submit">Save</button>
-          <button type="button" id="cancel-budget-btn" class="secondary">Cancel</button>
+      <section class="budget-panel">
+        <div class="panel-heading">
+          <h2>Monthly Budget</h2>
+          <button id="edit-budget-btn" class="link-btn">Edit</button>
         </div>
-      </form>
-    </section>
+        <div id="budget-display"></div>
 
-    <section class="card-panel">
-      <div class="panel-heading">
-        <h2>Cards</h2>
-        <button id="add-card-btn" class="link-btn">+ Add card</button>
-      </div>
-      <div id="cards-list" class="cards-list"></div>
+        <form id="edit-budget-form" class="inline-form hidden">
+          <input id="budget-input" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Monthly budget ($)" required>
+          <div class="form-actions">
+            <button type="submit">Save</button>
+            <button type="button" id="cancel-budget-btn" class="secondary">Cancel</button>
+          </div>
+        </form>
+      </section>
 
-      <form id="add-card-form" class="inline-form hidden">
-        <input id="card-name" type="text" placeholder="Card name (e.g. Amex)" required>
-        <input id="card-cap" type="number" min="0" step="0.01" placeholder="Monthly cap ($)" required>
-        <div class="radio-group">
-          <label><input type="radio" name="card-reset-mode" value="calendar" checked> Resets calendar month</label>
-          <label><input type="radio" name="card-reset-mode" value="statement"> Resets on statement date</label>
+      <section class="card-panel">
+        <div class="panel-heading">
+          <h2>Cards</h2>
+          <button id="add-card-btn" class="link-btn">+ Add card</button>
         </div>
-        <input id="card-statement-day" type="number" min="1" max="31" placeholder="Statement day (1-31)" class="hidden">
-        <div class="form-actions">
-          <button type="submit">Save card</button>
-          <button type="button" id="cancel-card-btn" class="secondary">Cancel</button>
+        <div id="cards-list" class="cards-list"></div>
+
+        <form id="add-card-form" class="inline-form hidden">
+          <input id="card-name" type="text" placeholder="Card name (e.g. Amex)" required>
+          <input id="card-cap" type="number" min="0" step="0.01" placeholder="Monthly cap ($)" required>
+          <div class="radio-group">
+            <label><input type="radio" name="card-reset-mode" value="calendar" checked> Resets calendar month</label>
+            <label><input type="radio" name="card-reset-mode" value="statement"> Resets on statement date</label>
+          </div>
+          <input id="card-statement-day" type="number" min="1" max="31" placeholder="Statement day (1-31)" class="hidden">
+          <div class="form-actions">
+            <button type="submit">Save card</button>
+            <button type="button" id="cancel-card-btn" class="secondary">Cancel</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="chart-panel">
+        <div class="panel-heading">
+          <h2>Spending by Category</h2>
         </div>
-      </form>
-    </section>
+        <div id="category-chart" class="category-chart"></div>
+      </section>
 
-    <section class="combined-panel">
-      <div class="panel-heading">
-        <h2>Combined / Shared Expenses</h2>
-        <button type="button" id="refresh-combined-btn" class="link-btn">Refresh</button>
-      </div>
-      <p class="hint">Auto-logged from bank alerts and shared with your wife — tracked separately from your budget and cards above.</p>
-      <div id="combined-summary" class="cards-list"></div>
-
-      <div class="panel-heading">
-        <h3>This month</h3>
-        <span id="combined-month-total" class="month-total"></span>
-      </div>
-      <div id="combined-expense-list" class="expense-list"></div>
-    </section>
-
-    <section class="chart-panel">
-      <div class="panel-heading">
-        <h2>Spending by Category</h2>
-      </div>
-      <div id="category-chart" class="category-chart"></div>
-    </section>
-
-    <section class="history-panel">
-      <div class="panel-heading">
-        <h2>This month's expenses</h2>
-        <span id="month-total" class="month-total"></span>
-      </div>
-      <div id="expense-list" class="expense-list"></div>
-      <button id="export-csv-btn" class="secondary export-btn" type="button">Export all expenses as CSV</button>
-    </section>
-
-    <section class="search-panel">
-      <div class="panel-heading">
-        <h2>Search Expenses</h2>
-        <button type="button" id="clear-search-btn" class="link-btn">Clear</button>
-      </div>
-      <div class="search-form">
-        <input id="search-text" type="text" placeholder="Search notes...">
-        <select id="search-category">
-          <option value="">All categories</option>
-        </select>
-        <select id="search-card">
-          <option value="">All payment methods</option>
-          <option value="cash">Cash / Other</option>
-        </select>
-        <div class="date-range">
-          <input id="search-date-from" type="date" aria-label="From date">
-          <span>to</span>
-          <input id="search-date-to" type="date" aria-label="To date">
+      <section class="history-panel">
+        <div class="panel-heading">
+          <h2>This month's expenses</h2>
+          <span id="month-total" class="month-total"></span>
         </div>
-        <div class="quick-filters">
-          <button type="button" id="filter-this-month-btn" class="secondary">This month</button>
-          <button type="button" id="filter-last-month-btn" class="secondary">Last month</button>
-        </div>
-      </div>
-      <div class="panel-heading">
-        <span id="search-result-summary" class="hint"></span>
-        <span id="search-total" class="month-total"></span>
-      </div>
-      <div id="search-results" class="expense-list"></div>
-      <button id="export-search-csv-btn" class="secondary export-btn" type="button">Export this period as CSV</button>
-    </section>
+        <div id="expense-list" class="expense-list"></div>
+        <button id="export-csv-btn" class="secondary export-btn" type="button">Export all expenses as CSV</button>
+      </section>
 
-    <section class="category-panel">
-      <div class="panel-heading">
-        <h2>Categories</h2>
-        <button id="add-category-btn" class="link-btn">+ Add category</button>
-      </div>
-      <div id="categories-list" class="categories-list"></div>
-
-      <form id="add-category-form" class="inline-form hidden">
-        <input id="category-name" type="text" placeholder="Category name (e.g. Travel)" required>
-        <div class="form-actions">
-          <button type="submit">Save category</button>
-          <button type="button" id="cancel-category-btn" class="secondary">Cancel</button>
+      <section class="search-panel">
+        <div class="panel-heading">
+          <h2>Search Expenses</h2>
+          <button type="button" id="clear-search-btn" class="link-btn">Clear</button>
         </div>
-      </form>
-    </section>
+        <div class="search-form">
+          <input id="search-text" type="text" placeholder="Search notes...">
+          <select id="search-category">
+            <option value="">All categories</option>
+          </select>
+          <select id="search-card">
+            <option value="">All payment methods</option>
+            <option value="cash">Cash / Other</option>
+          </select>
+          <div class="date-range">
+            <input id="search-date-from" type="date" aria-label="From date">
+            <span>to</span>
+            <input id="search-date-to" type="date" aria-label="To date">
+          </div>
+          <div class="quick-filters">
+            <button type="button" id="filter-this-month-btn" class="secondary">This month</button>
+            <button type="button" id="filter-last-month-btn" class="secondary">Last month</button>
+          </div>
+        </div>
+        <div class="panel-heading">
+          <span id="search-result-summary" class="hint"></span>
+          <span id="search-total" class="month-total"></span>
+        </div>
+        <div id="search-results" class="expense-list"></div>
+        <button id="export-search-csv-btn" class="secondary export-btn" type="button">Export this period as CSV</button>
+      </section>
+
+      <section class="category-panel">
+        <div class="panel-heading">
+          <h2>Categories</h2>
+          <button id="add-category-btn" class="link-btn">+ Add category</button>
+        </div>
+        <div id="categories-list" class="categories-list"></div>
+
+        <form id="add-category-form" class="inline-form hidden">
+          <input id="category-name" type="text" placeholder="Category name (e.g. Travel)" required>
+          <div class="form-actions">
+            <button type="submit">Save category</button>
+            <button type="button" id="cancel-category-btn" class="secondary">Cancel</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <div id="tab-panel-combined" class="tab-panel hidden">
+      <section class="combined-panel">
+        <div class="panel-heading">
+          <h2>Combined / Shared Expenses</h2>
+          <button type="button" id="refresh-combined-btn" class="link-btn">Refresh</button>
+        </div>
+        <p class="hint">Auto-logged from bank alerts and shared with your wife — tracked separately from your budget and cards above.</p>
+        <div id="combined-summary" class="cards-list"></div>
+
+        <div class="panel-heading">
+          <h3>This month</h3>
+          <span id="combined-month-total" class="month-total"></span>
+        </div>
+        <div id="combined-expense-list" class="expense-list"></div>
+      </section>
+    </div>
   </div>
 
   <script src="../shared/supabase-config.js"></script>
