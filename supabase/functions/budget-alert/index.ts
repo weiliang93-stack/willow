@@ -120,11 +120,24 @@ Deno.serve(async (req) => {
     day: "2-digit",
   }).format(new Date());
 
-  const { data: alertRow } = await supabase
+  // This read matters just as much as the write below: if it silently
+  // fails and we default lastTier to "none", a card/budget that's
+  // genuinely already at "warn" looks like a fresh crossing and we
+  // re-send an alert that already went out — this is what was actually
+  // causing repeat "Card alert" messages even after the write-side fix
+  // below, confirmed by pg_net's own call history timing out on this
+  // function's invocation at the exact same moments the duplicate
+  // alerts were sent. So: never guess "none" on a failed read — bail
+  // out without alerting anything this run instead.
+  const { data: alertRow, error: alertReadError } = await supabase
     .from("budget_alert_state")
     .select("tier, card_tiers")
     .eq("user_id", USER_ID)
     .maybeSingle();
+  if (alertReadError) {
+    console.error("error reading budget_alert_state — skipping this run to avoid a false re-alert:", alertReadError);
+    return new Response("error reading budget_alert_state", { status: 500 });
+  }
   const lastTier = alertRow?.tier ?? "none";
   const lastCardTiers: Record<string, string> = alertRow?.card_tiers ?? {};
 
