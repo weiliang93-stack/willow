@@ -129,7 +129,14 @@ without the user needing to re-explain anything — read this first.
     this is a safety net, not the primary path. Chrome's Document PiP
     windows don't inherit the page's stylesheet, so `copyStylesInto` clones
     matching `<link rel="stylesheet">` tags into the new window's
-    `<head>`.
+    `<head>`. The panel body also carries a live wall clock (`#floatClock`,
+    updated every second via `setInterval`) — it lives in `fp-body`, not
+    `fp-head`, since `fp-head` (the "⠿ Double Shift" title bar + close
+    button) is deliberately hidden while docked in a real PiP window
+    (`.float-panel.in-pip .fp-head`) because the PiP window already
+    supplies its own native title bar; `fp-body` has no such rule, so the
+    clock stays visible in both the real PiP window and the in-page
+    fallback panel.
   - Light/dark follows the OS via `prefers-color-scheme`, same reasoning
     as templates-app — this gets opened at whatever hour the owner is
     doing teleconsults.
