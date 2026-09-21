@@ -617,6 +617,16 @@ html, body {
   flex-direction: column;
   gap: 10px;
 }
+.fp-clock {
+  text-align: center;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-muted);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
 .fp-job { display: flex; flex-direction: column; gap: 6px; }
 .fp-job.inactive { opacity: 0.5; }
 .fp-job.inactive .fp-btn { pointer-events: none; }

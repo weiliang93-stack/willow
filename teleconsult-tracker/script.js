@@ -645,6 +645,7 @@ function bootApp() {
     panel: document.getElementById("floatPanel"),
     head: document.getElementById("floatHead"),
     close: document.getElementById("floatClose"),
+    clock: document.getElementById("floatClock"),
     wcJob: document.getElementById("floatWcJob"),
     wcTotal: document.getElementById("floatWcTotal"),
     wcSub: document.getElementById("floatWcSub"),
@@ -658,6 +659,18 @@ function bootApp() {
   floatEls.wcMeds.addEventListener("click", wcAddMeds);
   floatEls.wcNomeds.addEventListener("click", wcAddNomeds);
   floatEls.fhgBtn.addEventListener("click", fhgAddPatient);
+
+  // Wall clock in the float panel body (not fp-head, which is hidden while
+  // docked in a real PiP window — that window supplies its own native
+  // title bar instead, see .float-panel.in-pip .fp-head in style.css).
+  // Runs continuously regardless of whether the panel is open/visible;
+  // updating a couple characters of hidden text once a second is cheap.
+  function updateFloatClock() {
+    var now = new Date();
+    floatEls.clock.textContent = pad2(now.getHours()) + ":" + pad2(now.getMinutes()) + ":" + pad2(now.getSeconds());
+  }
+  updateFloatClock();
+  setInterval(updateFloatClock, 1000);
 
   var floatBtn = document.getElementById("floatBtn");
   var pipWindow = null;
