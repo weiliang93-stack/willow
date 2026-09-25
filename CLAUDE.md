@@ -18,17 +18,47 @@ without the user needing to re-explain anything — read this first.
 - **expense-tracker/** — expense logging with categories, credit
   cards/payment methods (each with its own spending cap and billing
   cycle — calendar month or a statement day), a monthly budget, a
-  category breakdown chart. Synced to Supabase. Drives the Telegram
-  bot's `/exp` flow and both budget-alert paths (overall budget + per-card
-  caps).
+  category breakdown chart. Synced to Supabase (`app_state` app
+  `"expenses"`). Drives the Telegram bot's `/exp` flow and both
+  budget-alert paths (overall budget + per-card caps). Also embedded
+  unmodified, as its own tab, inside `money/` (below) — still a
+  fully standalone app in its own right, opened directly by nothing
+  else in this repo.
 - **diary-app/** — journal entries with title/body/date, Day One import,
   media/thumbnail handling. Synced to Supabase using its own smarter
   per-entry merge (`mergeEntries`, keyed by each entry's own
   `updatedAt`/`createdAt`) rather than the whole-state last-write-wins
   approach the other two apps use.
-- **investment-planner/** — synced to Supabase; not connected to the
-  Telegram bot, but `sheet-investment-sync` (see below) writes account
-  balances into it from a household net-worth Google Sheet.
+- **investment-planner/** — synced to Supabase (`app_state` app
+  `"investment"`); not connected to the Telegram bot, but
+  `sheet-investment-sync` (see below) writes account balances into it
+  from a household net-worth Google Sheet. Also embedded unmodified,
+  as its own tab, inside `money/` (below).
+- **money/** — a merged "Money" shell over expense-tracker and
+  investment-planner, for the owner to open one app instead of two.
+  Deliberately embeds both unchanged as `<iframe>`s (its Spending and
+  Investments tabs) rather than merging their markup/CSS/JS into one
+  page — each app has its own DOM ids, CSS class names, and global JS
+  scope (e.g. both independently define `save()`, `cards`/`accounts`,
+  `STORAGE_KEYS`), and a real single-page merge would have to rename
+  around every collision. The iframe boundary means neither app's code
+  changed at all: `/exp`, budget-alert, `sheet-budget-sync`, and
+  `sheet-investment-sync` all keep reading/writing the same `app_state`
+  rows exactly as before, since nothing about their `app_state` key or
+  shape moved. A signed-in session syncs across all three tabs for
+  free — Supabase's JS client persists the session in `localStorage`,
+  which same-origin iframes on GitHub Pages already share, so signing
+  in once (in the shell or in either iframe) signs in everywhere; no
+  separate sign-in per tab. The one genuinely new piece is its
+  Dashboard tab: read-only, it `pullState`s both `"expenses"` and
+  `"investment"` directly (same as each app already does on its own
+  boot) and renders a combined net-worth-style summary (total
+  invested, this month's spend vs. budget, monthly contributions,
+  each card's cap usage) — it never `pushState`s; editing still only
+  happens inside the Spending/Investments tabs, which stay each app's
+  own source of truth. Not connected to the Telegram bot itself
+  (nothing here needs to be — the two embedded apps' own bot/sync
+  integrations are untouched).
 - **taxi-compare/** — standalone, not connected to Supabase or the bot.
 - **templates-app/** — search/browse/copy UI for consult-note templates,
   used at the point of care to find and copy the right template into the
