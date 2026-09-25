@@ -191,6 +191,24 @@ without the user needing to re-explain anything — read this first.
     re-check (e.g. a roster added after the session was already open),
     and a manual re-check's result does overwrite whatever's currently
     set, same as the first auto-run would have.
+  - **Month-to-date history.** Each successful "End shift" also records
+    that day's raw counts into `app_state` app `"teleconsult"` as
+    `{shifts: {"YYYY-MM-DD": {date, weekday, wc: {rostered, target, meds,
+    nomeds, pay}, fhg: {rostered, hours, patients, sessionPay}, loggedAt}}}`
+    — the one piece of this app that *is* synced (the live session itself
+    still stays localStorage-only). Keyed by date, so re-ending the same
+    day replaces that day's record. Merged per-record by `loggedAt` (the
+    diary-app approach, not whole-state last-write-wins), with removals kept
+    as `{deleted: true}` tombstones so a merge can't resurrect them. A
+    "This month" section (following the "Logging for" date's month) totals
+    it: Fullerton netted across the month exactly like the real claim
+    (`hours×$70 + max(0, rostered patients − hours×5)×$10`, ad-hoc patients
+    flat $10), plus "Claim cases" — the completed-case count the
+    `telemed-locum-claims` skill needs, readable directly via
+    `select state from app_state where app = 'teleconsult'`. Whitecoat is
+    summed per shift (no netting). "Remove" drops a day from the history
+    only; it never touches the Accounts sheet. Only days ended via "End
+    shift" are recorded — the copy-for-sheet fallback doesn't record.
 
 ## Sync architecture (shared/)
 

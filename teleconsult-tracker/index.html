@@ -201,6 +201,44 @@
       </section>
     </div>
 
+    <!-- Month-to-date: built from every shift "End shift" has logged into
+         app_state ("teleconsult"), for whichever month the "Logging for"
+         date falls in. -->
+    <section class="month" id="monthSection">
+      <div class="month-head">
+        <h2 id="monthTitle">This month</h2>
+        <span class="month-sub" id="monthSub"></span>
+      </div>
+      <div class="month-grid">
+        <div class="month-block fhg">
+          <h3>Fullerton TM</h3>
+          <div class="stats">
+            <div class="stat"><p class="k">Rostered hrs</p><p class="v num" id="mFhgHours">0</p></div>
+            <div class="stat"><p class="k">Patients</p><p class="v num" id="mFhgPatients">0</p></div>
+            <div class="stat total"><p class="k">Est. pay</p><p class="v num" id="mFhgPay">$0</p></div>
+          </div>
+          <p class="month-note" id="mFhgNote"></p>
+        </div>
+        <div class="month-block wc">
+          <h3>Whitecoat TM</h3>
+          <div class="stats">
+            <div class="stat"><p class="k">Shifts</p><p class="v num" id="mWcShifts">0</p></div>
+            <div class="stat"><p class="k">Patients</p><p class="v num" id="mWcPatients">0</p></div>
+            <div class="stat total"><p class="k">Earned</p><p class="v num" id="mWcPay">$0</p></div>
+          </div>
+          <p class="month-note" id="mWcNote"></p>
+        </div>
+      </div>
+      <div class="month-total">
+        <span>Month total (est.)</span>
+        <span class="num" id="mTotal">$0</span>
+      </div>
+      <details class="month-log">
+        <summary>Logged shifts (<span id="mCount">0</span>)</summary>
+        <ul id="mList"></ul>
+      </details>
+    </section>
+
     <footer class="note" id="pipNote"></footer>
   </div>
 

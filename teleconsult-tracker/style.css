@@ -808,3 +808,71 @@ footer.note {
 }
 .end-shift-msg.error { color: var(--critical); font-weight: 600; }
 .end-shift-msg.success { color: var(--good); font-weight: 600; }
+
+/* ---- month-to-date (from shifts logged via End shift) ---- */
+.month {
+  margin-top: 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 16px 16px;
+}
+.month-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: 12px;
+}
+.month-head h2 { margin: 0; font-size: 17px; }
+.month-sub { font-size: 12.5px; color: var(--ink-muted); }
+.month-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+@media (max-width: 720px) {
+  .month-grid { grid-template-columns: 1fr; }
+}
+.month-block h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.month-block.wc h3 { color: var(--wc); }
+.month-block.fhg h3 { color: var(--fhg); }
+.month-block.fhg .stat.total .v { color: var(--fhg); }
+.month-note {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--ink-muted);
+  line-height: 1.45;
+}
+.month-note b { color: var(--ink); }
+.month-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-weight: 600;
+}
+.month-total .num { font-size: 20px; font-weight: 700; }
+.month-log { margin-top: 10px; font-size: 13px; }
+.month-log summary { cursor: pointer; color: var(--ink-muted); font-weight: 600; }
+.month-log ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.month-log li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+.month-log li:last-child { border-bottom: none; }
+.month-log .d { min-width: 74px; font-weight: 600; }
+.month-log .x { flex: 1; color: var(--ink-muted); }
+.month-log .empty { color: var(--ink-muted); }
