@@ -1111,7 +1111,17 @@ async function bootExpenseApp() {
   if (!remoteIsNewer) save();
 }
 
+// Lets a deep link (e.g. from the Home Screen widget) land the user
+// straight in the add-expense form, focused and ready to type, instead
+// of just scrolling to it the way a plain #add-expense-form anchor
+// already would on its own.
+function focusFromHash() {
+  if (location.hash === "#add-expense-form") {
+    expenseAmountInput.focus();
+  }
+}
+
 SupaSync.mountAuthGate(document.getElementById("authGate"), () => {
   document.getElementById("app-content").style.display = "";
-  bootExpenseApp();
+  bootExpenseApp().then(focusFromHash);
 });

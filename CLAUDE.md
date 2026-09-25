@@ -21,9 +21,18 @@ without the user needing to re-explain anything — read this first.
   category breakdown chart. Synced to Supabase (`app_state` app
   `"expenses"`). Drives the Telegram bot's `/exp` flow and both
   budget-alert paths (overall budget + per-card caps). Also embedded
-  unmodified, as its own tab, inside `money/` (below) — still a
-  fully standalone app in its own right, opened directly by nothing
-  else in this repo.
+  as its own tab inside `money/` (below) — still a fully standalone
+  app in its own right, opened directly by nothing else in this repo.
+  Recognizes one deep-link hash, `#add-expense-form`, purely as a UI
+  convenience: on load it focuses the amount input so a link lands the
+  user ready to type instead of just scrolling there (a plain `#`
+  anchor to an existing element id, e.g. `#cards-list`, already
+  scrolls there on its own with no code needed — the focus behavior is
+  the only bit that needed adding). Used by the "Willow Budget"
+  Scriptable Home Screen widget (personal device script, lives outside
+  this repo) so tapping its budget figure opens straight into
+  "add an expense," and tapping a card opens straight to the Cards
+  section — no change to `app_state`, sync, or the bot's `/exp` flow.
 - **diary-app/** — journal entries with title/body/date, Day One import,
   media/thumbnail handling. Synced to Supabase using its own smarter
   per-entry merge (`mergeEntries`, keyed by each entry's own
