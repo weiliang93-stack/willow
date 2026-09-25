@@ -14,7 +14,10 @@ without the user needing to re-explain anything — read this first.
   per day-of-week slot, reorderable), exercises with planned
   weight/reps/sets, logging actual weight/reps/RPE per set, custom
   exercises, exercise overrides/deletions, a training log, a progress
-  chart. Synced to Supabase. Drives the Telegram bot's `/set` flow.
+  chart. Synced to Supabase (`app_state` app `"training"`). Drives the
+  Telegram bot's `/set` flow, and also the "Willow Workout" Scriptable
+  Home Screen widget (personal device script, lives outside this repo)
+  via the `widget-log-set` Edge Function — see its own section below.
 - **expense-tracker/** — expense logging with categories, credit
   cards/payment methods (each with its own spending cap and billing
   cycle — calendar month or a statement day), a monthly budget, a
@@ -702,6 +705,55 @@ Required secret, beyond what the other Google-touching functions already
 use:
 - `GOOGLE_CALENDAR_ID` — the owner's calendar id, which for a personal
   Google Calendar is just their email address (`weiliang93@gmail.com`)
+
+## Widget set-logging (widget-log-set)
+
+Backs the "Willow Workout" Scriptable Home Screen widget (personal
+device script, lives outside this repo, companion to the "Willow
+Budget" one) — lets the owner log a set with one tap from the Home
+Screen, without opening training-app or going through the Telegram
+bot's guided `/set` flow. Same `verify_jwt`-on + `WILLOW_USER_ID`-check
+auth pattern as `template-edit`/`teleconsult-end-shift` (called by the
+widget's companion script as the signed-in user, not by cron).
+
+One endpoint, two actions:
+- `{action: "today"}` — resolves today's planned exercises the same way
+  the Telegram bot's `/set` flow does (`resolveTodayExercises`,
+  duplicated here rather than shared/imported — this repo's established
+  pattern for small cross-function logic, same as `budget-alert`'s own
+  copy of `getCardCycleRange`) and returns one row per not-yet-done set
+  with its planned weight/reps and most recent logged weight/reps/RPE
+  ("same as last time"). The widget only renders this list — no
+  schedule/override/deletion logic lives in the widget script itself,
+  same reasoning training-app's own schedule logic isn't duplicated
+  client-side in the bot.
+- `{action: "log", templateIdx, exIdx, setNumber, weight, reps, rpe?}`
+  (or `{action: "log", adhoc: true, exerciseName, weight, reps, rpe?}`
+  for a rest-day one-off) — logs exactly one set, mirroring the bot's
+  own `finishSet`/`finishAdhocSet` exactly: re-resolves today's plan
+  and re-reads `app_state` fresh immediately before writing (never
+  trusts whatever the widget cached from its last refresh), sets
+  `done`/`actualWeight`/`actualReps`/`rpe` for that slot, appends a
+  `log` entry tagged `day: "Widget"`, and upserts the whole row back —
+  same whole-state read-then-write every other write path here uses.
+
+The widget itself never talks to Supabase's REST API for the write —
+only for sign-in (password grant, via the same email/password saved
+once to iOS Keychain that "Willow Budget" already uses; the Keychain
+entries are shared across both widgets' companion scripts, so signing
+in once covers both). The actual read/log calls go through this
+function so the schedule-resolution logic has exactly one home instead
+of a third copy living in a personal JS script this repo doesn't track.
+Because a widget's tap can only carry a single static URL (no way to
+run inline code without leaving the widget — iOS's WidgetKit doesn't
+support that outside a native App Intents button, which Scriptable
+can't produce), "Willow Workout" bakes each row's planned/last values
+into a `scriptable:///run/Willow%20Log%20Set?...` deep link at
+render time; tapping it briefly opens Scriptable (not training-app) to
+run the actual log call and show a one-tap confirmation, then returns.
+
+Required secrets: none new — reuses `WILLOW_USER_ID`, `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, already set for the other functions.
 
 ## Required secrets (Edge Functions)
 
