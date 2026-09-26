@@ -855,6 +855,10 @@ typed out. First shadow run matched all 7 charges the routine had
 logged (target/amount/card), and caught one the routine **missed**: a
 $140 PayNow to PESTOPIA from the joint a/c 7831 on 25 Sep (both alert
 emails labelled "Expense Logged" by the routine, but no entry written).
+**Cutover also includes (owner-approved):** moving `budget_alert_check`
+from every minute to `1-59/15 * * * *` (one minute after each
+expense-email-sync run, since expenses only change then) — saves ~40K
+invocations/month on the free tier.
 **Deployed v1 predates the Restaurant default/keywords** (it still
 defaults to Shopping) — harmless in shadow mode, but redeploy
 `expense-email-sync` at cutover along with telegram-poll.
