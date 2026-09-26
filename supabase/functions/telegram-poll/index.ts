@@ -772,6 +772,110 @@ async function handleMessage(message: any) {
   }
 }
 
+// ---------------------------------------------------------------------
+// expense-email-sync prompts (callback prefix "xs:<pending id>:<choice>")
+// ---------------------------------------------------------------------
+// The expense-email-sync function logs charges from bank alert emails and
+// sends prompts here for anything that needed a guess or a decision; each
+// prompt is a row in expense_sync_pending. Choices:
+//   c<i>  change the logged entry's category to categories[i], then offer
+//         to save a categoryRule for that merchant (ay = yes, an = no)
+//   ok    the guessed category was right
+//   o<i>  incoming PayNow offsets candidates[i]: add a negative cash entry
+//   x     dismiss
+
+// Read-modify-write guarded on updated_at (retries if the app or the sync
+// function wrote in between), unlike setAppState's plain upsert.
+async function mutateAppState(app: string, fn: (state: any) => any) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data, error } = await supabase.from("app_state").select("state, updated_at").eq("user_id", USER_ID).eq("app", app).maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error(`app_state "${app}" missing`);
+    const next = fn(structuredClone(data.state));
+    const { data: upd, error: updErr } = await supabase
+      .from("app_state")
+      .update({ state: next, updated_at: new Date().toISOString() })
+      .eq("user_id", USER_ID)
+      .eq("app", app)
+      .eq("updated_at", data.updated_at)
+      .select("app");
+    if (updErr) throw updErr;
+    if (upd && upd.length) return;
+  }
+  throw new Error(`app_state "${app}" kept changing; try again`);
+}
+
+async function handleExpenseSyncCallback(data: string) {
+  const m = data.match(/^xs:(\d+):(\w+)$/);
+  if (!m) return;
+  const pid = parseInt(m[1], 10);
+  const choice = m[2];
+  const { data: row, error } = await supabase.from("expense_sync_pending").select("*").eq("id", pid).maybeSingle();
+  if (error) throw error;
+  if (!row) return;
+  const p = row.payload ?? {};
+  const resolve = (extra: Record<string, unknown> = {}) =>
+    supabase.from("expense_sync_pending").update({ resolved_at: new Date().toISOString(), payload: { ...p, ...extra } }).eq("id", pid);
+
+  if (choice === "ay" || choice === "an") {
+    if (choice === "ay" && p.chosen && p.key) {
+      await mutateAppState("expenses_automation", (s) => {
+        s.categoryRules = s.categoryRules ?? [];
+        if (!s.categoryRules.some((r: any) => r.merchantPattern.toLowerCase() === String(p.key).toLowerCase())) {
+          s.categoryRules.push({ merchantPattern: p.key, category: p.chosen });
+        }
+        return s;
+      });
+      await sendMessage(`Saved — future "${p.key}" charges will be ${p.chosen}.`);
+    } else {
+      await sendMessage("OK, just this one.");
+    }
+    return;
+  }
+  if (row.resolved_at) {
+    await sendMessage("Already handled.");
+    return;
+  }
+
+  if (choice === "x") {
+    await resolve();
+    await sendMessage("Dismissed.");
+  } else if (choice === "ok") {
+    await resolve();
+  } else if (row.kind === "category" && choice.startsWith("c")) {
+    const category = p.categories?.[parseInt(choice.slice(1), 10)];
+    if (!category) return;
+    const app = p.target === "excluded" ? "expenses_automation" : "expenses";
+    const key = p.target === "excluded" ? "excludedExpenses" : "expenses";
+    let found = false;
+    await mutateAppState(app, (s) => {
+      for (const e of s[key] ?? []) if (e.id === p.entryId) { e.category = category; found = true; }
+      return s;
+    });
+    await resolve({ chosen: category });
+    if (!found) {
+      await sendMessage("That entry isn't there any more (deleted in the app?).");
+      return;
+    }
+    await sendMessage(`Changed to ${category}. Always use ${category} for "${p.key}"?`, [
+      [{ text: "Yes, always", data: `xs:${pid}:ay` }, { text: "Just this once", data: `xs:${pid}:an` }],
+    ]);
+  } else if (row.kind === "incoming" && choice.startsWith("o")) {
+    const cand = p.candidates?.[parseInt(choice.slice(1), 10)];
+    if (!cand) return;
+    const id = `offset-${row.message_id}`;
+    await mutateAppState("expenses", (s) => {
+      s.expenses = s.expenses ?? [];
+      if (!s.expenses.some((e: any) => e.id === id)) {
+        s.expenses.push({ id, date: p.date, amount: -p.amount, category: cand.category, cardId: "cash", note: `Offset: PayNow received for ${cand.note}` });
+      }
+      return s;
+    });
+    await resolve({ offsetOf: cand.id });
+    await sendMessage(`Logged −$${Number(p.amount).toFixed(2)} (${cand.category}) offsetting ${cand.note}.`);
+  }
+}
+
 async function handleCallback(cq: any) {
   if (!cq.message || String(cq.message.chat.id) !== CHAT_ID) {
     await answerCallback(cq.id);
@@ -779,6 +883,10 @@ async function handleCallback(cq: any) {
   }
   const data: string = cq.data || "";
   try {
+    if (data.startsWith("xs:")) {
+      await handleExpenseSyncCallback(data);
+      return;
+    }
     const session = await getSession();
 
     if (data === "exp:restart") {

@@ -20,7 +20,14 @@ without the user needing to re-explain anything — read this first.
   cycle — calendar month or a statement day), a monthly budget, a
   category breakdown chart. Synced to Supabase (`app_state` app
   `"expenses"`). Drives the Telegram bot's `/exp` flow and both
-  budget-alert paths (overall budget + per-card caps). Also embedded
+  budget-alert paths (overall budget + per-card caps). Expenses are
+  mostly written *by other things* — `expense-email-sync` (bank alert
+  emails, see its own section), `/exp`, and `sheet-budget-sync`'s
+  `monthlyBudget` — so `save()` never blindly pushes its local copy: it
+  pulls the latest server state and three-way merges against the last
+  synced base first (expenses per id; cards/categories/monthlyBudget as
+  whole values), via an awaitable `SupaSync.pushStateNow`, so a tab left
+  open for hours can't erase entries written since it loaded. Also embedded
   unmodified, as its own tab, inside `money/` (below) — still a
   fully standalone app in its own right, opened directly by nothing
   else in this repo.
@@ -715,6 +722,114 @@ use:
 - `GOOGLE_CALENDAR_ID` — the owner's calendar id, which for a personal
   Google Calendar is just their email address (`weiliang93@gmail.com`)
 
+## Bank alert emails → expenses (expense-email-sync)
+
+Code replacement for the nightly Claude Code routine "Auto-log expenses
+from bank emails + email report" (trigger `trig_01W1kYad6ndCH8MPqxces2ZP`,
+session "Willow — Auto Expense Logger"), which cost ~$260 in its first
+four weeks because each nightly run resumed one ever-growing conversation.
+Runs every 15 minutes via pg_cron instead of nightly, so charges land in
+the app within ~15 minutes and budget/cap alerts fire the same day.
+
+Files (`supabase/functions/expense-email-sync/`):
+- `parse.ts` — one regex parser per alert format, all run on
+  `normalizeText` output (tags stripped, entities decoded, table pipes
+  removed, whitespace collapsed) so text/plain and HTML bodies parse the
+  same. Formats covered, each with a test built from a real Sep 2026
+  email: UOB card charge / reversal / PayNow out / funds transfer /
+  scheduled own-account + FAST transfer / bill payment / PayNow received;
+  DBS card charge (yearless date → email's year, stepping back across New
+  Year) / PayNow out; Citi charge + reversal; HSBC (incl. the `.hk`
+  notification domain); CDG Zig e-receipt (card-number vs wallet
+  payment). UOB's "Your PayNow transfer to X is successful" follow-ups are
+  `info` (no amount — the "You made a PayNow transfer…" alert is the
+  record). **No StanChart transaction alert had arrived as of Sep 2026**,
+  so there's no parser for one yet: any alert-sender email that looks
+  like money moved but matches no parser becomes `unknown` → a Telegram
+  "couldn't log this" prompt, never a guess. Add a parser + test when the
+  first one shows up.
+- `rules.ts` — the routine's decision process, verbatim: card last-4 →
+  app card (`config.ts` `cardMap`; UOB 4828 splits Overseas/Contactless on
+  currency, UOB 3602 splits Online/Contactless on `onlineMerchantHints`
+  and is flagged low-confidence), `exclusionRules` (merchant / cardLast4 /
+  paynowRecipient / paynowSourceAccount; `not_expense` skips entirely),
+  `selfTransferAccounts`, bill payments to a tracked card skipped,
+  reversals cancel a same-batch charge or remove an already-logged one,
+  wallet-paid CDG Zig receipts de-dup against the card's "Cabcharge Asia"
+  alert (wait up to 2 days, then ask), unmapped card → `cash` with a
+  `[card ending XXXX — not mapped]` note prefix. Reads the same
+  `exclusionRules`/`categoryRules`/`selfTransferAccounts`/
+  `excludedExpenses` from `app_state` `"expenses_automation"` the routine
+  used, and writes entries with the same `gm-<gmail message id>` ids.
+- Category: owner's `categoryRules`, then `config.ts` `categoryKeywords`,
+  then a Claude Haiku guess (`ANTHROPIC_API_KEY`; Shopping without it).
+  Every guessed one gets a Telegram "Logged $X at M as C. Change it?"
+  prompt; changing it offers "Always use C for <merchant>?", which appends
+  a `categoryRule` — so unknown merchants become rule-driven over time.
+  `merchantKey` strips trailing reference codes ("Grab* A-9SF6…" →
+  "Grab*") so the saved rule matches future charges.
+- Incoming PayNow → Telegram prompt listing the last ~3 days' charges;
+  tapping one adds a negative `cash` expense (`offset-<message id>`) in
+  that charge's category, same as the routine did by chat.
+- Button taps land in `telegram-poll` (callback prefix `xs:<pending
+  id>:<choice>`, `handleExpenseSyncCallback`), backed by
+  `expense_sync_pending` rows. Both functions write `app_state` with a
+  read-modify-write guarded on `updated_at` (retry on conflict), not a
+  blind upsert.
+- Daily HTML + plain-text report email (same content as the routine's)
+  on the first run after `REPORT_HOUR_SGT` (default 0), covering the
+  previous SGT day's decisions + month-to-date budget and every card cap.
+- Processed alerts get the "Expense Logged" label and are **archived, not
+  trashed** (the routine trashed them; Trash auto-deletes after 30 days).
+- A failing run messages Telegram at most once per 6 hours.
+
+**Modes** (`EXPENSE_SYNC_MODE`): `shadow` (default) decides everything
+and records it in `expense_sync_log` but writes nothing else — no
+app_state, labels, Telegram or email — deciding as if the routine hadn't
+run yet, and reading Trash too since the routine trashes what it
+processes. `POST ?compare=1&days=7` (with the cron secret header) diffs
+shadow decisions against what the routine actually logged: `mismatches`
+(different card/target/amount, or logged by one and not the other) are
+real problems; `categoryDiffs` are two different guesses and are
+expected. Cutover plan: shadow for a week alongside the routine, fix any
+mismatches, then set `EXPENSE_SYNC_MODE=live` and **disable (not delete)**
+the routine trigger. Live mode skips any `gm-` id already present, so a
+night where both run can't double-log.
+
+Tests (run from `supabase/functions/`): `deno test --allow-env
+--allow-read --allow-net=localhost expense-email-sync/ telegram-poll/` —
+parser + rules unit tests, and end-to-end runs of both real handlers
+against in-memory fakes of Gmail, PostgREST and Telegram
+(`_test/fake_backend.ts`): shadow writes nothing, live applies/labels/
+prompts/reports once, overlap with routine-logged ids, and a concurrent
+app write mid-run being retried rather than clobbered.
+
+**Gmail access** is the owner's own login (OAuth refresh token), not the
+shared service account — a service account can't read a personal
+@gmail.com inbox. One-time setup, in the same Google Cloud project as the
+service account:
+1. APIs & Services → enable **Gmail API**.
+2. OAuth consent screen: External, add the owner as a test user, then
+   **Publish app** ("In production"; unverified is fine for personal
+   use). This step matters: refresh tokens for an app left in "Testing"
+   expire after 7 days and the sync would silently stop.
+3. Credentials → Create OAuth client ID → Web application, authorised
+   redirect URI `https://developers.google.com/oauthplayground`.
+4. In the OAuth Playground (gear icon → "Use your own OAuth
+   credentials", paste the client id/secret), authorise scopes
+   `https://www.googleapis.com/auth/gmail.modify` and
+   `https://www.googleapis.com/auth/gmail.send`, then "Exchange
+   authorization code for tokens" and copy the refresh token.
+
+Required secrets, beyond what the other functions already use:
+- `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`
+- `ANTHROPIC_API_KEY` (optional — Haiku category guesses)
+- `EXPENSE_SYNC_MODE` (`shadow` until cutover, then `live`)
+
+Schema: `shared/expense-sync-schema.sql` (`expense_sync_log`,
+`expense_sync_pending`, `expense_sync_state`, and the commented
+`cron.schedule` for the 15-minute job).
+
 ## Required secrets (Edge Functions)
 
 - `TELEGRAM_BOT_TOKEN` — from @BotFather
@@ -749,6 +864,10 @@ Run once each, in order, via the SQL Editor:
    (tracks which logged-set ids have already been pushed to the training
    sheet, for `sheet-training-sync`'s append-only idempotency). Also
    idempotent, safe to re-run.
+4. `shared/expense-sync-schema.sql` — `expense_sync_log`,
+   `expense_sync_pending`, `expense_sync_state` for `expense-email-sync`,
+   plus its cron SQL (commented, fill in project ref + secret). Also
+   idempotent.
 
 ## Working conventions established in this repo
 
