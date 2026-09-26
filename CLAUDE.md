@@ -830,6 +830,21 @@ Schema: `shared/expense-sync-schema.sql` (`expense_sync_log`,
 `expense_sync_pending`, `expense_sync_state`, and the commented
 `cron.schedule` for the 15-minute job).
 
+**Deployment status (26 Sep 2026):** tables created; `expense-email-sync`
+v1 deployed (`verify_jwt` off — cron-secret auth like the other cron
+functions), shadow mode by default. **Not yet done:** the Gmail secrets
+(owner's one-time OAuth setup above), the 15-minute `cron.schedule`, and
+deploying `telegram-poll`'s `xs:` handler — deliberately left for cutover,
+since only live mode sends those buttons. Note when deploying
+telegram-poll: the **live** telegram-poll (v25, deployed 20 Aug) is an
+*older* build than this repo's — it still uses the separate
+`acquirePollLock`/`getOffset`/`setOffset` lock, not the repo's combined
+`claimPollLock` — so deploying the repo file also ships that
+never-deployed lock rewrite. The lower-risk option is to deploy the live
+source plus only the `xs:` additions (`mutateAppState`,
+`handleExpenseSyncCallback`, and the `data.startsWith("xs:")` branch at
+the top of `handleCallback`'s `try`).
+
 ## Required secrets (Edge Functions)
 
 - `TELEGRAM_BOT_TOKEN` — from @BotFather
