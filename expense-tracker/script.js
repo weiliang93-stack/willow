@@ -31,13 +31,116 @@ function load(key, fallback) {
   }
 }
 
-function save() {
+function persistLocal() {
   localStorage.setItem(STORAGE_KEYS.cards, JSON.stringify(cards));
   localStorage.setItem(STORAGE_KEYS.expenses, JSON.stringify(expenses));
   localStorage.setItem(STORAGE_KEYS.categories, JSON.stringify(categories));
   localStorage.setItem(STORAGE_KEYS.monthlyBudget, JSON.stringify(monthlyBudget));
+}
+
+function save() {
+  persistLocal();
   localStorage.setItem(STORAGE_KEYS.updatedAt, new Date().toISOString());
-  SupaSync.pushState("expenses", { cards, expenses, categories, monthlyBudget });
+  queueMergeAndPush();
+}
+
+// ---- save guard: never overwrite what other writers added ----
+// This app used to push its whole local copy, so a tab opened before the
+// email-sync function (or /exp, or sheet-budget-sync) wrote something
+// would silently erase that write on its next save. Now every save first
+// pulls the latest server copy and does a three-way merge against `base`
+// (the last state this device knows the server had):
+//   - expenses merge per id: server-only ids are kept unless this device
+//     deleted them since `base`; local-only ids are kept unless the server
+//     deleted them since `base`; an id on both sides takes whichever side
+//     changed it since `base` (local wins if both did).
+//   - cards / categories / monthlyBudget are whole values: take the
+//     server's unless this device changed it since `base`.
+// If the server can't be reached, it falls back to the old plain push.
+const BASE_KEY = "budgetTracker.syncBase";
+let mergeChain = Promise.resolve();
+
+function loadBase() {
+  return load(BASE_KEY, null);
+}
+function saveBase(state) {
+  try {
+    localStorage.setItem(BASE_KEY, JSON.stringify(state));
+  } catch {
+    /* quota: fall back to union-style merges next time */
+  }
+}
+
+function sameJson(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function mergeValue(localVal, remoteVal, baseVal, hasBase) {
+  if (!hasBase) return localVal;
+  return sameJson(localVal, baseVal) ? remoteVal : localVal;
+}
+
+function mergeExpenses(local, remote, base) {
+  const byId = (arr) => new Map((arr || []).map((e) => [e.id, e]));
+  const L = byId(local), R = byId(remote), B = base ? byId(base) : null;
+  const out = [];
+  const seen = new Set();
+  for (const e of local) {
+    seen.add(e.id);
+    const r = R.get(e.id);
+    const b = B && B.get(e.id);
+    if (!r) {
+      // Server doesn't have it: new here (keep) or deleted on the server since base (drop).
+      if (B && b) continue;
+      out.push(e);
+    } else if (B && b && sameJson(e, b)) {
+      out.push(r); // unchanged here, so take any server-side edit
+    } else {
+      out.push(e);
+    }
+  }
+  for (const r of remote || []) {
+    if (seen.has(r.id)) continue;
+    // Server-only: added elsewhere (keep) or deleted here since base (drop).
+    if (B && B.has(r.id) && !L.has(r.id)) continue;
+    out.push(r);
+  }
+  return out;
+}
+
+function queueMergeAndPush() {
+  mergeChain = mergeChain.then(mergeAndPush, mergeAndPush);
+}
+
+async function mergeAndPush() {
+  let remote = null;
+  try {
+    remote = await SupaSync.pullState("expenses");
+  } catch {
+    remote = null;
+  }
+  const localState = { cards, expenses, categories, monthlyBudget };
+  if (!remote || !remote.state) {
+    // Unreachable (null) or nothing stored yet: plain push as before. Base
+    // only moves once a push has actually landed.
+    if (await SupaSync.pushStateNow("expenses", localState)) saveBase(localState);
+    return;
+  }
+  const base = loadBase();
+  const hasBase = !!base;
+  const rs = remote.state;
+  const merged = {
+    cards: mergeValue(cards, rs.cards || [], base && base.cards, hasBase),
+    categories: mergeValue(categories, rs.categories || DEFAULT_CATEGORIES, base && base.categories, hasBase),
+    monthlyBudget: mergeValue(monthlyBudget, rs.monthlyBudget ?? null, base && base.monthlyBudget, hasBase),
+    expenses: mergeExpenses(expenses, rs.expenses || [], base && base.expenses),
+  };
+  if (!sameJson(merged, localState)) {
+    ({ cards, expenses, categories, monthlyBudget } = merged);
+    persistLocal();
+    render();
+  }
+  if (sameJson(merged, rs) || (await SupaSync.pushStateNow("expenses", merged))) saveBase(merged);
 }
 
 function uid() {
@@ -1100,6 +1203,7 @@ async function bootExpenseApp() {
     localStorage.setItem(STORAGE_KEYS.categories, JSON.stringify(categories));
     localStorage.setItem(STORAGE_KEYS.monthlyBudget, JSON.stringify(monthlyBudget));
     localStorage.setItem(STORAGE_KEYS.updatedAt, remote.updatedAt);
+    saveBase(remote.state);
   }
 
   render();
