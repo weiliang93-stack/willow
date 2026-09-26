@@ -761,8 +761,17 @@ Files (`supabase/functions/expense-email-sync/`):
   `exclusionRules`/`categoryRules`/`selfTransferAccounts`/
   `excludedExpenses` from `app_state` `"expenses_automation"` the routine
   used, and writes entries with the same `gm-<gmail message id>` ids.
-- Category: owner's `categoryRules`, then `config.ts` `categoryKeywords`,
-  then a Claude Haiku guess (`ANTHROPIC_API_KEY`; Shopping without it).
+- Category: owner's `categoryRules`, then `config.ts` `categoryKeywords`
+  (incl. restaurant-sounding words — sushi/ramen/izakaya/omakase/… →
+  Restaurant; deliberately no "bar"/"cafe"), then a Claude Haiku guess if
+  `ANTHROPIC_API_KEY` is set, else `config.defaultCategory` —
+  **Restaurant**, because the owner's unmatched one-off merchants are
+  mostly restaurants (owner chose no Haiku: it needs a separate paid API
+  account). 16 `categoryRules` were seeded on 26 Sep 2026 from the
+  owner's own history (merchants seen ≥2× with one consistent category,
+  e.g. SHOPEE→Shopping, Grab→Transport, HELPLING→Bills, Spotify→Bills).
+  **Max Now** deliberately has no rule — it's Food or Transport depending
+  on the day, so the owner wants to be asked each time.
   Every guessed one gets a Telegram "Logged $X at M as C. Change it?"
   prompt; changing it offers "Always use C for <merchant>?", which appends
   a `categoryRule` — so unknown merchants become rule-driven over time.
@@ -840,6 +849,9 @@ typed out. First shadow run matched all 7 charges the routine had
 logged (target/amount/card), and caught one the routine **missed**: a
 $140 PayNow to PESTOPIA from the joint a/c 7831 on 25 Sep (both alert
 emails labelled "Expense Logged" by the routine, but no entry written).
+**Deployed v1 predates the Restaurant default/keywords** (it still
+defaults to Shopping) — harmless in shadow mode, but redeploy
+`expense-email-sync` at cutover along with telegram-poll.
 **Not yet done:** deploying `telegram-poll`'s `xs:` handler — deliberately
 left for cutover, since only live mode sends those buttons. Note when deploying
 telegram-poll: the **live** telegram-poll (v25, deployed 20 Aug) is an

@@ -12,7 +12,7 @@
 //                 payments, reversals, CDG vs Cabcharge de-dup), reading the
 //                 same rules from app_state "expenses_automation".
 //   - Category for a merchant no rule covers: a Claude Haiku guess (or
-//     Shopping without ANTHROPIC_API_KEY), logged immediately, with a
+//     config.defaultCategory - Restaurant - without ANTHROPIC_API_KEY), logged immediately, with a
 //     Telegram "change?" prompt; changing it offers to save a categoryRule
 //     so that merchant is automatic from then on (handled in telegram-poll,
 //     callback prefix "xs:").
@@ -135,8 +135,8 @@ function merchantKey(note: string) {
 }
 
 // ---------------- category guess ----------------
-async function guessCategory(text: string, amount: number, categories: string[]): Promise<{ category: string; source: "ai" | "default" }> {
-  const fallback = categories.includes("Shopping") ? "Shopping" : categories[0] ?? "Shopping";
+async function guessCategory(text: string, amount: number, categories: string[], preferred: string): Promise<{ category: string; source: "ai" | "default" }> {
+  const fallback = categories.includes(preferred) ? preferred : categories.includes("Shopping") ? "Shopping" : categories[0] ?? "Shopping";
   if (!ANTHROPIC_KEY) return { category: fallback, source: "default" };
   try {
     const client = new Anthropic({ apiKey: ANTHROPIC_KEY });
@@ -205,7 +205,7 @@ async function run() {
   const guessed = new Map<string, "ai" | "default">();
   for (const d of decisions) {
     if (d.action !== "log" || !d.needsCategory) continue;
-    const g = await guessCategory(d.entry.note.replace(/, auto-logged from email$/, ""), d.entry.amount, categories);
+    const g = await guessCategory(d.entry.note.replace(/, auto-logged from email$/, ""), d.entry.amount, categories, config.defaultCategory);
     d.entry.category = g.category;
     guessed.set(d.messageId, g.source);
   }

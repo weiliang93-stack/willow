@@ -45,6 +45,7 @@ export interface SyncConfig {
   cardMap: Record<string, CardMapEntry>;
   onlineMerchantHints: string[]; // lowercase substrings that mean "online" for split:"online" cards
   categoryKeywords: CategoryRule[]; // built-in fallbacks tried after the owner's categoryRules
+  defaultCategory: string; // used when no rule/keyword matches and there is no AI guess (still prompts on Telegram)
 }
 
 export interface Context {

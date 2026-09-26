@@ -84,7 +84,7 @@ Deno.test("shadow mode decides everything but writes nothing except the log", as
   const { status, body } = await call("shadow");
   assertEquals(status, 200, JSON.stringify(body));
   const by = Object.fromEntries(body.decisions.map((d: any) => [d.id, d]));
-  assertEquals(by.m1.action, "log"); assertEquals(by.m1.target, "expenses"); assertEquals(by.m1.category, "Shopping");
+  assertEquals(by.m1.action, "log"); assertEquals(by.m1.target, "expenses"); assertEquals(by.m1.category, "Restaurant"); // unmatched merchant -> config.defaultCategory
   assertEquals(by.m2.target, "excluded");
   assertEquals(by.m3.category, "Badminton"); assertEquals(by.m3.cardId, "msjivaj3mypi2");
   assertEquals(by.m4.action, "incoming");
@@ -101,10 +101,10 @@ Deno.test("shadow mode decides everything but writes nothing except the log", as
 
   // compare: routine logged m1 identically, m2 on a different card, m3 not at all
   const exp = db.app_state[0].state;
-  exp.expenses.push({ id: "gm-m1", date: "2026-09-25", amount: 35.01, category: "Restaurant", cardId: "msx1uobkris01", note: "x" });
+  exp.expenses.push({ id: "gm-m1", date: "2026-09-25", amount: 35.01, category: "Food", cardId: "msx1uobkris01", note: "x" });
   db.app_state[1].state.excludedExpenses.push({ id: "gm-m2", date: "2026-09-25", amount: 56.4, category: "Bills", cardId: "wrong", note: "x", type: "combined", reason: "" });
   const cmp = await call("shadow", "?compare=1");
-  assertEquals(cmp.body.categoryDiffs.length, 1); // m1: Shopping vs Restaurant
+  assertEquals(cmp.body.categoryDiffs.length, 1); // m1: Restaurant (default) vs Food
   const problems = cmp.body.mismatches.map((m: any) => `${m.messageId}:${m.problem}`).sort();
   assertEquals(problems, ["m2:logged differently", "m3:shadow would log, routine didn't"]);
 });
@@ -122,7 +122,7 @@ Deno.test("live mode applies, labels, prompts, reports once, and never double-lo
   assertEquals(gmailLog.modify[0].removeLabelIds, ["INBOX"]);
   // Telegram: category prompt for m1 (default category), review for m6, incoming for m4
   const texts = telegram.map((t) => t.text);
-  assert(texts.some((t) => t.startsWith("Logged $35.01 KrisPay*LeNu Chef Wai as Shopping")), texts.join("\n"));
+  assert(texts.some((t) => t.startsWith("Logged $35.01 KrisPay*LeNu Chef Wai as Restaurant")), texts.join("\n"));
   assert(texts.some((t) => t.startsWith("⚠️ Couldn't log this automatically")));
   const inc = telegram.find((t) => t.text.startsWith("💰 Received $24.00"));
   assert(inc && inc.reply_markup.inline_keyboard.length >= 2);

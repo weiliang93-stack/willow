@@ -54,5 +54,16 @@ export const DEFAULT_CONFIG: SyncConfig = {
     { merchantPattern: "disney", category: "Entertainment" },
     { merchantPattern: "golden village", category: "Entertainment" },
     { merchantPattern: "shaw theatres", category: "Entertainment" },
+    // Restaurant-sounding names (owner: one-off restaurants should just be
+    // Restaurant). Deliberately specific words only - no "bar"/"cafe",
+    // which also match barbers and coffee chains filed as Food.
+    ...[
+      "restaurant", "sushi", "ramen", "izakaya", "yakiniku", "yakitori", "omakase", "bistro", "brasserie", "trattoria",
+      "osteria", "pizzeria", "steakhouse", "grill", "dining", "hotpot", "hot pot", "dim sum", "tapas", "kanesaka",
+    ].map((merchantPattern) => ({ merchantPattern, category: "Restaurant" })),
   ],
+  // Unmatched merchants are mostly one-off restaurants in this owner's
+  // history (Sep 2026), so default there rather than Shopping; the
+  // Telegram "change it?" prompt still fires for every defaulted charge.
+  defaultCategory: "Restaurant",
 };

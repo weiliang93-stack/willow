@@ -157,3 +157,15 @@ test("statement cycles and month-to-date caps", () => {
   assert.equal(mtd.spent, 100);
   assert.deepEqual(mtd.caps, [{ name: "HSBC Revolution", spent: 100, cap: 1000 }, { name: "Citibank Rewards", spent: 30, cap: 1000 }]);
 });
+
+test("restaurant-sounding one-offs are Restaurant with no guess needed; others still need one", () => {
+  const [a, b, c] = classify([charge("a", "3014", 80, "SUSHI ZEN SINGAPORE"), charge("b", "3014", 60, "SHINJI BY KANESAKA"), charge("c", "3014", 30, "UNIQLO ION")], ctx(), "2026-09-25");
+  assert.ok(a.action === "log" && a.entry.category === "Restaurant" && !a.needsCategory);
+  assert.ok(b.action === "log" && b.entry.category === "Restaurant" && !b.needsCategory);
+  assert.ok(c.action === "log" && c.needsCategory);
+});
+
+test("owner categoryRules beat built-in keywords (Spotify filed as Bills)", () => {
+  const [d] = classify([charge("s", "2101", 11.98, "Spotify P46922FFC3")], ctx({ categoryRules: [{ merchantPattern: "Spotify", category: "Bills" }] }), "2026-09-25");
+  assert.ok(d.action === "log" && d.entry.category === "Bills");
+});
