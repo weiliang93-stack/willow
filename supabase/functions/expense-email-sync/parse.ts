@@ -39,7 +39,7 @@ export function normalizeText(raw: string): string {
     })
     .replace(/\[\]\([^)]*\)/g, " ") // markdown-ified empty links
     .replace(/[|#]/g, " ")
-    .replace(/[ ​͏﻿]/g, " ")
+    .replace(/[\u00a0\u200b\u034f\ufeff]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
