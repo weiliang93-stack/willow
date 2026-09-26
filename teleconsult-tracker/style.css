@@ -842,6 +842,13 @@ footer.note {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+.month-block h3 .period {
+  margin-left: 6px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink-muted);
+}
 .month-block.wc h3 { color: var(--wc); }
 .month-block.fhg h3 { color: var(--fhg); }
 .month-block.fhg .stat.total .v { color: var(--fhg); }
@@ -852,17 +859,7 @@ footer.note {
   line-height: 1.45;
 }
 .month-note b { color: var(--ink); }
-.month-total {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-top: 14px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-  font-weight: 600;
-}
-.month-total .num { font-size: 20px; font-weight: 700; }
-.month-log { margin-top: 10px; font-size: 13px; }
+.month-log { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; }
 .month-log summary { cursor: pointer; color: var(--ink-muted); font-weight: 600; }
 .month-log ul { list-style: none; margin: 8px 0 0; padding: 0; }
 .month-log li {

@@ -200,10 +200,13 @@ without the user needing to re-explain anything — read this first.
     day replaces that day's record. Merged per-record by `loggedAt` (the
     diary-app approach, not whole-state last-write-wins), with removals kept
     as `{deleted: true}` tombstones so a merge can't resurrect them. A
-    "This month" section (following the "Logging for" date's month) totals
-    it: Fullerton netted across the month exactly like the real claim
+    "This month" section totals it, both windows following the "Logging
+    for" date: Fullerton over its **claim period, the 26th to the 25th of
+    the next month** (owner-specified; e.g. 26 Sep – 25 Oct is one claim —
+    `fhgPeriodFor`), netted across that period exactly like the real claim
     (`hours×$70 + max(0, rostered patients − hours×5)×$10`, ad-hoc patients
-    flat $10), plus "Claim cases" — the completed-case count the
+    flat $10); Whitecoat over the plain calendar month. No combined total,
+    since the two windows don't line up. Also shows "Claim cases" — the completed-case count the
     `telemed-locum-claims` skill needs, readable directly via
     `select state from app_state where app = 'teleconsult'`. Whitecoat is
     summed per shift (no netting). "Remove" drops a day from the history

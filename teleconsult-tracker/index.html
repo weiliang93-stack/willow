@@ -202,8 +202,8 @@
     </div>
 
     <!-- Month-to-date: built from every shift "End shift" has logged into
-         app_state ("teleconsult"), for whichever month the "Logging for"
-         date falls in. -->
+         app_state ("teleconsult"). Whitecoat uses the "Logging for" date's
+         calendar month; Fullerton its 26th-to-25th claim period. -->
     <section class="month" id="monthSection">
       <div class="month-head">
         <h2 id="monthTitle">This month</h2>
@@ -211,7 +211,7 @@
       </div>
       <div class="month-grid">
         <div class="month-block fhg">
-          <h3>Fullerton TM</h3>
+          <h3>Fullerton TM <span class="period" id="mFhgPeriod"></span></h3>
           <div class="stats">
             <div class="stat"><p class="k">Rostered hrs</p><p class="v num" id="mFhgHours">0</p></div>
             <div class="stat"><p class="k">Patients</p><p class="v num" id="mFhgPatients">0</p></div>
@@ -220,7 +220,7 @@
           <p class="month-note" id="mFhgNote"></p>
         </div>
         <div class="month-block wc">
-          <h3>Whitecoat TM</h3>
+          <h3>Whitecoat TM <span class="period" id="mWcPeriod"></span></h3>
           <div class="stats">
             <div class="stat"><p class="k">Shifts</p><p class="v num" id="mWcShifts">0</p></div>
             <div class="stat"><p class="k">Patients</p><p class="v num" id="mWcPatients">0</p></div>
@@ -228,10 +228,6 @@
           </div>
           <p class="month-note" id="mWcNote"></p>
         </div>
-      </div>
-      <div class="month-total">
-        <span>Month total (est.)</span>
-        <span class="num" id="mTotal">$0</span>
       </div>
       <details class="month-log">
         <summary>Logged shifts (<span id="mCount">0</span>)</summary>

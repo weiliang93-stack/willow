@@ -739,31 +739,57 @@ function bootApp() {
     wcPatients: document.getElementById("mWcPatients"),
     wcPay: document.getElementById("mWcPay"),
     wcNote: document.getElementById("mWcNote"),
-    total: document.getElementById("mTotal"),
+    fhgPeriod: document.getElementById("mFhgPeriod"),
+    wcPeriod: document.getElementById("mWcPeriod"),
     count: document.getElementById("mCount"),
     list: document.getElementById("mList")
   };
 
-  // Month follows the "Logging for" date, so back-dating a session also
-  // shows the month it lands in.
+  // Whitecoat totals follow the calendar month of the "Logging for" date;
+  // Fullerton follows its own claim period, the 26th to the 25th of the
+  // next month (so 26 Sep - 25 Oct is one claim). Both follow the
+  // "Logging for" date, so back-dating a session shows the period it lands in.
+  var MON_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  function fhgPeriodFor(p) {
+    // Day 26+ opens a new period this month; days 1-25 belong to the one
+    // that opened on the 26th of the previous month.
+    var sy = p.year, sm = p.month;
+    if (p.day < 26) { sm--; if (sm === 0) { sm = 12; sy--; } }
+    var ey = sy, em = sm + 1;
+    if (em === 13) { em = 1; ey++; }
+    return {
+      start: sy + "-" + pad2(sm) + "-26",
+      end: ey + "-" + pad2(em) + "-25",
+      label: "26 " + MON_SHORT[sm - 1] + " – 25 " + MON_SHORT[em - 1] + (ey !== p.year ? " " + ey : "")
+    };
+  }
+
   function renderMonth() {
     var p = parsedDateComponents();
-    if (!p) { var now = new Date(); p = { year: now.getFullYear(), month: now.getMonth() + 1 }; }
+    if (!p) { var now = new Date(); p = { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() }; }
     var prefix = p.year + "-" + pad2(p.month) + "-";
-    var days = Object.keys(shiftHistory)
-      .filter(function (k) { return k.indexOf(prefix) === 0 && !shiftHistory[k].deleted; })
-      .sort()
+    var period = fhgPeriodFor(p);
+    var live = Object.keys(shiftHistory).filter(function (k) { return !shiftHistory[k].deleted; }).sort();
+    var wcDays = live.filter(function (k) { return k.indexOf(prefix) === 0; })
+      .map(function (k) { return shiftHistory[k]; });
+    var fhgDays = live.filter(function (k) { return k >= period.start && k <= period.end; })
+      .map(function (k) { return shiftHistory[k]; });
+    // The log lists every day in either window.
+    var days = live.filter(function (k) { return k.indexOf(prefix) === 0 || (k >= period.start && k <= period.end); })
       .map(function (k) { return shiftHistory[k]; });
 
-    // Fullerton nets across the month, mirroring the real locum claim
-    // (hours × $70, plus $10 for every rostered patient beyond hours × 5
-    // for the month as a whole). Ad-hoc patients are flat $10 each.
+    // Fullerton nets across the claim period, mirroring the real locum
+    // claim (hours × $70, plus $10 for every rostered patient beyond
+    // hours × 5 for the period as a whole). Ad-hoc patients are flat $10.
     var fhgHours = 0, fhgRosteredPts = 0, fhgAdhocPts = 0, fhgSessionSum = 0;
     var wcShifts = 0, wcMeds = 0, wcNomeds = 0, wcPay = 0;
-    days.forEach(function (d) {
+    fhgDays.forEach(function (d) {
       if (d.fhg.rostered) { fhgHours += d.fhg.hours; fhgRosteredPts += d.fhg.patients; }
       else fhgAdhocPts += d.fhg.patients;
       fhgSessionSum += d.fhg.sessionPay || 0;
+    });
+    wcDays.forEach(function (d) {
       if (d.wc.rostered) { wcShifts++; wcMeds += d.wc.meds; wcNomeds += d.wc.nomeds; wcPay += d.wc.pay; }
     });
     var threshold = fhgHours * 5;
@@ -772,13 +798,15 @@ function bootApp() {
     var fhgCases = fhgRosteredPts + fhgAdhocPts;
 
     monthEls.title.textContent = MONTHS[p.month - 1] + " " + p.year;
+    monthEls.fhgPeriod.textContent = period.label;
+    monthEls.wcPeriod.textContent = MON_SHORT[p.month - 1] + " " + p.year;
     monthEls.sub.textContent = days.length
       ? days.length + " day" + (days.length === 1 ? "" : "s") + " logged via End shift"
       : "No shifts logged yet — End shift records each day here";
     monthEls.fhgHours.textContent = fhgHours;
     monthEls.fhgPatients.textContent = fhgCases;
     monthEls.fhgPay.textContent = fmtMoney(fhgPay);
-    monthEls.fhgNote.innerHTML = days.length
+    monthEls.fhgNote.innerHTML = fhgDays.length
       ? "Claim cases: <b>" + fhgCases + "</b>" +
         (fhgAdhocPts ? " (" + fhgRosteredPts + " rostered + " + fhgAdhocPts + " ad-hoc)" : "") +
         ". Need <b>" + threshold + "</b> for " + fhgHours + " hrs → <b>" + over + " over</b>" +
@@ -792,7 +820,6 @@ function bootApp() {
       ? "<b>" + wcNomeds + "</b> no meds / <b>" + wcMeds + "</b> with meds" +
         " · avg " + fmtMoney(wcPay / wcShifts) + " per shift"
       : "";
-    monthEls.total.textContent = fmtMoney(fhgPay + wcPay);
     monthEls.count.textContent = days.length;
 
     monthEls.list.innerHTML = "";
