@@ -832,10 +832,16 @@ Schema: `shared/expense-sync-schema.sql` (`expense_sync_log`,
 
 **Deployment status (26 Sep 2026):** tables created; `expense-email-sync`
 v1 deployed (`verify_jwt` off — cron-secret auth like the other cron
-functions), shadow mode by default. **Not yet done:** the Gmail secrets
-(owner's one-time OAuth setup above), the 15-minute `cron.schedule`, and
-deploying `telegram-poll`'s `xs:` handler — deliberately left for cutover,
-since only live mode sends those buttons. Note when deploying
+functions), shadow mode. Gmail secrets set (OAuth app "Willow expense
+sync" in project willow-budget-sync, published to production); pg_cron
+job `expense_email_sync` (jobid 24, `*/15 * * * *`) running — its
+secret was copied from an existing job's command inside SQL, never
+typed out. First shadow run matched all 7 charges the routine had
+logged (target/amount/card), and caught one the routine **missed**: a
+$140 PayNow to PESTOPIA from the joint a/c 7831 on 25 Sep (both alert
+emails labelled "Expense Logged" by the routine, but no entry written).
+**Not yet done:** deploying `telegram-poll`'s `xs:` handler — deliberately
+left for cutover, since only live mode sends those buttons. Note when deploying
 telegram-poll: the **live** telegram-poll (v25, deployed 20 Aug) is an
 *older* build than this repo's — it still uses the separate
 `acquirePollLock`/`getOffset`/`setOffset` lock, not the repo's combined
