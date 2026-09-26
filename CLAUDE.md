@@ -256,9 +256,15 @@ from a browser/dashboard/webhook.site all succeeded. Root cause was
 never identified (suspected network/WAF layer specific to this
 project's edge). Pivoted permanently to polling `getUpdates`.
 
-**Polling cadence**: a `pg_cron` job (`telegram_poll_fast`, currently
-scheduled via `cron.schedule('telegram_poll_fast', '2 seconds', ...)`)
-calls the `telegram-poll` function on an interval. This has to be set up
+**Polling cadence**: a `pg_cron` job (`telegram_poll_fast`) calls the
+`telegram-poll` function on an interval — **every minute** (`* * * * *`)
+as of Sep 2026. It was originally `'2 seconds'`, which alone is ~1.3M
+invocations/month and pushed the project over Supabase's free-tier
+500K Edge Function invocations; the owner cut it back to 1 minute.
+Budget new cron jobs against that 500K/month ceiling (Sep 2026 total
+≈110K/month: telegram-poll and budget-alert ~43K each, five 10-minute
+syncs ~22K, expense-email-sync ~3K). Consequence: bot replies and
+button taps can take up to ~60s to be picked up. This has to be set up
 via raw SQL in the SQL Editor, not the dashboard's cron UI, which only
 exposes 5-field cron expressions (1-minute minimum) — interval literals
 like `'2 seconds'` require calling `cron.schedule` directly.
@@ -906,10 +912,10 @@ Run once each, in order, via the SQL Editor:
 
 - Keep power-user one-line bot commands working alongside any guided
   flow — never remove the fast path when adding a guided one.
-- Prefer fewer/cheaper cron invocations when a little latency is fine;
-  the 2-second `telegram_poll_fast` interval was a deliberate
-  responsiveness tradeoff the user asked for explicitly, not a default
-  to assume elsewhere.
+- Prefer fewer/cheaper cron invocations when a little latency is fine —
+  the project is on Supabase's free tier (500K Edge Function
+  invocations/month) and has hit that limit once already, via the
+  original 2-second `telegram_poll_fast` interval (since cut to 1 minute).
 - Job-posting monitoring is scoped to public groups/channels the owner
   can add their own bot to — never private DMs or groups they don't
   control.
