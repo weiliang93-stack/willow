@@ -590,6 +590,100 @@ async function checkJobKeywords(message: any) {
 }
 
 // ---------------------------------------------------------------------
+// GP MediList outreach — locum-group post capture + digest buttons.
+//
+// captureGroupPost saves every text/caption message from any group or
+// channel this bot is in (never the owner's own DM) into locum_posts, with
+// the poster's real Telegram user id and message id — the one thing Beeper
+// can't provide. The daily outreach Claude task reads that table to find
+// clinic owners/admins posting locum slots, and the outreach-digest function
+// forwards their original post back into this chat with a drafted message.
+// Its ✅ Sent / Skip buttons (callback "out:<action>:<tg_user_id>") are
+// handled by handleOutreachCallback. See shared/outreach-schema.sql.
+// Capture failures are logged, never thrown, so they can't stall polling.
+// ---------------------------------------------------------------------
+
+async function captureGroupPost(message: any) {
+  try {
+    if (!message?.chat || String(message.chat.id) === CHAT_ID || message.chat.type === "private") return;
+    const text =
+      typeof message.text === "string" ? message.text : typeof message.caption === "string" ? message.caption : null;
+    if (!text) return;
+    const from = message.from;
+    const senderName = from
+      ? [from.first_name, from.last_name].filter(Boolean).join(" ")
+      : message.sender_chat?.title ?? null;
+    const { error } = await supabase.from("locum_posts").upsert(
+      {
+        chat_id: message.chat.id,
+        chat_title: message.chat.title ?? message.chat.username ?? null,
+        message_id: message.message_id,
+        // Anonymous admins post as GroupAnonymousBot (is_bot) + sender_chat.
+        tg_user_id: from && !from.is_bot ? from.id : null,
+        username: from && !from.is_bot ? from.username ?? null : null,
+        sender_name: senderName,
+        sender_chat_id: message.sender_chat?.id ?? null,
+        text,
+        has_media: !!(message.photo || message.document || message.video),
+        posted_at: new Date(message.date * 1000).toISOString(),
+        link: buildMessageLink(message),
+      },
+      { onConflict: "chat_id,message_id", ignoreDuplicates: true }
+    );
+    if (error) console.error("captureGroupPost", error);
+  } catch (err) {
+    console.error("captureGroupPost", err);
+  }
+}
+
+async function setOutreachButtons(messageId: number, rows: { text: string; data: string }[][]) {
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageReplyMarkup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: CHAT_ID,
+      message_id: messageId,
+      reply_markup: { inline_keyboard: rows.map((row) => row.map((b) => ({ text: b.text, callback_data: b.data }))) },
+    }),
+  });
+}
+
+async function handleOutreachCallback(cq: any) {
+  try {
+    if (!cq.message || String(cq.message.chat.id) !== CHAT_ID) return;
+    const [, action, idStr] = String(cq.data).split(":");
+    const tgUserId = Number(idStr);
+    if (!Number.isFinite(tgUserId)) return;
+    const now = new Date().toISOString();
+
+    if (action === "sent" || action === "skip") {
+      await supabase
+        .from("outreach_contacts")
+        .update(action === "sent" ? { status: "sent", sent_at: now, updated_at: now } : { status: "skipped", updated_at: now })
+        .eq("tg_user_id", tgUserId);
+      await setOutreachButtons(cq.message.message_id, [
+        [{ text: action === "sent" ? "✅ Logged as sent · undo" : "⏭ Skipped · undo", data: `out:undo:${tgUserId}` }],
+      ]);
+    } else if (action === "undo") {
+      await supabase
+        .from("outreach_contacts")
+        .update({ status: "digested", sent_at: null, updated_at: now })
+        .eq("tg_user_id", tgUserId);
+      await setOutreachButtons(cq.message.message_id, [
+        [
+          { text: "✅ Sent", data: `out:sent:${tgUserId}` },
+          { text: "⏭ Skip", data: `out:skip:${tgUserId}` },
+        ],
+      ]);
+    }
+  } catch (err) {
+    console.error("handleOutreachCallback", err);
+  } finally {
+    await answerCallback(cq.id);
+  }
+}
+
+// ---------------------------------------------------------------------
 // Command parsing
 // ---------------------------------------------------------------------
 
@@ -991,14 +1085,20 @@ async function pollOnce(): Promise<number> {
     const updates = data.result as any[];
     for (const update of updates) {
       if (update.callback_query) {
-        await handleCallback(update.callback_query);
+        if (typeof update.callback_query.data === "string" && update.callback_query.data.startsWith("out:")) {
+          await handleOutreachCallback(update.callback_query);
+        } else {
+          await handleCallback(update.callback_query);
+        }
       } else if (update.message) {
         // Job-keyword scanning runs on every message (group chats this bot
         // is in), independent of handleMessage's command handling, which
         // only ever acts on your own DM with the bot.
+        await captureGroupPost(update.message);
         await checkJobKeywords(update.message);
         await handleMessage(update.message);
       } else if (update.channel_post) {
+        await captureGroupPost(update.channel_post);
         await checkJobKeywords(update.channel_post);
       }
     }
