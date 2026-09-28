@@ -700,6 +700,14 @@ function bootApp() {
       documentPictureInPicture.requestWindow({ width: 240, height: 340 }).then(function (win) {
         pipWindow = win;
         copyStylesInto(pipWindow.document);
+        // .float-panel.in-pip relies on height:100% to bound fp-body so it can
+        // scroll internally (see the sticky #floatClock fix) -- a percentage
+        // height only resolves against an ancestor with its own defined
+        // height, so html/body need it set explicitly here; without this the
+        // panel just grows to fit all its content and the popup's own
+        // document scrolls instead, taking the "pinned" clock with it.
+        pipWindow.document.documentElement.style.height = "100%";
+        pipWindow.document.body.style.height = "100%";
         pipWindow.document.body.style.margin = "0";
         pipWindow.document.body.style.background = "var(--paper)";
         floatEls.panel.classList.add("open", "in-pip");

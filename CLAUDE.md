@@ -174,7 +174,22 @@ without the user needing to re-explain anything — read this first.
     margined out to `fp-body`'s own edges plus a solid `background` so it
     reads as a flush header bar rather than floating content — so the
     clock stays pinned in view while the job cards scroll underneath it,
-    instead of scrolling away with them.
+    instead of scrolling away with them. That sticky/scroll split only
+    works if `fp-body`'s `flex: 1; min-height: 0` actually resolves to a
+    bounded height to scroll within — which itself needs `.float-panel.
+    in-pip`'s `height: 100%` to resolve against something, and a
+    percentage height only resolves against an ancestor with its own
+    *defined* height. The PiP popup's `html`/`body` don't have one by
+    default, so `openFloat` sets `documentElement.style.height` and
+    `body.style.height` to `"100%"` explicitly right when the window
+    opens (alongside the existing margin/background inline styles) —
+    without this, the panel silently grows to fit all its content instead
+    of scrolling internally, and the *popup's own document* scrolls
+    instead, taking the "pinned" clock with it (hit once already: the
+    clock only reproduced as pinned in the in-page fallback panel, which
+    uses a `position: fixed` + `max-height: calc(100vh - 32px)` panel that
+    doesn't depend on `body`'s height at all — the real PiP path needed
+    this separate fix).
   - Light/dark follows the OS via `prefers-color-scheme`, same reasoning
     as templates-app — this gets opened at whatever hour the owner is
     doing teleconsults.
