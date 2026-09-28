@@ -65,13 +65,14 @@
   }
 
   async function doPush(app, state) {
-    if (!client) return;
+    if (!client) return false;
     const { data } = await client.auth.getUser();
-    if (!data.user) return;
+    if (!data.user) return false;
     const { error } = await client
       .from("app_state")
       .upsert({ user_id: data.user.id, app, state, updated_at: new Date().toISOString() });
     if (error) console.error("SupaSync push failed:", error.message);
+    return !error;
   }
 
   // Remembers the latest state each app has asked to sync, so a failed
@@ -85,6 +86,21 @@
     lastPushState[app] = state;
     clearTimeout(pushTimer);
     pushTimer = setTimeout(() => doPush(app, state), 800);
+  }
+
+  // Undebounced push that resolves to true once the write has landed —
+  // for callers that pull-merge-push and need the next pull to see this
+  // write (expense-tracker's save guard). A failed push is still queued
+  // for the same retry-on-reconnect as pushState.
+  async function pushStateNow(app, state) {
+    if (!client) return false;
+    lastPushState[app] = state;
+    try {
+      return await doPush(app, state);
+    } catch (err) {
+      console.error("SupaSync push failed:", err);
+      return false;
+    }
   }
 
   if (client) {
@@ -202,5 +218,5 @@
     });
   }
 
-  window.SupaSync = { configured, pullState, pushState, mountAuthGate, signOut, invokeFunction };
+  window.SupaSync = { configured, pullState, pushState, pushStateNow, mountAuthGate, signOut, invokeFunction };
 })();
