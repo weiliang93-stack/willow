@@ -770,3 +770,17 @@ Run once each, in order, via the SQL Editor:
 - This is a single-user personal project — RLS-enabled-with-zero-policies
   (service-role-only access) on the Telegram-related tables is
   intentional, not an oversight.
+- **Every app's `index.html` should reference its own `script.js`/
+  `style.css` with a `?v=YYYYMMDD` version query param, bumped on every
+  meaningful change to either file** — phone browsers (and GitHub Pages'
+  own CDN) cache these aggressively, so a plain unversioned `<script
+  src="script.js">`/`<link href="style.css">` can keep serving a stale
+  copy after a real deploy, making a shipped fix look like it silently
+  didn't take. First hit on expense-tracker (its dropdown-picker change
+  looked like it hadn't shipped — fixed in the "Cache-bust expense-
+  tracker's script.js/style.css" commit) and hit again on
+  teleconsult-tracker (the float panel's PiP-scroll-height fix looked
+  like it hadn't shipped, for the same reason — `index.html` there had
+  never had a version param at all until that point). When adding this
+  to an app that doesn't have it yet, version *both* files even if only
+  one changed, so the pattern stays consistent everywhere.
