@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20260928b">
+  <link rel="stylesheet" href="style.css?v=20260928c">
 </head>
 <body>
   <div id="authGate" class="auth-gate"></div>
@@ -42,11 +42,11 @@
 
     <div class="cards">
       <!-- WC TM CARD -->
-      <section class="card wc" id="wcCard" data-active="true">
+      <section class="card wc" id="wcCard">
         <div class="card-head">
           <div>
             <h2>Whitecoat TM</h2>
-            <div class="sub">Per-patient, paid only when rostered</div>
+            <div class="sub" id="wcSub">Rostered &mdash; target $650</div>
           </div>
           <label class="switch">
             <input type="checkbox" id="wcRostered" checked>
@@ -55,9 +55,7 @@
           </label>
         </div>
         <div class="card-body">
-          <div class="offline-msg">Not rostered for WC TM &mdash; this session pays $0, even if you log on.</div>
-
-          <div class="live-only field-row">
+          <div class="rostered-only field-row">
             <div class="field">
               <label for="wcTarget">Target</label>
               <span>$</span>
@@ -65,7 +63,7 @@
             </div>
           </div>
 
-          <div class="live-only progress-block">
+          <div class="rostered-only progress-block">
             <div class="prow">
               <span>Toward target</span>
               <span><span class="num" id="wcProgressPct">0%</span></span>
@@ -73,7 +71,7 @@
             <div class="bar-track"><div class="bar-fill" id="wcBar"></div></div>
           </div>
 
-          <div class="live-only tap-row two">
+          <div class="tap-row two">
             <button class="tap-btn" id="wcMedsBtn" type="button">
               <span class="count-badge num" id="wcMedsCount">0</span>
               <span class="name">With meds</span>
@@ -86,7 +84,7 @@
             </button>
           </div>
 
-          <div class="live-only stats">
+          <div class="stats">
             <div class="stat">
               <p class="k">Patients</p>
               <p class="v num" id="wcPatients">0</p>
@@ -101,7 +99,7 @@
             </div>
           </div>
 
-          <div class="live-only copy-block">
+          <div class="copy-block">
             <button class="copy-btn" id="wcCopyBtn" type="button">
               <span>⧉</span><span id="wcCopyBtnText">Copy rows for sheet</span>
             </button>
@@ -119,7 +117,7 @@
       </section>
 
       <!-- FHG TM CARD -->
-      <section class="card fhg" id="fhgCard" data-active="true">
+      <section class="card fhg" id="fhgCard">
         <div class="card-head">
           <div>
             <h2>Fullerton TM</h2>
@@ -245,6 +243,6 @@
   <script src="../shared/supabase-config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script src="../shared/supabase-sync.js"></script>
-  <script src="script.js?v=20260928"></script>
+  <script src="script.js?v=20260928c"></script>
 </body>
 </html>

@@ -110,11 +110,26 @@ without the user needing to re-explain anything — read this first.
   (tallying, copy-for-sheet, float tracker) works without one.
   Pay logic, validated against the real Accounts Google Sheet before
   building:
-  - **Whitecoat TM** — $13/patient with meds, $10/patient without, tallied
-    against an editable $ target (not a fixed patient count, since the
-    with-meds/no-meds mix varies). Pays $0 for the whole session whenever
-    the "Rostered" toggle is off, even if the owner logs on and sees
-    patients — this card's tap buttons disable entirely in that state.
+  - **Whitecoat TM** — $13/patient with meds, $10/patient without. This is
+    the same rate whether or not WC TM is formally rostered — the owner
+    sometimes gets ad-hoc permission to log on and see patients on an
+    otherwise not-rostered day, at the identical per-patient rate (an
+    earlier version of this app instead paid $0 and disabled the tap
+    buttons whenever "Rostered" was off, which was simply wrong — fixed
+    after the owner clarified the real pay rule). What *does* change with
+    the toggle: rostered tallies against an editable $ target (not a fixed
+    patient count, since the with-meds/no-meds mix varies) and shows a
+    progress bar toward it; not-rostered/ad-hoc has no target or progress
+    bar at all, just a running patient tally and total, mirroring exactly
+    how Fullerton TM already handles its own not-rostered ad-hoc case (see
+    below) — including reusing the same `.rostered-only` element/CSS
+    convention (elements shown/hidden via inline `style.display` in JS,
+    toggled in `wcSetActive`/`fhgSetActive`, not a CSS rule keyed off the
+    card's own dataset) rather than each card inventing its own mechanism.
+    The one thing that *does* disappear when not rostered is the
+    "Fullerton" reservation row in "Copy for sheet"/"End shift" (see
+    `wcReservationRowCells` below) — there's no formal shift target to
+    reserve against on an ad-hoc day.
   - **Fullerton TM** — when rostered: base pay is `hours × $70`, paid in
     full regardless of pace (this mirrors the real monthly locum-claim
     formula in the `telemed-locum-claims` skill: `E24 = B24*C24`, i.e.
@@ -140,7 +155,14 @@ without the user needing to re-explain anything — read this first.
     border (the only column with an explicit border). The Whitecoat
     comment is `{no-meds count}/{meds count}` — confirmed against 8+ of
     the owner's real logged rows (e.g. `694` ⇄ comment `7/48` = 7×$10 +
-    48×$13). The Fullerton comment/pay is bonus-only when rostered
+    48×$13) — same format and same $13/$10 rate whether or not WC TM is
+    rostered that day. What *does* change: the leading "Fullerton" `-650`/
+    `-target` reservation row only gets copied above the Whitecoat row
+    when WC TM is rostered (see `wcReservationRowCells`/`wcRowsForCopy` in
+    `teleconsult-tracker/script.js`) — an ad-hoc not-rostered session that
+    still sees patients has no formal shift target to reserve against, so
+    "Copy for sheet"/"End shift" emits just the single Whitecoat row. The
+    Fullerton comment/pay is bonus-only when rostered
     (`{n} over` / `n×$10`) since the owner still enters that session's
     base-pay row into the sheet themselves, the same way the existing
     `-650`-style rows already work; it's the full `patients×$10` with an
