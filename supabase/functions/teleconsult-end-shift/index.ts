@@ -349,6 +349,13 @@ Deno.serve(async (req) => {
     return jsonResponse(500, { error: `error writing rows: ${err}` });
   }
 
+  // Deep-links straight to the tab and the exact rows just written (Google
+  // Sheets' own #gid=<tab>&range=<A1 notation> URL fragment) rather than
+  // just the spreadsheet's bare edit URL, so clicking it doesn't leave the
+  // owner hunting for which tab/row their shift landed on.
+  const endRow = startRow + rows.length - 1;
+  const sheetUrl = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=${tab.sheetId}&range=A${startRow}:J${endRow}`;
+
   try {
     await applyFormatting(accessToken, tab.sheetId, startRow, rows);
   } catch (err) {
@@ -357,9 +364,10 @@ Deno.serve(async (req) => {
       ok: true,
       tab: tab.title,
       rowsWritten: rows.length,
+      sheetUrl,
       warning: `rows were added but formatting failed: ${err}`,
     });
   }
 
-  return jsonResponse(200, { ok: true, tab: tab.title, rowsWritten: rows.length });
+  return jsonResponse(200, { ok: true, tab: tab.title, rowsWritten: rows.length, sheetUrl });
 });

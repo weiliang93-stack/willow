@@ -646,6 +646,23 @@ function bootApp() {
         ? result.data.warning
         : "Added " + rows.length + " row(s) to \"" + (result.data && result.data.tab) + "\".";
       endShiftMsg.className = result.data && result.data.warning ? "end-shift-msg error" : "end-shift-msg success";
+
+      var sheetUrl = result.data && result.data.sheetUrl;
+      if (sheetUrl) {
+        // Opened straight from the click handler's own promise chain (no
+        // other navigation in between), which Chrome still treats as
+        // user-gesture-triggered -- but popup blockers vary, so a fallback
+        // link goes in endShiftMsg too in case this gets blocked.
+        window.open(sheetUrl, "_blank", "noopener");
+        var openLink = document.createElement("a");
+        openLink.href = sheetUrl;
+        openLink.target = "_blank";
+        openLink.rel = "noopener";
+        openLink.className = "end-shift-sheet-link";
+        openLink.textContent = "Open sheet ⧉";
+        endShiftMsg.appendChild(document.createTextNode(" "));
+        endShiftMsg.appendChild(openLink);
+      }
     });
   });
 

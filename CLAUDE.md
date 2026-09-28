@@ -223,7 +223,16 @@ without the user needing to re-explain anything — read this first.
     double-log the same numbers; any further count/target/hours/rostered
     change re-enables it (`markShiftDirty`, called from both render
     functions so every state-changing action is covered in one place
-    rather than needing to be wired at each call site individually).
+    rather than needing to be wired at each call site individually). On
+    success it also opens the sheet automatically (`window.open`, called
+    synchronously inside the click handler's own promise chain so Chrome
+    still treats it as user-gesture-triggered) to a deep link the Edge
+    Function builds and returns (`sheetUrl` — Google Sheets' own
+    `#gid=<tab>&range=<A1 notation>` URL fragment, using the exact
+    `tab.sheetId`/`startRow`/row count that write just used), landing
+    directly on the new rows rather than the sheet's bare edit URL. A
+    fallback "Open sheet ⧉" link renders in `endShiftMsg` alongside the
+    success text too, in case a popup blocker catches the automatic one.
   - **"Check calendar"** auto-detects whether the owner is rostered for WC
     TM / FHG TM on the "Logging for" date by reading their real Google
     Calendar via the `teleconsult-check-roster` Edge Function (see its own
@@ -750,6 +759,16 @@ write. If that formatting call fails after the values write already
 succeeded, the function still reports success (with a warning) — the
 numbers are correctly in the sheet either way, just possibly uncoloured;
 reporting failure there would wrongly imply nothing was written.
+
+Every successful response (the plain-success and the formatting-warning
+path alike) also carries `sheetUrl`: a deep link built from `SHEET_ID` +
+`tab.sheetId` (the tab's numeric gid) + the exact `startRow`/`endRow` that
+write just used
+(`https://docs.google.com/spreadsheets/d/<id>/edit#gid=<gid>&range=A<start>:J<end>`)
+— Google Sheets' own URL fragment for landing on a specific tab and
+range, not just the spreadsheet's bare edit URL. The app opens this
+automatically after a successful "End shift" (see teleconsult-tracker's
+own entry above).
 
 Requires **Editor** (not just Viewer) access to the Accounts sheet for the
 shared Google service account (`sheet-budget-sync@willow-budget-sync.iam.gserviceaccount.com`)
