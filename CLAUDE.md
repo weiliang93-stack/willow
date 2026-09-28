@@ -1126,3 +1126,59 @@ Run once each, in order, via the SQL Editor:
   never had a version param at all until that point). When adding this
   to an app that doesn't have it yet, version *both* files even if only
   one changed, so the pattern stays consistent everywhere.
+
+## GP MediList outreach (locum-group lead digest)
+
+Lead-gen for the owner's GP MediList business: clinic owners/admins who
+post locum slots in the three locum Telegram groups the bot is in
+(SgLokun Singapore Locum Jobs, SgLokun Chat, LokunLocumSG - Free
+Forever) get queued as outreach leads, and a daily digest lands in the
+owner's DM with the bot. **The bot never messages leads itself** — the
+owner sends every first DM by hand from his own account (a bot can't
+start a chat with a user anyway).
+
+Pieces (schema in `shared/outreach-schema.sql`, all service-role-only
+like the other Telegram tables):
+- `telegram-poll` → `captureGroupPost`: saves every text/caption message
+  from any group/channel the bot is in into `locum_posts` (poster's real
+  Telegram user id, message id, text, link). Never the owner's DM. Errors
+  are logged, never thrown, so capture can't stall polling. There's no
+  backfill — bots only see messages from when they receive them.
+  `outreach-digest` prunes posts older than 45 days.
+- A daily Claude scheduled task ("GP MediList Telegram Locum Outreach
+  Digest", ~7:52am SGT) does all the judgment — clinic admin vs doctor
+  advertising themselves, independent vs chain, one contact per chain,
+  excluding current/former subscribers (e.g. Minmed), drafting — and
+  just writes rows: one `outreach_digest_runs` row (summary header,
+  status `pending`) and up to 10 `outreach_contacts` rows (status
+  `pending_send`, with `draft`, `digest_order`). `outreach_contacts` is
+  keyed by Telegram user id and is the dedup source of truth.
+- `outreach-digest` (pg_cron `outreach_digest_every_5_min`, exits
+  immediately when nothing's pending) sends the summary, then per
+  contact: `forwardMessage` of the original post (falls back to the
+  captured text if forwarding fails), then a reply card with an
+  Independent/Chain label, the poster's name as a `tg://user?id=` link
+  (tap → profile → Message; the forward's "Forwarded from" header is
+  only tappable when the poster's privacy allows it, the id link isn't
+  subject to that), the draft in a `<pre>` block (tap to copy), and
+  ✅ Sent / ⏭ Skip buttons. Rows are claimed pending → sending with a
+  conditional UPDATE so overlapping runs can't double-send; a card that
+  fails 3 times goes to `failed` instead of retrying forever.
+- Buttons: callback `out:<sent|skip|undo>:<tg_user_id>`, routed in
+  `pollOnce` (before `handleCallback`) to `handleOutreachCallback`, which
+  sets `sent`/`skipped` (or back to `digested` on undo) and swaps the
+  buttons for an undo button.
+
+**Deployed vs repo, as of the outreach deploy (telegram-poll v29,
+2026-09-28):** live telegram-poll = the older live source (separate
+`acquirePollLock`/`getOffset`/`setOffset` lock — the repo's combined
+`claimPollLock` rewrite is still undeployed) **plus** the outreach
+additions above, following the "live source + only the new additions"
+approach noted for the `xs:` handler. The outreach additions are purely
+additive (a new section before "Command parsing", plus the `out:` routing
+and two `captureGroupPost` calls in `pollOnce`), and sit alongside the
+`xs:` handler in the repo file. The live function does **not** have the
+`xs:` handler yet — when it's deployed at expense-sync cutover, deploy
+live source + outreach + xs (or the repo file wholesale if the lock
+rewrite is meant to ship too) — never a build without the outreach
+section, or capture and the digest buttons silently stop.
