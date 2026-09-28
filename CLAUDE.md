@@ -235,6 +235,69 @@ without the user needing to re-explain anything — read this first.
     re-check (e.g. a roster added after the session was already open),
     and a manual re-check's result does overwrite whatever's currently
     set, same as the first auto-run would have.
+- **clinic/** — a merged shell over templates-app and teleconsult-tracker,
+  for the owner to open one app instead of two, same motivation as
+  `money/`. Unlike `money/`, only **one** of the two apps is embedded as
+  an unmodified `<iframe>` (templates-app, exactly the `money/` pattern —
+  zero changes to that app's own files); teleconsult-tracker's markup is
+  instead **vendored directly into `clinic/index.html`** and runs in this
+  shell's own top-level document. This split is deliberate, not an
+  oversight: teleconsult-tracker's "Float tracker" button calls
+  `documentPictureInPicture.requestWindow()`, and that API hard-refuses
+  to open from inside *any* iframe — confirmed by testing
+  (`NotAllowedError: Opening a PiP window is only allowed from a
+  top-level browsing context`), identically whether or not the iframe
+  carries `allow="document-picture-in-picture"` (it's a structural
+  restriction, not a Permissions-Policy grant). Iframing teleconsult-
+  tracker the same way as templates-app would have silently broken the
+  one feature the whole app was originally built around.
+  "Vendored" means the `#authGate`/`#app`/`#floatPanel` markup inside
+  `clinic/index.html`'s Teleconsult panel is a manually-kept-in-sync copy
+  of `teleconsult-tracker/index.html`'s own markup — **but its behavior
+  isn't duplicated**: `clinic/index.html` loads `teleconsult-tracker/
+  script.js` and `teleconsult-tracker/style.css` directly by reference
+  (`<script src="../teleconsult-tracker/script.js">`, unmodified,
+  unminified, same file), so the actual logic and styling stay
+  single-sourced in teleconsult-tracker's own files. Only the HTML
+  skeleton (element ids/structure) is copied, since `script.js` finds
+  everything via `getElementById` and needs those exact ids present in
+  whichever document it's running in. **If teleconsult-tracker's own
+  `index.html` structure changes (a new button, a new card, a changed
+  id), `clinic/index.html`'s vendored copy needs the same edit** — this
+  is the one real maintenance cost of this approach, called out
+  explicitly here since it's easy to forget when only editing
+  teleconsult-tracker/index.html directly.
+  No id actually collides between the two embedded apps despite neither
+  being touched: templates-app's own `#app`/`#authGate` live safely
+  inside its iframe's separate document, invisible to (and unaffected
+  by) the shell's top-level DOM, so the vendored teleconsult-tracker
+  copy can keep its own `#app`/`#authGate` ids completely unchanged.
+  `#floatPanel` is deliberately a direct `<body>` child — a sibling of
+  `#clinicApp`, not nested inside the Teleconsult tab's own hideable
+  panel — specifically so switching to the Templates tab while the
+  tracker is floating open never hides it along with its hidden ancestor
+  (confirmed by testing: the panel stays `display:flex` with no hidden
+  ancestor after a tab switch). The shell has its own sign-in gate
+  (`#clinicAuthGate`/`#clinicApp`, wired in `clinic/script.js`, same
+  `SupaSync.mountAuthGate` pattern as every other app here) wrapping the
+  whole tabbed UI, matching `money/`'s single-gate UX rather than letting
+  each panel show its own separate sign-in screen — teleconsult-tracker's
+  own internal `SupaSync.mountAuthGate` call against the vendored
+  `#authGate` still fires independently underneath this, which is
+  harmless and redundant once signed in once, since the session is
+  shared via `localStorage` same-origin. The bottom tab bar (icon +
+  label, active tab tinted WC teal for Templates / FHG orange for
+  Teleconsult) matches `money/`'s own bottom-nav convention rather than
+  the top-of-page tab switcher an earlier mockup of this shell showed —
+  chosen for consistency with the one other multi-app shell already in
+  this repo. Last-active tab remembered via `localStorage`
+  (`clinic.activeTab`), same as `money/`'s `money.activeTab`.
+  Both `teleconsult-tracker/index.html` and `templates-app/index.html`
+  remain fully working, directly bookmarkable standalone pages in their
+  own right — `clinic/` doesn't replace them, and shares the exact same
+  `localStorage` keys/Supabase session as either standalone page, so
+  switching between "opened via clinic/" and "opened directly" is
+  seamless.
 
 ## Sync architecture (shared/)
 
