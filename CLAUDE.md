@@ -159,37 +159,36 @@ without the user needing to re-explain anything — read this first.
     this is a safety net, not the primary path. Chrome's Document PiP
     windows don't inherit the page's stylesheet, so `copyStylesInto` clones
     matching `<link rel="stylesheet">` tags into the new window's
-    `<head>`. The panel body also carries a live wall clock (`#floatClock`,
-    updated every second via `setInterval`) — it lives in `fp-body`, not
-    `fp-head`, since `fp-head` (the "⠿ Double Shift" title bar + close
-    button) is deliberately hidden while docked in a real PiP window
-    (`.float-panel.in-pip .fp-head`) because the PiP window already
-    supplies its own native title bar; `fp-body` has no such rule, so the
-    clock stays visible in both the real PiP window and the in-page
-    fallback panel. Since a real PiP window can be resized by the owner
-    smaller than its content, `.fp-body` itself scrolls internally
-    (`overflow-y: auto`, `.float-panel` laid out as a column flex
-    container so `fp-body` can flex/shrink into the remaining space) and
-    `#floatClock` is `position: sticky; top: 0` within it — negative-
-    margined out to `fp-body`'s own edges plus a solid `background` so it
-    reads as a flush header bar rather than floating content — so the
-    clock stays pinned in view while the job cards scroll underneath it,
-    instead of scrolling away with them. That sticky/scroll split only
-    works if `fp-body`'s `flex: 1; min-height: 0` actually resolves to a
-    bounded height to scroll within — which itself needs `.float-panel.
-    in-pip`'s `height: 100%` to resolve against something, and a
-    percentage height only resolves against an ancestor with its own
-    *defined* height. The PiP popup's `html`/`body` don't have one by
-    default, so `openFloat` sets `documentElement.style.height` and
-    `body.style.height` to `"100%"` explicitly right when the window
-    opens (alongside the existing margin/background inline styles) —
-    without this, the panel silently grows to fit all its content instead
-    of scrolling internally, and the *popup's own document* scrolls
-    instead, taking the "pinned" clock with it (hit once already: the
-    clock only reproduced as pinned in the in-page fallback panel, which
-    uses a `position: fixed` + `max-height: calc(100vh - 32px)` panel that
-    doesn't depend on `body`'s height at all — the real PiP path needed
-    this separate fix).
+    `<head>`. The panel also carries a live wall clock (`#floatClock`,
+    updated every second via `setInterval`). Note that the PiP window's own
+    native title bar (showing the page's origin, e.g.
+    "weiliang93-stack.github.io") is *not* something a web page can put
+    content into — it's browser chrome, not DOM — so the clock lives inside
+    the panel itself instead. It's a direct child of `.float-panel`
+    (a sibling of `fp-body`, not nested inside it) specifically so it can
+    never scroll away: a real PiP window can be resized by the owner
+    smaller than its content, and only `fp-body` (the job cards) scrolls
+    internally (`overflow-y: auto`, with `.float-panel` laid out as a
+    column flex container so `fp-body` can flex/shrink to fill the
+    remaining space below the clock). An earlier version tried keeping the
+    clock inside `fp-body` with `position: sticky; top: 0` instead — this
+    looked right in testing but the owner still saw it scroll away for real
+    (twice), so it was replaced with this simpler, more robust structural
+    split rather than chasing the sticky-positioning quirk further. `fp-head`
+    (the "⠿ Double Shift" title bar + close button) is deliberately hidden
+    while docked in a real PiP window (`.float-panel.in-pip .fp-head`)
+    since the PiP window already supplies its own native title bar — the
+    clock has no such rule, so it stays visible in both the real PiP window
+    and the in-page fallback panel regardless.
+    `fp-body` actually being scrollable/bounded at all (rather than just
+    growing to fit everything) depends on `.float-panel.in-pip`'s
+    `height: 100%` resolving to something — a percentage height only
+    resolves against an ancestor with its own *defined* height, and the PiP
+    popup's `html`/`body` don't have one by default. `openFloat` sets
+    `documentElement.style.height` and `body.style.height` to `"100%"`
+    explicitly right when the window opens (alongside the existing
+    margin/background inline styles) to fix this — without it, the popup's
+    own document scrolls instead of `fp-body` internally.
   - Light/dark follows the OS via `prefers-color-scheme`, same reasoning
     as templates-app — this gets opened at whatever hour the owner is
     doing teleconsults.
