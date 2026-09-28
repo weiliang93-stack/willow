@@ -83,6 +83,7 @@ function bootApp() {
     wcRenderStats();
     fhgRenderStats();
     persist();
+    renderMonth();
   });
 
   // Colors, alignment and the comment-column border read directly off the real
@@ -639,6 +640,10 @@ function bootApp() {
         endShiftMsg.className = "end-shift-msg error";
         return;
       }
+      // Also records this day's counts into app_state "teleconsult" (see
+      // recordShift) -- which also feeds the telemed-locum-claims skill's
+      // monthly Supabase query.
+      recordShift(dateParts);
       shiftEnded = true;
       endShiftBtn.classList.add("done");
       endShiftBtn.textContent = "Shift added ✓";
@@ -664,30 +669,246 @@ function bootApp() {
         endShiftMsg.appendChild(openLink);
       }
 
-      // Also records this session's numbers in Supabase (app_state, app
-      // "teleconsult", state.shifts keyed by "YYYY-MM-DD") -- the one place
-      // this app's otherwise-localStorage-only state does sync, specifically
-      // so the monthly telemed-locum-claims skill's own Supabase query can
-      // find real data instead of coming back empty (see CLAUDE.md). Whole
-      // state is a single JSON blob per app, so this pulls the existing
-      // shifts map first and merges today's entry in, rather than pushing
-      // just today's date and clobbering every other day already recorded.
-      // Overwriting the same date's entry on a repeat End Shift for that day
-      // (after markShiftDirty re-enables the button) is intentional -- it's
-      // meant to always reflect that day's latest numbers, not append a
-      // second record.
-      var shiftDateKey = dateParts.year + "-" + pad2(dateParts.month) + "-" + pad2(dateParts.day);
-      SupaSync.pullState("teleconsult").then(function (remote) {
-        var shifts = (remote && remote.state && remote.state.shifts) || {};
-        shifts[shiftDateKey] = {
-          weekday: weekdayEl.textContent,
-          wc: { rostered: wc.rostered, target: wc.target, meds: wc.meds, nomeds: wc.nomeds },
-          fhg: { rostered: fhg.rostered, hours: fhg.hours, patients: fhg.patients }
-        };
-        SupaSync.pushState("teleconsult", { shifts: shifts });
-      });
     });
   });
+
+  /* ---------------- shift history + month-to-date ---------------- */
+  // Every successful "End shift" also records that day's raw counts into
+  // app_state app "teleconsult" as { shifts: { "YYYY-MM-DD": record } }, so
+  // the month view (and the monthly locum-claim skill) can total a whole
+  // month without anyone re-counting from the calendar. Keyed by date, so
+  // re-ending the same day replaces that day's record rather than adding a
+  // second one. Merged per-record by loggedAt (like diary-app's per-entry
+  // merge) instead of whole-state last-write-wins, so two devices can't
+  // clobber each other's days; removals are kept as { deleted: true }
+  // tombstones so a merge can't resurrect them.
+  var HISTORY_KEY = "teleconsult-tracker-history-v1";
+  var HISTORY_APP = "teleconsult";
+  var MONTHS = ["January", "February", "March", "April", "May", "June", "July",
+    "August", "September", "October", "November", "December"];
+
+  var shiftHistory = (function () {
+    try {
+      var raw = localStorage.getItem(HISTORY_KEY);
+      var parsed = raw ? JSON.parse(raw) : null;
+      return parsed && parsed.shifts ? parsed.shifts : {};
+    } catch (e) { return {}; }
+  })();
+
+  function saveHistoryLocal() {
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify({ shifts: shiftHistory })); } catch (e) { /* no-op */ }
+  }
+
+  function dateKey(p) { return p.year + "-" + pad2(p.month) + "-" + pad2(p.day); }
+
+  // Returns true if anything in `remote` was newer than (or missing from) local.
+  function mergeShifts(remote) {
+    var changed = false;
+    Object.keys(remote || {}).forEach(function (k) {
+      var r = remote[k], l = shiftHistory[k];
+      if (!l || (r.loggedAt || "") > (l.loggedAt || "")) { shiftHistory[k] = r; changed = true; }
+    });
+    return changed;
+  }
+
+  function sameShifts(a, b) {
+    var ka = Object.keys(a || {}), kb = Object.keys(b || {});
+    if (ka.length !== kb.length) return false;
+    return ka.every(function (k) { return b[k] && b[k].loggedAt === a[k].loggedAt; });
+  }
+
+  // Pull, merge, and push back only if the merged set differs from what's
+  // stored remotely (i.e. this device has something the server doesn't).
+  function syncHistory() {
+    if (!window.SupaSync || !SupaSync.configured) return Promise.resolve();
+    return SupaSync.pullState(HISTORY_APP).then(function (remote) {
+      var remoteShifts = remote && remote.state && remote.state.shifts ? remote.state.shifts : {};
+      mergeShifts(remoteShifts);
+      saveHistoryLocal();
+      renderMonth();
+      if (!sameShifts(shiftHistory, remoteShifts)) SupaSync.pushState(HISTORY_APP, { shifts: shiftHistory });
+    });
+  }
+
+  function recordShift(dateParts) {
+    // Same $13/$10 rate whether or not WC TM is rostered (ad-hoc days pay too).
+    var wcPay = wc.meds * 13 + wc.nomeds * 10;
+    var fhgBase = fhg.rostered ? fhg.hours * 70 : 0;
+    var fhgBonus = fhg.rostered ? Math.max(0, fhg.patients - fhg.hours * 5) * 10 : fhg.patients * 10;
+    shiftHistory[dateKey(dateParts)] = {
+      date: dateKey(dateParts),
+      weekday: weekdayEl.textContent,
+      wc: { rostered: wc.rostered, target: wc.target, meds: wc.meds, nomeds: wc.nomeds, pay: wcPay },
+      fhg: {
+        rostered: fhg.rostered,
+        hours: fhg.rostered ? fhg.hours : 0,
+        patients: fhg.patients,
+        // Per-session estimate only — the monthly claim nets hours and
+        // patients across the whole month (see renderMonth).
+        sessionPay: fhgBase + fhgBonus
+      },
+      loggedAt: new Date().toISOString()
+    };
+    saveHistoryLocal();
+    renderMonth();
+    syncHistory();
+  }
+
+  function removeShift(key) {
+    shiftHistory[key] = { date: key, deleted: true, loggedAt: new Date().toISOString() };
+    saveHistoryLocal();
+    renderMonth();
+    syncHistory();
+  }
+
+  var monthEls = {
+    title: document.getElementById("monthTitle"),
+    sub: document.getElementById("monthSub"),
+    fhgHours: document.getElementById("mFhgHours"),
+    fhgPatients: document.getElementById("mFhgPatients"),
+    fhgPay: document.getElementById("mFhgPay"),
+    fhgNote: document.getElementById("mFhgNote"),
+    wcShifts: document.getElementById("mWcShifts"),
+    wcPatients: document.getElementById("mWcPatients"),
+    wcPay: document.getElementById("mWcPay"),
+    wcNote: document.getElementById("mWcNote"),
+    fhgPeriod: document.getElementById("mFhgPeriod"),
+    wcPeriod: document.getElementById("mWcPeriod"),
+    count: document.getElementById("mCount"),
+    list: document.getElementById("mList")
+  };
+
+  // Whitecoat totals follow the calendar month of the "Logging for" date;
+  // Fullerton follows its own claim period, the 26th to the 25th of the
+  // next month (so 26 Sep - 25 Oct is one claim). Both follow the
+  // "Logging for" date, so back-dating a session shows the period it lands in.
+  var MON_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  function fhgPeriodFor(p) {
+    // Day 26+ opens a new period this month; days 1-25 belong to the one
+    // that opened on the 26th of the previous month.
+    var sy = p.year, sm = p.month;
+    if (p.day < 26) { sm--; if (sm === 0) { sm = 12; sy--; } }
+    var ey = sy, em = sm + 1;
+    if (em === 13) { em = 1; ey++; }
+    return {
+      start: sy + "-" + pad2(sm) + "-26",
+      end: ey + "-" + pad2(em) + "-25",
+      label: "26 " + MON_SHORT[sm - 1] + " – 25 " + MON_SHORT[em - 1] + (ey !== p.year ? " " + ey : "")
+    };
+  }
+
+  // Normalizes a stored record for the month view. Records written before
+  // the month view existed (End shift's earlier push, which the
+  // telemed-locum-claims skill reads) carry only weekday/wc/fhg counts, no
+  // date/pay fields -- so the date comes from the key and pay is always
+  // recomputed from the counts rather than trusted from storage.
+  function shiftRecord(k) {
+    var r = shiftHistory[k];
+    var wcR = r.wc || {}, fhgR = r.fhg || {};
+    var meds = wcR.meds || 0, nomeds = wcR.nomeds || 0;
+    var hours = fhgR.rostered ? (fhgR.hours || 0) : 0, pts = fhgR.patients || 0;
+    return {
+      date: k,
+      weekday: r.weekday,
+      wc: { rostered: !!wcR.rostered, meds: meds, nomeds: nomeds, pay: meds * 13 + nomeds * 10 },
+      fhg: {
+        rostered: !!fhgR.rostered, hours: hours, patients: pts,
+        sessionPay: fhgR.rostered ? hours * 70 + Math.max(0, pts - hours * 5) * 10 : pts * 10
+      }
+    };
+  }
+
+  function renderMonth() {
+    var p = parsedDateComponents();
+    if (!p) { var now = new Date(); p = { year: now.getFullYear(), month: now.getMonth() + 1, day: now.getDate() }; }
+    var prefix = p.year + "-" + pad2(p.month) + "-";
+    var period = fhgPeriodFor(p);
+    var live = Object.keys(shiftHistory).filter(function (k) { return !shiftHistory[k].deleted; }).sort();
+    var wcDays = live.filter(function (k) { return k.indexOf(prefix) === 0; })
+      .map(shiftRecord);
+    var fhgDays = live.filter(function (k) { return k >= period.start && k <= period.end; })
+      .map(shiftRecord);
+    // The log lists every day in either window.
+    var days = live.filter(function (k) { return k.indexOf(prefix) === 0 || (k >= period.start && k <= period.end); })
+      .map(shiftRecord);
+
+    // Fullerton nets across the claim period, mirroring the real locum
+    // claim (hours × $70, plus $10 for every rostered patient beyond
+    // hours × 5 for the period as a whole). Ad-hoc patients are flat $10.
+    var fhgHours = 0, fhgRosteredPts = 0, fhgAdhocPts = 0, fhgSessionSum = 0;
+    var wcShifts = 0, wcMeds = 0, wcNomeds = 0, wcPay = 0;
+    fhgDays.forEach(function (d) {
+      if (d.fhg.rostered) { fhgHours += d.fhg.hours; fhgRosteredPts += d.fhg.patients; }
+      else fhgAdhocPts += d.fhg.patients;
+      fhgSessionSum += d.fhg.sessionPay || 0;
+    });
+    wcDays.forEach(function (d) {
+      // Ad-hoc (not rostered) days with patients pay the same rate, so count them too.
+      if (d.wc.rostered || d.wc.meds + d.wc.nomeds > 0) { wcShifts++; wcMeds += d.wc.meds; wcNomeds += d.wc.nomeds; wcPay += d.wc.pay; }
+    });
+    var threshold = fhgHours * 5;
+    var over = Math.max(0, fhgRosteredPts - threshold);
+    var fhgPay = fhgHours * 70 + over * 10 + fhgAdhocPts * 10;
+    var fhgCases = fhgRosteredPts + fhgAdhocPts;
+
+    monthEls.title.textContent = MONTHS[p.month - 1] + " " + p.year;
+    monthEls.fhgPeriod.textContent = period.label;
+    monthEls.wcPeriod.textContent = MON_SHORT[p.month - 1] + " " + p.year;
+    monthEls.sub.textContent = days.length
+      ? days.length + " day" + (days.length === 1 ? "" : "s") + " logged via End shift"
+      : "No shifts logged yet — End shift records each day here";
+    monthEls.fhgHours.textContent = fhgHours;
+    monthEls.fhgPatients.textContent = fhgCases;
+    monthEls.fhgPay.textContent = fmtMoney(fhgPay);
+    monthEls.fhgNote.innerHTML = fhgDays.length
+      ? "Claim cases: <b>" + fhgCases + "</b>" +
+        (fhgAdhocPts ? " (" + fhgRosteredPts + " rostered + " + fhgAdhocPts + " ad-hoc)" : "") +
+        ". Need <b>" + threshold + "</b> for " + fhgHours + " hrs → <b>" + over + " over</b>" +
+        (over ? " (+" + fmtMoney(over * 10) + ")" : "") + "." +
+        (fhgSessionSum !== fhgPay ? " Per-session estimates summed to " + fmtMoney(fhgSessionSum) + "." : "")
+      : "";
+    monthEls.wcShifts.textContent = wcShifts;
+    monthEls.wcPatients.textContent = wcMeds + wcNomeds;
+    monthEls.wcPay.textContent = fmtMoney(wcPay);
+    monthEls.wcNote.innerHTML = wcShifts
+      ? "<b>" + wcNomeds + "</b> no meds / <b>" + wcMeds + "</b> with meds" +
+        " · avg " + fmtMoney(wcPay / wcShifts) + " per shift"
+      : "";
+    monthEls.count.textContent = days.length;
+
+    monthEls.list.innerHTML = "";
+    if (!days.length) {
+      var empty = document.createElement("li");
+      empty.className = "empty";
+      empty.textContent = "Nothing logged for this month yet.";
+      monthEls.list.appendChild(empty);
+    }
+    days.forEach(function (d) {
+      var li = document.createElement("li");
+      var parts = d.date.split("-");
+      var dSpan = document.createElement("span");
+      dSpan.className = "d num";
+      dSpan.textContent = (d.weekday ? d.weekday + " " : "") + Number(parts[2]) + "/" + Number(parts[1]);
+      var x = document.createElement("span");
+      x.className = "x num";
+      var bits = [];
+      if (d.fhg.rostered) bits.push("FHG " + d.fhg.hours + "h · " + d.fhg.patients + " pts");
+      else if (d.fhg.patients) bits.push("FHG " + d.fhg.patients + " ad-hoc");
+      if (d.wc.rostered || d.wc.meds + d.wc.nomeds > 0) bits.push("WC " + d.wc.nomeds + "/" + d.wc.meds + " · " + fmtMoney(d.wc.pay));
+      x.textContent = bits.join("  ·  ") || "no patients";
+      var rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "text-btn";
+      rm.textContent = "Remove";
+      rm.title = "Removes this day from the month history only — the Accounts sheet is not changed";
+      armReset(rm, function () { removeShift(d.date); });
+      li.appendChild(dSpan);
+      li.appendChild(x);
+      li.appendChild(rm);
+      monthEls.list.appendChild(li);
+    });
+  }
 
   /* ---------------- combined floating tracker ---------------- */
   // One combined panel (not one per job): Chrome only allows a single Document
@@ -821,6 +1042,8 @@ function bootApp() {
 
   wcRenderStats();
   fhgRenderStats();
+  renderMonth();
+  syncHistory();
 
   // Auto-check the calendar once, only on a genuinely fresh day — never on
   // a reload of a day already in progress, so a manual toggle change never

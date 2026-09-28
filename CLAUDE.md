@@ -20,7 +20,14 @@ without the user needing to re-explain anything — read this first.
   cycle — calendar month or a statement day), a monthly budget, a
   category breakdown chart. Synced to Supabase (`app_state` app
   `"expenses"`). Drives the Telegram bot's `/exp` flow and both
-  budget-alert paths (overall budget + per-card caps). Also embedded
+  budget-alert paths (overall budget + per-card caps). Expenses are
+  mostly written *by other things* — `expense-email-sync` (bank alert
+  emails, see its own section), `/exp`, and `sheet-budget-sync`'s
+  `monthlyBudget` — so `save()` never blindly pushes its local copy: it
+  pulls the latest server state and three-way merges against the last
+  synced base first (expenses per id; cards/categories/monthlyBudget as
+  whole values), via an awaitable `SupaSync.pushStateNow`, so a tab left
+  open for hours can't erase entries written since it loaded. Also embedded
   unmodified, as its own tab, inside `money/` (below) — still a
   fully standalone app in its own right, opened directly by nothing
   else in this repo.
@@ -252,21 +259,17 @@ without the user needing to re-explain anything — read this first.
     pushed to it — confirmed by querying the live table directly and
     finding no `app = 'teleconsult'` row at all, so the skill's "pull the
     count automatically" path had never actually worked and always fell
-    back to asking the owner by hand. Because `app_state` holds one whole
-    JSON blob per app (last-write-wins, not a field-level merge — see the
-    "Known caveat" note under Google Sheets sync above), a bare
-    `pushState("teleconsult", {shifts: {[today]: ...}})` would silently
-    erase every other date already recorded; the handler always
-    `pullState("teleconsult")`s first, merges today's entry into whatever
-    `shifts` map comes back, and pushes the merged whole map. Re-running
-    "End shift" for a day already recorded (after `markShiftDirty`
-    re-enables the button) intentionally *overwrites* that date's entry
-    rather than adding a second one — a shift record should always reflect
-    that day's latest numbers. There's no in-app way to mark an entry
-    `deleted` (the skill's own query already tolerates a missing/false
-    `deleted` flag via `coalesce`) — that stays a manual, direct-SQL fix for
-    the rare case a day was logged wrong, not something this app builds a
-    UI for.
+    back to asking the owner by hand. The push itself is `recordShift`
+    (see "Month-to-date history" below): #111 first added a separate
+    pull-merge-push for this, and the month-view branch independently
+    added its own per-record merge of the same row; when the two were
+    merged together, the #111 push was dropped in favor of `recordShift`'s,
+    whose records are a superset of the fields the skill reads (plus
+    `date`/`loggedAt`/pay fields and `{deleted: true}` tombstones from the
+    in-app "Remove" button, which the skill's `coalesce` on `deleted`
+    already handles). Records #111 pushed before that merge (no `date`/
+    `loggedAt`/pay) are still read correctly — `shiftRecord` normalizes
+    them, taking the date from the key and recomputing pay from counts.
   - **"Check calendar"** auto-detects whether the owner is rostered for WC
     TM / FHG TM on the "Logging for" date by reading their real Google
     Calendar via the `teleconsult-check-roster` Edge Function (see its own
@@ -278,6 +281,28 @@ without the user needing to re-explain anything — read this first.
     re-check (e.g. a roster added after the session was already open),
     and a manual re-check's result does overwrite whatever's currently
     set, same as the first auto-run would have.
+  - **Month-to-date history.** Each successful "End shift" also records
+    that day's raw counts (`recordShift`) into `app_state` app `"teleconsult"` as
+    `{shifts: {"YYYY-MM-DD": {date, weekday, wc: {rostered, target, meds,
+    nomeds, pay}, fhg: {rostered, hours, patients, sessionPay}, loggedAt}}}`
+    — the one piece of this app that *is* synced (the live session itself
+    still stays localStorage-only). Keyed by date, so re-ending the same
+    day replaces that day's record. Merged per-record by `loggedAt` (the
+    diary-app approach, not whole-state last-write-wins), with removals kept
+    as `{deleted: true}` tombstones so a merge can't resurrect them. A
+    "This month" section totals it, both windows following the "Logging
+    for" date: Fullerton over its **claim period, the 26th to the 25th of
+    the next month** (owner-specified; e.g. 26 Sep – 25 Oct is one claim —
+    `fhgPeriodFor`), netted across that period exactly like the real claim
+    (`hours×$70 + max(0, rostered patients − hours×5)×$10`, ad-hoc patients
+    flat $10); Whitecoat over the plain calendar month. No combined total,
+    since the two windows don't line up. Also shows "Claim cases" — the completed-case count the
+    `telemed-locum-claims` skill needs, readable directly via
+    `select state from app_state where app = 'teleconsult'`. Whitecoat is
+    summed per shift (no netting), and counts ad-hoc not-rostered days
+    that saw patients too — same $13/$10 rate either way (#108). "Remove" drops a day from the history
+    only; it never touches the Accounts sheet. Only days ended via "End
+    shift" are recorded — the copy-for-sheet fallback doesn't record.
 - **clinic/** — a merged shell over templates-app and teleconsult-tracker,
   for the owner to open one app instead of two, same motivation as
   `money/`. Unlike `money/`, only **one** of the two apps is embedded as
@@ -378,9 +403,15 @@ from a browser/dashboard/webhook.site all succeeded. Root cause was
 never identified (suspected network/WAF layer specific to this
 project's edge). Pivoted permanently to polling `getUpdates`.
 
-**Polling cadence**: a `pg_cron` job (`telegram_poll_fast`, currently
-scheduled via `cron.schedule('telegram_poll_fast', '2 seconds', ...)`)
-calls the `telegram-poll` function on an interval. This has to be set up
+**Polling cadence**: a `pg_cron` job (`telegram_poll_fast`) calls the
+`telegram-poll` function on an interval — **every minute** (`* * * * *`)
+as of Sep 2026. It was originally `'2 seconds'`, which alone is ~1.3M
+invocations/month and pushed the project over Supabase's free-tier
+500K Edge Function invocations; the owner cut it back to 1 minute.
+Budget new cron jobs against that 500K/month ceiling (Sep 2026 total
+≈110K/month: telegram-poll and budget-alert ~43K each, five 10-minute
+syncs ~22K, expense-email-sync ~3K). Consequence: bot replies and
+button taps can take up to ~60s to be picked up. This has to be set up
 via raw SQL in the SQL Editor, not the dashboard's cron UI, which only
 exposes 5-field cron expressions (1-minute minimum) — interval literals
 like `'2 seconds'` require calling `cron.schedule` directly.
@@ -879,6 +910,151 @@ use:
 - `GOOGLE_CALENDAR_ID` — the owner's calendar id, which for a personal
   Google Calendar is just their email address (`weiliang93@gmail.com`)
 
+## Bank alert emails → expenses (expense-email-sync)
+
+Code replacement for the nightly Claude Code routine "Auto-log expenses
+from bank emails + email report" (trigger `trig_01W1kYad6ndCH8MPqxces2ZP`,
+session "Willow — Auto Expense Logger"), which cost ~$260 in its first
+four weeks because each nightly run resumed one ever-growing conversation.
+Runs every 15 minutes via pg_cron instead of nightly, so charges land in
+the app within ~15 minutes and budget/cap alerts fire the same day.
+
+Files (`supabase/functions/expense-email-sync/`):
+- `parse.ts` — one regex parser per alert format, all run on
+  `normalizeText` output (tags stripped, entities decoded, table pipes
+  removed, whitespace collapsed) so text/plain and HTML bodies parse the
+  same. Formats covered, each with a test built from a real Sep 2026
+  email: UOB card charge / reversal / PayNow out / funds transfer /
+  scheduled own-account + FAST transfer / bill payment / PayNow received;
+  DBS card charge (yearless date → email's year, stepping back across New
+  Year) / PayNow out; Citi charge + reversal; HSBC (incl. the `.hk`
+  notification domain); CDG Zig e-receipt (card-number vs wallet
+  payment). UOB's "Your PayNow transfer to X is successful" follow-ups are
+  `info` (no amount — the "You made a PayNow transfer…" alert is the
+  record). **No StanChart transaction alert had arrived as of Sep 2026**,
+  so there's no parser for one yet: any alert-sender email that looks
+  like money moved but matches no parser becomes `unknown` → a Telegram
+  "couldn't log this" prompt, never a guess. Add a parser + test when the
+  first one shows up.
+- `rules.ts` — the routine's decision process, verbatim: card last-4 →
+  app card (`config.ts` `cardMap`; UOB 4828 splits Overseas/Contactless on
+  currency, UOB 3602 splits Online/Contactless on `onlineMerchantHints`
+  and is flagged low-confidence), `exclusionRules` (merchant / cardLast4 /
+  paynowRecipient / paynowSourceAccount; `not_expense` skips entirely),
+  `selfTransferAccounts`, bill payments to a tracked card skipped,
+  reversals cancel a same-batch charge or remove an already-logged one,
+  wallet-paid CDG Zig receipts de-dup against the card's "Cabcharge Asia"
+  alert (wait up to 2 days, then ask), unmapped card → `cash` with a
+  `[card ending XXXX — not mapped]` note prefix. Reads the same
+  `exclusionRules`/`categoryRules`/`selfTransferAccounts`/
+  `excludedExpenses` from `app_state` `"expenses_automation"` the routine
+  used, and writes entries with the same `gm-<gmail message id>` ids.
+- Category: owner's `categoryRules`, then `config.ts` `categoryKeywords`
+  (incl. restaurant-sounding words — sushi/ramen/izakaya/omakase/… →
+  Restaurant; deliberately no "bar"/"cafe"), then a Claude Haiku guess if
+  `ANTHROPIC_API_KEY` is set, else `config.defaultCategory` —
+  **Restaurant**, because the owner's unmatched one-off merchants are
+  mostly restaurants (owner chose no Haiku: it needs a separate paid API
+  account). 16 `categoryRules` were seeded on 26 Sep 2026 from the
+  owner's own history (merchants seen ≥2× with one consistent category,
+  e.g. SHOPEE→Shopping, Grab→Transport, HELPLING→Bills, Spotify→Bills).
+  **Max Now** deliberately has no rule — it's Food or Transport depending
+  on the day, so the owner wants to be asked each time.
+  Every guessed one gets a Telegram "Logged $X at M as C. Change it?"
+  prompt; changing it offers "Always use C for <merchant>?", which appends
+  a `categoryRule` — so unknown merchants become rule-driven over time.
+  `merchantKey` strips trailing reference codes ("Grab* A-9SF6…" →
+  "Grab*") so the saved rule matches future charges.
+- Incoming PayNow → Telegram prompt listing the last ~3 days' charges;
+  tapping one adds a negative `cash` expense (`offset-<message id>`) in
+  that charge's category, same as the routine did by chat.
+- Button taps land in `telegram-poll` (callback prefix `xs:<pending
+  id>:<choice>`, `handleExpenseSyncCallback`), backed by
+  `expense_sync_pending` rows. Both functions write `app_state` with a
+  read-modify-write guarded on `updated_at` (retry on conflict), not a
+  blind upsert.
+- Daily HTML + plain-text report email (same content as the routine's)
+  on the first run after `REPORT_HOUR_SGT` (default 0), covering the
+  previous SGT day's decisions + month-to-date budget and every card cap.
+- Processed alerts get the "Expense Logged" label and are **archived, not
+  trashed** (the routine trashed them; Trash auto-deletes after 30 days).
+- A failing run messages Telegram at most once per 6 hours.
+
+**Modes** (`EXPENSE_SYNC_MODE`): `shadow` (default) decides everything
+and records it in `expense_sync_log` but writes nothing else — no
+app_state, labels, Telegram or email — deciding as if the routine hadn't
+run yet, and reading Trash too since the routine trashes what it
+processes. `POST ?compare=1&days=7` (with the cron secret header) diffs
+shadow decisions against what the routine actually logged: `mismatches`
+(different card/target/amount, or logged by one and not the other) are
+real problems; `categoryDiffs` are two different guesses and are
+expected. Cutover plan: shadow for a week alongside the routine, fix any
+mismatches, then set `EXPENSE_SYNC_MODE=live` and **disable (not delete)**
+the routine trigger. Live mode skips any `gm-` id already present, so a
+night where both run can't double-log.
+
+Tests (run from `supabase/functions/`): `deno test --allow-env
+--allow-read --allow-net=localhost expense-email-sync/ telegram-poll/` —
+parser + rules unit tests, and end-to-end runs of both real handlers
+against in-memory fakes of Gmail, PostgREST and Telegram
+(`_test/fake_backend.ts`): shadow writes nothing, live applies/labels/
+prompts/reports once, overlap with routine-logged ids, and a concurrent
+app write mid-run being retried rather than clobbered.
+
+**Gmail access** is the owner's own login (OAuth refresh token), not the
+shared service account — a service account can't read a personal
+@gmail.com inbox. One-time setup, in the same Google Cloud project as the
+service account:
+1. APIs & Services → enable **Gmail API**.
+2. OAuth consent screen: External, add the owner as a test user, then
+   **Publish app** ("In production"; unverified is fine for personal
+   use). This step matters: refresh tokens for an app left in "Testing"
+   expire after 7 days and the sync would silently stop.
+3. Credentials → Create OAuth client ID → Web application, authorised
+   redirect URI `https://developers.google.com/oauthplayground`.
+4. In the OAuth Playground (gear icon → "Use your own OAuth
+   credentials", paste the client id/secret), authorise scopes
+   `https://www.googleapis.com/auth/gmail.modify` and
+   `https://www.googleapis.com/auth/gmail.send`, then "Exchange
+   authorization code for tokens" and copy the refresh token.
+
+Required secrets, beyond what the other functions already use:
+- `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`
+- `ANTHROPIC_API_KEY` (optional — Haiku category guesses)
+- `EXPENSE_SYNC_MODE` (`shadow` until cutover, then `live`)
+
+Schema: `shared/expense-sync-schema.sql` (`expense_sync_log`,
+`expense_sync_pending`, `expense_sync_state`, and the commented
+`cron.schedule` for the 15-minute job).
+
+**Deployment status (26 Sep 2026):** tables created; `expense-email-sync`
+v1 deployed (`verify_jwt` off — cron-secret auth like the other cron
+functions), shadow mode. Gmail secrets set (OAuth app "Willow expense
+sync" in project willow-budget-sync, published to production); pg_cron
+job `expense_email_sync` (jobid 24, `*/15 * * * *`) running — its
+secret was copied from an existing job's command inside SQL, never
+typed out. First shadow run matched all 7 charges the routine had
+logged (target/amount/card), and caught one the routine **missed**: a
+$140 PayNow to PESTOPIA from the joint a/c 7831 on 25 Sep (both alert
+emails labelled "Expense Logged" by the routine, but no entry written).
+**Cutover also includes (owner-approved):** moving `budget_alert_check`
+from every minute to `1-59/15 * * * *` (one minute after each
+expense-email-sync run, since expenses only change then) — saves ~40K
+invocations/month on the free tier.
+**Deployed v1 predates the Restaurant default/keywords** (it still
+defaults to Shopping) — harmless in shadow mode, but redeploy
+`expense-email-sync` at cutover along with telegram-poll.
+**Not yet done:** deploying `telegram-poll`'s `xs:` handler — deliberately
+left for cutover, since only live mode sends those buttons. Note when deploying
+telegram-poll: the **live** telegram-poll (v25, deployed 20 Aug) is an
+*older* build than this repo's — it still uses the separate
+`acquirePollLock`/`getOffset`/`setOffset` lock, not the repo's combined
+`claimPollLock` — so deploying the repo file also ships that
+never-deployed lock rewrite. The lower-risk option is to deploy the live
+source plus only the `xs:` additions (`mutateAppState`,
+`handleExpenseSyncCallback`, and the `data.startsWith("xs:")` branch at
+the top of `handleCallback`'s `try`).
+
 ## Required secrets (Edge Functions)
 
 - `TELEGRAM_BOT_TOKEN` — from @BotFather
@@ -913,15 +1089,19 @@ Run once each, in order, via the SQL Editor:
    (tracks which logged-set ids have already been pushed to the training
    sheet, for `sheet-training-sync`'s append-only idempotency). Also
    idempotent, safe to re-run.
+4. `shared/expense-sync-schema.sql` — `expense_sync_log`,
+   `expense_sync_pending`, `expense_sync_state` for `expense-email-sync`,
+   plus its cron SQL (commented, fill in project ref + secret). Also
+   idempotent.
 
 ## Working conventions established in this repo
 
 - Keep power-user one-line bot commands working alongside any guided
   flow — never remove the fast path when adding a guided one.
-- Prefer fewer/cheaper cron invocations when a little latency is fine;
-  the 2-second `telegram_poll_fast` interval was a deliberate
-  responsiveness tradeoff the user asked for explicitly, not a default
-  to assume elsewhere.
+- Prefer fewer/cheaper cron invocations when a little latency is fine —
+  the project is on Supabase's free tier (500K Edge Function
+  invocations/month) and has hit that limit once already, via the
+  original 2-second `telegram_poll_fast` interval (since cut to 1 minute).
 - Job-posting monitoring is scoped to public groups/channels the owner
   can add their own bot to — never private DMs or groups they don't
   control.
