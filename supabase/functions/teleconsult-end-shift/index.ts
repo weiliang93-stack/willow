@@ -26,23 +26,30 @@
 // serial number server-side instead of a "D/M/YYYY" string, so there's no
 // locale-parsing ambiguity either.
 //
-// Always appends to the leftmost tab — same "no fixed tab name, a new one
-// is added every month" convention as sheet-budget-sync/sheet-training-
-// sync, confirmed against the real Accounts sheet (newest month tab is
-// always frontmost). The append position itself is found by scanning
-// column A downward from the log's fixed start (row 11 — see
-// findLogEndRow) for the first blank row, rather than trusting
-// values.append's built-in table auto-detection or scanning from row 1:
-// both put new rows at the very top of the sheet at least once each (see
-// findLogEndRow's own comment for why). Row formatting (background color
-// per column E-I, alignment, and the
-// Comment column's black box border) is read directly off the real sheet
-// — see teleconsult-tracker/CLAUDE.md entry — and applied via a
-// batchUpdate right after the values write, using that same computed row
-// number so it never touches unrelated rows. If that formatting call fails
-// after the values already landed, this still reports success (with a
-// warning) rather than implying nothing was written — the numbers are
-// correct in the sheet either way, just possibly uncoloured.
+// Always targets the leftmost tab — same "no fixed tab name, a new one is
+// added every month" convention as sheet-budget-sync/sheet-training-sync,
+// confirmed against the real Accounts sheet (newest month tab is always
+// frontmost). Where the rows actually land depends on whether today's date
+// already has a row block in the log (see findTodaysBlock): if not, it
+// appends after the log's current end (found by scanning column A downward
+// from the log's fixed start, row 11 — see findLogEndRow — rather than
+// trusting values.append's built-in table auto-detection or scanning from
+// row 1, both of which put new rows at the very top of the sheet at least
+// once each, see findLogEndRow's own comment for why); if today's date
+// already has a contiguous block (a second "End shift" for the same day,
+// e.g. after logging a few more patients or flipping WC "Rostered" on),
+// it overwrites that block in place instead of appending a duplicate set
+// alongside it, resizing the block first (resizeRowBlock, real row
+// insert/delete, not just overwriting cells) if this write's row count
+// differs from what's already there. Row formatting (background color per
+// column E-I, alignment, and the Comment column's black box border) is
+// read directly off the real sheet — see teleconsult-tracker/CLAUDE.md
+// entry — and applied via a batchUpdate right after the values write,
+// using that same computed row number so it never touches unrelated rows.
+// If that formatting call fails after the values already landed, this
+// still reports success (with a warning) rather than implying nothing was
+// written — the numbers are correct in the sheet either way, just possibly
+// uncoloured.
 //
 // Required secrets, beyond what the other sheet-sync functions already use:
 //   GOOGLE_ACCOUNTS_SHEET_ID - the id from the Accounts sheet's URL
@@ -173,22 +180,86 @@ const LOG_START_ROW = 11;
 //     history). Anchoring the scan at the fixed LOG_START_ROW instead of
 //     row 1 sidesteps this: everything from row 11 down is unambiguously
 //     either a real logged day or genuinely unused, never a header row.
-async function findLogEndRow(accessToken: string, tabTitle: string): Promise<number> {
+async function getLogColumnA(accessToken: string, tabTitle: string): Promise<unknown[][]> {
   const range = `${tabTitle}!A${LOG_START_ROW}:A1000`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new Error(`values.get failed: ${res.status} ${await res.text()}`);
   const data = await res.json();
-  const rows: unknown[][] = data.values ?? [];
-  for (let i = 0; i < rows.length; i++) {
-    const cell = rows[i]?.[0];
+  return data.values ?? [];
+}
+
+function findLogEndRow(colA: unknown[][]): number {
+  for (let i = 0; i < colA.length; i++) {
+    const cell = colA[i]?.[0];
     const hasValue = cell !== undefined && cell !== null && String(cell).trim() !== "";
     if (!hasValue) return LOG_START_ROW + i; // 1-indexed sheet row of the first blank
   }
   // No blank found within the fetched window (log runs to the very end of
   // what was fetched, or hasn't started yet) — append right after the
   // last row seen.
-  return LOG_START_ROW + rows.length;
+  return LOG_START_ROW + colA.length;
+}
+
+// Finds an already-logged block for this exact date, so a second "End
+// shift" for a day already in the sheet (e.g. the owner logged a few more
+// patients after the first click, or flipped WC "Rostered" on, which
+// changes the row count) updates those rows in place instead of appending
+// a duplicate set alongside them. Column A's date serial is the only
+// available key for "which rows belong to today" — matches are required to
+// be contiguous (a real same-session block always is; a non-contiguous
+// match would mean something odd is going on, e.g. unrelated rows sharing
+// today's date entered by hand) or this returns null and the caller falls
+// back to the plain append path, rather than guessing which rows to touch.
+function findTodaysBlock(colA: unknown[][], dateSerial: number): { start: number; length: number } | null {
+  const matches: number[] = [];
+  for (let i = 0; i < colA.length; i++) {
+    if (colA[i]?.[0] === dateSerial) matches.push(i);
+  }
+  if (matches.length === 0) return null;
+  const first = matches[0];
+  const last = matches[matches.length - 1];
+  if (last - first + 1 !== matches.length) return null; // not contiguous -- don't guess
+  return { start: LOG_START_ROW + first, length: matches.length };
+}
+
+// Grows or shrinks an existing row block in place (inserting/deleting real
+// rows, not just overwriting cells) so everything below the block shifts
+// correctly when this session's row count changed since the last write for
+// the same day (see findTodaysBlock) -- e.g. toggling WC "Rostered" on
+// between two End Shift clicks adds the -target reservation row, growing
+// the block from 2 rows to 3.
+async function resizeRowBlock(accessToken: string, sheetId: number, blockStart: number, oldLength: number, newLength: number): Promise<void> {
+  if (newLength === oldLength) return;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`;
+  const request = newLength > oldLength
+    ? {
+      insertDimension: {
+        range: {
+          sheetId,
+          dimension: "ROWS",
+          startIndex: blockStart - 1 + oldLength,
+          endIndex: blockStart - 1 + newLength,
+        },
+        inheritFromBefore: false,
+      },
+    }
+    : {
+      deleteDimension: {
+        range: {
+          sheetId,
+          dimension: "ROWS",
+          startIndex: blockStart - 1 + newLength,
+          endIndex: blockStart - 1 + oldLength,
+        },
+      },
+    };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ requests: [request] }),
+  });
+  if (!res.ok) throw new Error(`batchUpdate resize failed: ${res.status} ${await res.text()}`);
 }
 
 async function writeRows(accessToken: string, tabTitle: string, startRow: number, valuesRows: unknown[][]): Promise<void> {
@@ -343,7 +414,14 @@ Deno.serve(async (req) => {
 
   let startRow: number;
   try {
-    startRow = await findLogEndRow(accessToken, tab.title);
+    const colA = await getLogColumnA(accessToken, tab.title);
+    const existingBlock = findTodaysBlock(colA, dateSerial);
+    if (existingBlock) {
+      await resizeRowBlock(accessToken, tab.sheetId, existingBlock.start, existingBlock.length, rows.length);
+      startRow = existingBlock.start;
+    } else {
+      startRow = findLogEndRow(colA);
+    }
     await writeRows(accessToken, tab.title, startRow, valuesRows);
   } catch (err) {
     return jsonResponse(500, { error: `error writing rows: ${err}` });

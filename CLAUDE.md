@@ -764,6 +764,31 @@ regardless of what month or how much data exists:
   unambiguously either a real logged day or genuinely unused, never a
   header row.
 
+**A second "End shift" for a day that's already in the sheet updates
+those rows in place instead of appending a duplicate set.** The button
+disables itself after a successful write, but any further count/target/
+hours/rostered change re-enables it (`markShiftDirty`), and clicking it
+again re-runs this whole function — plainly logging into today's rows a
+second time, not into a new day. Before deciding where to write,
+`findTodaysBlock` scans the same column-A data `findLogEndRow` already
+fetched for any rows whose date serial matches this call's date; a
+contiguous run of matches is treated as "today's existing block" and
+overwritten there rather than appended after the log's current end. If
+this write's row count differs from what's already there (e.g. toggling
+WC "Rostered" on between two clicks adds the `-target` reservation row,
+growing the block from 2 rows to 3), `resizeRowBlock` first inserts or
+deletes real rows — `insertDimension`/`deleteDimension`, not just
+overwriting cells — so everything below the block shifts correctly
+before the new values land. A non-contiguous match (today's date serial
+appearing in more than one disconnected place, e.g. an unrelated row
+entered by hand that happens to share the date) is deliberately treated
+the same as "no existing block" rather than guessed at — better to
+append an extra row-set in that rare case than risk overwriting the
+wrong rows. Validated directly against the real Sheets API (both the
+grow and shrink paths) on a throwaway scratch spreadsheet before
+trusting this on the real Accounts sheet — confirmed no gaps, no
+corruption of the rows immediately before or after the resized block.
+
 Two more things it deliberately avoids doing the "obvious" way, both
 learned from bugs already hit once in this app's clipboard-copy path:
 
