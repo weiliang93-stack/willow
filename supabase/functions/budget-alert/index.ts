@@ -120,11 +120,24 @@ Deno.serve(async (req) => {
     day: "2-digit",
   }).format(new Date());
 
-  const { data: alertRow } = await supabase
+  // This read matters just as much as the write below: if it silently
+  // fails and we default lastTier to "none", a card/budget that's
+  // genuinely already at "warn" looks like a fresh crossing and we
+  // re-send an alert that already went out — this is what was actually
+  // causing repeat "Card alert" messages even after the write-side fix
+  // below, confirmed by pg_net's own call history timing out on this
+  // function's invocation at the exact same moments the duplicate
+  // alerts were sent. So: never guess "none" on a failed read — bail
+  // out without alerting anything this run instead.
+  const { data: alertRow, error: alertReadError } = await supabase
     .from("budget_alert_state")
     .select("tier, card_tiers")
     .eq("user_id", USER_ID)
     .maybeSingle();
+  if (alertReadError) {
+    console.error("error reading budget_alert_state — skipping this run to avoid a false re-alert:", alertReadError);
+    return new Response("error reading budget_alert_state", { status: 500 });
+  }
   const lastTier = alertRow?.tier ?? "none";
   const lastCardTiers: Record<string, string> = alertRow?.card_tiers ?? {};
 
@@ -174,9 +187,31 @@ Deno.serve(async (req) => {
 
   if (results.length === 0) return new Response("no change");
 
-  await supabase
-    .from("budget_alert_state")
-    .upsert({ user_id: USER_ID, tier: currentTier, card_tiers: newCardTiers, updated_at: new Date().toISOString() });
+  // This write is what stops a genuine threshold-crossing from
+  // re-alerting on every future run — if it silently fails (a transient
+  // Supabase hiccup; this project's Edge Runtime has been observed to
+  // return SUPABASE_EDGE_RUNTIME_SERVICE_DEGRADED intermittently), the
+  // next run still sees the OLD tier, treats the same crossing as new
+  // again, and re-sends the same alert. Retry a few times rather than
+  // firing-and-forgetting it.
+  let persisted = false;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const { error: upsertError } = await supabase
+      .from("budget_alert_state")
+      .upsert({ user_id: USER_ID, tier: currentTier, card_tiers: newCardTiers, updated_at: new Date().toISOString() });
+    if (!upsertError) {
+      persisted = true;
+      break;
+    }
+    lastError = upsertError;
+    console.error(`budget_alert_state upsert failed (attempt ${attempt}/3):`, upsertError);
+    if (attempt < 3) await new Promise((r) => setTimeout(r, 300 * attempt));
+  }
+  if (!persisted) {
+    console.error("budget_alert_state upsert failed after retries — next run may re-alert on this same crossing:", lastError);
+    return new Response(`${results.join("; ")} (state NOT persisted, will likely re-alert)`, { status: 500 });
+  }
 
   return new Response(results.join("; "));
 });
