@@ -567,6 +567,7 @@ html, body {
 .float-panel {
   position: fixed;
   width: 232px;
+  max-height: calc(100vh - 32px);
   background: var(--surface);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
@@ -574,14 +575,16 @@ html, body {
   z-index: 1000;
   overflow: hidden;
   display: none;
+  flex-direction: column;
   top: 16px;
   right: 16px;
 }
-.float-panel.open { display: block; }
+.float-panel.open { display: flex; }
 .float-panel.in-pip {
   position: static;
   width: 100%;
   height: 100%;
+  max-height: none;
   border: none;
   border-radius: 0;
   box-shadow: none;
@@ -599,6 +602,7 @@ html, body {
   color: var(--paper);
   font-size: 12px;
   font-weight: 700;
+  flex-shrink: 0;
 }
 .fp-close {
   background: none;
@@ -616,15 +620,23 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 .fp-clock {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: -10px -10px 0;
+  padding: 10px 10px 8px;
+  background: var(--surface);
   text-align: center;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 15px;
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--ink-muted);
-  padding-bottom: 8px;
   border-bottom: 1px solid var(--line);
 }
 .fp-job { display: flex; flex-direction: column; gap: 6px; }

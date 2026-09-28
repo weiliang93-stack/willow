@@ -166,7 +166,15 @@ without the user needing to re-explain anything — read this first.
     (`.float-panel.in-pip .fp-head`) because the PiP window already
     supplies its own native title bar; `fp-body` has no such rule, so the
     clock stays visible in both the real PiP window and the in-page
-    fallback panel.
+    fallback panel. Since a real PiP window can be resized by the owner
+    smaller than its content, `.fp-body` itself scrolls internally
+    (`overflow-y: auto`, `.float-panel` laid out as a column flex
+    container so `fp-body` can flex/shrink into the remaining space) and
+    `#floatClock` is `position: sticky; top: 0` within it — negative-
+    margined out to `fp-body`'s own edges plus a solid `background` so it
+    reads as a flush header bar rather than floating content — so the
+    clock stays pinned in view while the job cards scroll underneath it,
+    instead of scrolling away with them.
   - Light/dark follows the OS via `prefers-color-scheme`, same reasoning
     as templates-app — this gets opened at whatever hour the owner is
     doing teleconsults.
