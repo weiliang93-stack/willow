@@ -663,6 +663,29 @@ function bootApp() {
         endShiftMsg.appendChild(document.createTextNode(" "));
         endShiftMsg.appendChild(openLink);
       }
+
+      // Also records this session's numbers in Supabase (app_state, app
+      // "teleconsult", state.shifts keyed by "YYYY-MM-DD") -- the one place
+      // this app's otherwise-localStorage-only state does sync, specifically
+      // so the monthly telemed-locum-claims skill's own Supabase query can
+      // find real data instead of coming back empty (see CLAUDE.md). Whole
+      // state is a single JSON blob per app, so this pulls the existing
+      // shifts map first and merges today's entry in, rather than pushing
+      // just today's date and clobbering every other day already recorded.
+      // Overwriting the same date's entry on a repeat End Shift for that day
+      // (after markShiftDirty re-enables the button) is intentional -- it's
+      // meant to always reflect that day's latest numbers, not append a
+      // second record.
+      var shiftDateKey = dateParts.year + "-" + pad2(dateParts.month) + "-" + pad2(dateParts.day);
+      SupaSync.pullState("teleconsult").then(function (remote) {
+        var shifts = (remote && remote.state && remote.state.shifts) || {};
+        shifts[shiftDateKey] = {
+          weekday: weekdayEl.textContent,
+          wc: { rostered: wc.rostered, target: wc.target, meds: wc.meds, nomeds: wc.nomeds },
+          fhg: { rostered: fhg.rostered, hours: fhg.hours, patients: fhg.patients }
+        };
+        SupaSync.pushState("teleconsult", { shifts: shifts });
+      });
     });
   });
 

@@ -98,9 +98,13 @@ without the user needing to re-explain anything — read this first.
   simultaneous teleconsult jobs, Whitecoat TM and Fullerton TM. Not connected
   to the Telegram bot. Session state lives in `localStorage` only, keyed to
   the current calendar date (a new day resets patient counts/history but
-  keeps the target-$ and shift-length settings) — it is *not* synced to
-  `app_state` like the other apps. It does sit behind the same Supabase
-  Auth gate as templates-app/training-app/expense-tracker (`#authGate` +
+  keeps the target-$ and shift-length settings) — it is *not* synced live
+  to `app_state` the way the other apps' whole state is (no `pullState` on
+  boot, no debounced `pushState` on every change). The one exception is a
+  single `pushState("teleconsult", ...)` fired specifically by a successful
+  **"End shift"** — see that bullet below for why and its exact shape. It
+  does sit behind the same Supabase Auth gate as templates-app/training-
+  app/expense-tracker (`#authGate` +
   `SupaSync.mountAuthGate`, whole app hidden until signed in), added
   specifically so **"End shift"** can call the `teleconsult-end-shift` Edge
   Function as the signed-in user — see its own bullet below. If Supabase is
@@ -233,6 +237,36 @@ without the user needing to re-explain anything — read this first.
     directly on the new rows rather than the sheet's bare edit URL. A
     fallback "Open sheet ⧉" link renders in `endShiftMsg` alongside the
     success text too, in case a popup blocker catches the automatic one.
+    A successful "End shift" also fires one `SupaSync.pushState("teleconsult",
+    {shifts})` call — the single exception to this app's state otherwise
+    being localStorage-only (see this app's own intro bullet above). This
+    exists specifically to feed the `telemed-locum-claims` skill's monthly
+    Supabase query (see that skill's own `SKILL.md`): it expects an
+    `app_state` row `app = "teleconsult"` whose `state.shifts` is a JSON
+    object keyed by `"YYYY-MM-DD"`, each entry carrying `weekday`,
+    `wc: {rostered, target, meds, nomeds}`, and `fhg: {rostered, hours,
+    patients}` — the skill only reads the `fhg.*` fields today, but `wc` is
+    pushed too since it's the same object already in memory and costs
+    nothing extra. This was a real, previously-undiscovered gap: the skill
+    was written expecting this row to exist, but nothing ever actually
+    pushed to it — confirmed by querying the live table directly and
+    finding no `app = 'teleconsult'` row at all, so the skill's "pull the
+    count automatically" path had never actually worked and always fell
+    back to asking the owner by hand. Because `app_state` holds one whole
+    JSON blob per app (last-write-wins, not a field-level merge — see the
+    "Known caveat" note under Google Sheets sync above), a bare
+    `pushState("teleconsult", {shifts: {[today]: ...}})` would silently
+    erase every other date already recorded; the handler always
+    `pullState("teleconsult")`s first, merges today's entry into whatever
+    `shifts` map comes back, and pushes the merged whole map. Re-running
+    "End shift" for a day already recorded (after `markShiftDirty`
+    re-enables the button) intentionally *overwrites* that date's entry
+    rather than adding a second one — a shift record should always reflect
+    that day's latest numbers. There's no in-app way to mark an entry
+    `deleted` (the skill's own query already tolerates a missing/false
+    `deleted` flag via `coalesce`) — that stays a manual, direct-SQL fix for
+    the rare case a day was logged wrong, not something this app builds a
+    UI for.
   - **"Check calendar"** auto-detects whether the owner is rostered for WC
     TM / FHG TM on the "Logging for" date by reading their real Google
     Calendar via the `teleconsult-check-roster` Edge Function (see its own
