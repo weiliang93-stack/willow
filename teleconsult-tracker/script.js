@@ -202,7 +202,8 @@ function bootApp() {
   var wcEls = {
     rosteredInput: document.getElementById("wcRostered"),
     rosteredLabel: document.getElementById("wcRosteredLabel"),
-    card: document.getElementById("wcCard"),
+    sub: document.getElementById("wcSub"),
+    rosteredOnlyEls: document.querySelectorAll("#wcCard .rostered-only"),
     target: document.getElementById("wcTarget"),
     medsBtn: document.getElementById("wcMedsBtn"),
     nomedsBtn: document.getElementById("wcNomedsBtn"),
@@ -221,24 +222,31 @@ function bootApp() {
   };
   wcEls.target.value = wc.target;
   wcEls.rosteredInput.checked = wc.rostered;
-  wcEls.card.dataset.active = String(wc.rostered);
+  wcEls.rosteredOnlyEls.forEach(function (el) { el.style.display = wc.rostered ? "" : "none"; });
   wcEls.rosteredLabel.textContent = wc.rostered ? "Rostered" : "Not rostered";
+  wcEls.sub.textContent = wc.rostered ? "Rostered — target $" + wc.target : "Not rostered — ad-hoc, no target";
 
+  // Pay rate is the same $13/meds + $10/no-meds whether or not WC TM is
+  // formally rostered -- the owner sometimes gets ad-hoc permission to log
+  // on and see patients on an otherwise not-rostered day, at the same
+  // per-patient rate, just without a target to tally against.
   function wcRowCells() {
     var total = wc.meds * 13 + wc.nomeds * 10;
     return buildRowCells("Whitecoat", "TM", 0, Math.round(total), wc.nomeds + "/" + wc.meds, WC_BG);
   }
 
-  // The Accounts sheet's real rows always carry a "Fullerton" reservation row just
+  // The Accounts sheet's real rows carry a "Fullerton" reservation row just
   // above the day's Whitecoat row, valued at minus that day's WC TM shift rate
   // (-$650 for a normal 5hr shift, -$250 for a 4hr Inspire-day shift, etc — in
-  // practice just -target, since the target IS that day's expected WC TM value).
-  // Only makes sense when WC TM is actually rostered.
+  // practice just -target, since the target IS that day's expected WC TM value)
+  // -- only when WC TM is actually rostered with a real shift target. An
+  // ad-hoc not-rostered session that still sees patients has no such
+  // reservation, since there was never a formal target to reserve against.
   function wcReservationRowCells() {
     return buildRowCells("Fullerton", "TM", 0, -wc.target, "", FHG_BG);
   }
   function wcRowsForCopy() {
-    return wc.rostered ? [wcReservationRowCells(), wcRowCells()] : [];
+    return wc.rostered ? [wcReservationRowCells(), wcRowCells()] : [wcRowCells()];
   }
 
   function wcRenderStats() {
@@ -256,17 +264,20 @@ function bootApp() {
     wcEls.pct.textContent = Math.round(pct * 100) + "%" + (total >= wc.target && wc.target > 0 ? " — hit!" : "");
     wcEls.copyPreview.textContent = wcRowsForCopy().map(cellsToTabText).join("\n");
 
+    wcEls.sub.textContent = wc.rostered ? "Rostered — target $" + wc.target : "Not rostered — ad-hoc, no target";
+
     floatEls.wcTotal.textContent = fmtMoney(total);
-    floatEls.wcSub.textContent = patients + " patients · " + Math.round(pct * 100) + "% of target";
+    floatEls.wcSub.textContent = wc.rostered
+      ? patients + " patients · " + Math.round(pct * 100) + "% of target"
+      : patients + " patients (ad-hoc)";
     floatEls.wcMeds.textContent = "Meds (" + wc.meds + ") +$13";
     floatEls.wcNomeds.textContent = "No meds (" + wc.nomeds + ") +$10";
-    floatEls.wcJob.classList.toggle("inactive", !wc.rostered);
     updateCombined();
   }
 
   function wcSetActive(active) {
     wc.rostered = active;
-    wcEls.card.dataset.active = String(active);
+    wcEls.rosteredOnlyEls.forEach(function (el) { el.style.display = active ? "" : "none"; });
     wcEls.rosteredLabel.textContent = active ? "Rostered" : "Not rostered";
     wcRenderStats();
     persist();
@@ -490,7 +501,7 @@ function bootApp() {
   }
 
   function updateCombined() {
-    var wcTotal = wc.rostered ? (wc.meds * 13 + wc.nomeds * 10) : 0;
+    var wcTotal = wc.meds * 13 + wc.nomeds * 10;
     var threshold = fhg.hours * 5;
     var fhgTotal = fhg.rostered
       ? (fhg.hours * 70 + Math.max(0, fhg.patients - threshold) * 10)

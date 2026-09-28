@@ -215,9 +215,7 @@ html, body {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  transition: opacity 0.2s ease;
 }
-.card[data-active="false"] { opacity: 0.72; }
 
 .card-head {
   display: flex;
@@ -293,19 +291,6 @@ html, body {
   flex: 1;
 }
 
-.offline-msg {
-  display: none;
-  align-items: center;
-  gap: 10px;
-  background: var(--critical-tint);
-  color: var(--critical);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  font-size: 13.5px;
-  font-weight: 500;
-}
-.card[data-active="false"] .offline-msg { display: flex; }
-.card[data-active="false"] .live-only { display: none; }
 
 .field-row {
   display: flex;
@@ -637,8 +622,6 @@ html, body {
   border-bottom: 1px solid var(--line);
 }
 .fp-job { display: flex; flex-direction: column; gap: 6px; }
-.fp-job.inactive { opacity: 0.5; }
-.fp-job.inactive .fp-btn { pointer-events: none; }
 .fp-job-row {
   display: flex;
   align-items: baseline;
