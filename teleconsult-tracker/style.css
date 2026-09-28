@@ -800,3 +800,8 @@ footer.note {
 }
 .end-shift-msg.error { color: var(--critical); font-weight: 600; }
 .end-shift-msg.success { color: var(--good); font-weight: 600; }
+.end-shift-sheet-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
