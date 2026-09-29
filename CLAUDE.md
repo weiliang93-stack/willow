@@ -21,9 +21,10 @@ without the user needing to re-explain anything — read this first.
   category breakdown chart. Synced to Supabase (`app_state` app
   `"expenses"`). Drives the Telegram bot's `/exp` flow and both
   budget-alert paths (overall budget + per-card caps). Expenses are
-  mostly written *by other things* — `expense-email-sync` (bank alert
-  emails, see its own section), `/exp`, and `sheet-budget-sync`'s
-  `monthlyBudget` — so `save()` never blindly pushes its local copy: it
+  mostly written *by other things* — the owner's daily Cowork scheduled
+  task (`daily-expense-logging` skill: bank alert emails → expenses +
+  report email; see "Bank alert emails → expenses" below), `/exp`, and
+  `sheet-budget-sync`'s `monthlyBudget` — so `save()` never blindly pushes its local copy: it
   pulls the latest server state and three-way merges against the last
   synced base first (expenses per id; cards/categories/monthlyBudget as
   whole values), via an awaitable `SupaSync.pushStateNow`, so a tab left
@@ -728,7 +729,21 @@ use:
 - `GOOGLE_CALENDAR_ID` — the owner's calendar id, which for a personal
   Google Calendar is just their email address (`weiliang93@gmail.com`)
 
-## Bank alert emails → expenses (expense-email-sync)
+## Bank alert emails → expenses (expense-email-sync) — PARKED
+
+**Status (29 Sep 2026): not running.** The owner decided 15-minute
+updates weren't needed and moved daily expense logging to a **Cowork
+scheduled task** (skill `daily-expense-logging`) instead. The old Claude
+Code routine `trig_01W1kYad6ndCH8MPqxces2ZP` is disabled (by the owner),
+the `expense_email_sync` pg_cron job was unscheduled, and the switch-over
+(telegram-poll `xs:` handler, live mode, budget-alert cadence change) was
+**cancelled** — none of it was deployed. What remains, inert: the
+`expense-email-sync` v1 function (shadow mode, nothing calls it), the
+`expense_sync_*` tables, the Gmail OAuth secrets, and the code + tests
+below, kept in case a code-based sync is wanted later (e.g. run once a
+day instead of the Cowork task). Still in use from this work: the 16
+`categoryRules` in `expenses_automation` (the Cowork task reads them),
+and expense-tracker's save guard.
 
 Code replacement for the nightly Claude Code routine "Auto-log expenses
 from bank emails + email report" (trigger `trig_01W1kYad6ndCH8MPqxces2ZP`,
