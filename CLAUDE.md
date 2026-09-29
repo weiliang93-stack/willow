@@ -487,7 +487,10 @@ scans the owner's own DM with the bot):
   `leaveChat` via the bot API directly (works regardless of who added
   the bot — no group-admin permission needed) and rejoining.
 
-### Budget alerts (budget-alert function, cron `* * * * *`)
+### Budget alerts (budget-alert function, cron `*/15 * * * *`)
+
+Moved from every minute to every 15 minutes on 29 Sep 2026 to cut log
+ingestion and invocations; alerts can land up to ~15 minutes late.
 
 Self-queries `app_state` on every run rather than relying on a Database
 Webhook — Database Webhooks are broken on this project
@@ -1167,7 +1170,11 @@ like the other Telegram tables):
   `pending_send`, with `draft`, `digest_order`). `outreach_contacts` is
   keyed by Telegram user id and is the dedup source of truth.
 - `outreach-digest` (pg_cron `outreach_digest_every_5_min`, exits
-  immediately when nothing's pending) sends the summary, then per
+  immediately when nothing's pending; since 29 Sep 2026 it only runs
+  every 5 min from 7:00 to 9:55am SGT, `*/5 23,0,1 * * *` UTC, since the
+  digest is written ~7:52am — a digest written later waits for the next
+  morning. Post capture and the buttons live in `telegram-poll`, so they
+  still work all day; post pruning still runs once a day at 8:00am) sends the summary, then per
   contact: `forwardMessage` of the original post (falls back to the
   captured text if forwarding fails), then a reply card with an
   Independent/Chain label, the poster's name as a `tg://user?id=` link
