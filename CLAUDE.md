@@ -1027,6 +1027,8 @@ Schema: `shared/expense-sync-schema.sql` (`expense_sync_log`,
 `expense_sync_pending`, `expense_sync_state`, and the commented
 `cron.schedule` for the 15-minute job).
 
+**Turned off by the owner on purpose (as of 29 Sep 2026):** the `expense_email_sync` pg_cron job has been removed. This is intentional, not a breakage, so don't re-create it unless asked.
+
 **Deployment status (26 Sep 2026):** tables created; `expense-email-sync`
 v1 deployed (`verify_jwt` off — cron-secret auth like the other cron
 functions), shadow mode. Gmail secrets set (OAuth app "Willow expense
