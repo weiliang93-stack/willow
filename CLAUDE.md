@@ -1055,6 +1055,17 @@ source plus only the `xs:` additions (`mutateAppState`,
 `handleExpenseSyncCallback`, and the `data.startsWith("xs:")` branch at
 the top of `handleCallback`'s `try`).
 
+## Database size (cron history purge)
+
+pg_cron logs every run into `cron.job_run_details` and never prunes it.
+By Sep 2026 that log alone was 415 MB of the free tier's 0.5 GB database
+(mostly rows left over from the old 2-second `telegram_poll_fast`). It was
+truncated on 29 Sep 2026, which took the database from 467 MB to 16 MB. A
+pure-SQL pg_cron job, `purge_cron_history_daily` (`17 3 * * *`), now
+deletes history older than 3 days. It calls no Edge Function, so it adds
+nothing to the invocation quota. Check this table first if database size
+climbs again.
+
 ## Required secrets (Edge Functions)
 
 - `TELEGRAM_BOT_TOKEN` — from @BotFather
