@@ -628,8 +628,15 @@ async function checkJobKeywords(message: any) {
   const matched = keywords.filter((k) => lower.includes(k.toLowerCase()));
   if (matched.length === 0) return;
 
+  // Also match the sender: a post's company name often only appears in
+  // Telegram's link preview (not in message.text), but the poster's name or
+  // @username (e.g. "DARosterTeam") is always on the message.
   const blocked = await getBlockedPhrases();
-  if (blocked.some((b) => lower.includes(b.toLowerCase()))) return;
+  const sender = [message.from?.first_name, message.from?.last_name, message.from?.username, message.sender_chat?.title, message.sender_chat?.username]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (blocked.some((b) => (lower + "\n" + sender).includes(b.toLowerCase()))) return;
 
   const chatTitle = message.chat.title || message.chat.username || "a monitored chat";
   const link = buildMessageLink(message);
