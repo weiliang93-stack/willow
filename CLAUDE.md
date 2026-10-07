@@ -474,6 +474,11 @@ Guided (button-driven, multi-step, state kept in
 Job-posting watcher (any group/channel the bot is added to — **never**
 scans the owner's own DM with the bot):
 - `/addkeyword <text>`, `/removekeyword <text>`, `/keywords`
+- `/block <text>`, `/unblock <text>`, `/blocked` — block list: a message
+  containing any blocked phrase never alerts, even if a keyword matches
+  (e.g. `/block doctor anywhere` after a rejection). Stored in
+  `telegram_job_watch.blocked_keywords` (run the `alter table` in
+  `shared/telegram-schema.sql` before deploying).
 - Case-insensitive substring match on every group/channel message,
   alerts via DM with chat name, matched keyword(s), message text, and a
   deep link (`t.me/<username>/<id>` or `t.me/c/<internal_id>/<id>`,
