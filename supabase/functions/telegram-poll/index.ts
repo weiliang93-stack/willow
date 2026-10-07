@@ -555,6 +555,54 @@ async function listJobKeywords() {
   await sendMessage(keywords.length ? `Watching for: ${keywords.join(", ")}` : "No keywords set. Add one with /addkeyword <text>");
 }
 
+// Block list — phrases that suppress a job match even when a keyword hits
+// (e.g. a company that already rejected you). Stored in its own column,
+// read separately, so a missing column (migration not run yet) just means
+// "nothing blocked" instead of breaking keyword matching.
+async function getBlockedPhrases(): Promise<string[]> {
+  const { data } = await supabase.from("telegram_job_watch").select("blocked_keywords").eq("id", 1).maybeSingle();
+  return data?.blocked_keywords ?? [];
+}
+
+async function setBlockedPhrases(blocked: string[]): Promise<boolean> {
+  const { error } = await supabase
+    .from("telegram_job_watch")
+    .upsert({ id: 1, blocked_keywords: blocked, updated_at: new Date().toISOString() });
+  if (error) {
+    console.error("setBlockedPhrases failed", error);
+    await sendMessage("Couldn't save the block list — has the blocked_keywords column been added? (see shared/telegram-schema.sql)");
+    return false;
+  }
+  return true;
+}
+
+async function addBlockedPhrase(phrase: string) {
+  const blocked = await getBlockedPhrases();
+  if (blocked.some((b) => b.toLowerCase() === phrase.toLowerCase())) {
+    await sendMessage(`Already blocking "${phrase}".`);
+    return;
+  }
+  blocked.push(phrase);
+  if (await setBlockedPhrases(blocked)) await sendMessage(`Blocked "${phrase}". Blocking: ${blocked.join(", ")}`);
+}
+
+async function removeBlockedPhrase(phrase: string) {
+  const blocked = await getBlockedPhrases();
+  const next = blocked.filter((b) => b.toLowerCase() !== phrase.toLowerCase());
+  if (next.length === blocked.length) {
+    await sendMessage(`"${phrase}" wasn't blocked.`);
+    return;
+  }
+  if (await setBlockedPhrases(next)) {
+    await sendMessage(next.length ? `Unblocked "${phrase}". Blocking: ${next.join(", ")}` : `Unblocked "${phrase}". Nothing blocked now.`);
+  }
+}
+
+async function listBlockedPhrases() {
+  const blocked = await getBlockedPhrases();
+  await sendMessage(blocked.length ? `Blocking: ${blocked.join(", ")}` : "Nothing blocked. Add one with /block <text>");
+}
+
 // Deep link to jump straight to the matched message, where Telegram's
 // link format allows it (public chats with a @username, or supergroups
 // via their internal /c/ link — regular private groups without a
@@ -579,6 +627,9 @@ async function checkJobKeywords(message: any) {
   const lower = message.text.toLowerCase();
   const matched = keywords.filter((k) => lower.includes(k.toLowerCase()));
   if (matched.length === 0) return;
+
+  const blocked = await getBlockedPhrases();
+  if (blocked.some((b) => lower.includes(b.toLowerCase()))) return;
 
   const chatTitle = message.chat.title || message.chat.username || "a monitored chat";
   const link = buildMessageLink(message);
@@ -696,6 +747,9 @@ type ParsedCommand =
   | { kind: "add_keyword"; keyword: string }
   | { kind: "remove_keyword"; keyword: string }
   | { kind: "list_keywords" }
+  | { kind: "block"; phrase: string }
+  | { kind: "unblock"; phrase: string }
+  | { kind: "list_blocked" }
   | { kind: "help" }
   | { kind: "unknown" };
 
@@ -725,6 +779,14 @@ function parseCommand(text: string): ParsedCommand {
 
   if (/^\/keywords\s*$/i.test(trimmed)) return { kind: "list_keywords" };
 
+  const blockMatch = trimmed.match(/^\/block\s+([\s\S]+)$/i);
+  if (blockMatch) return { kind: "block", phrase: blockMatch[1].trim() };
+
+  const unblockMatch = trimmed.match(/^\/unblock\s+([\s\S]+)$/i);
+  if (unblockMatch) return { kind: "unblock", phrase: unblockMatch[1].trim() };
+
+  if (/^\/blocked\s*$/i.test(trimmed)) return { kind: "list_blocked" };
+
   if (/^\/help/i.test(trimmed)) return { kind: "help" };
 
   return { kind: "unknown" };
@@ -740,6 +802,9 @@ const HELP_TEXT = [
   "/addkeyword <text> — watch group/channel chats for this, e.g. /addkeyword frontend engineer",
   "/removekeyword <text> — stop watching for it",
   "/keywords — list what you're watching for",
+  "/block <text> — never alert on job posts containing this, e.g. /block doctor anywhere",
+  "/unblock <text> — stop blocking it",
+  "/blocked — list blocked phrases",
 ].join("\n");
 
 // ---------------------------------------------------------------------
@@ -774,6 +839,15 @@ async function handleCommand(parsed: ParsedCommand) {
       break;
     case "list_keywords":
       await listJobKeywords();
+      break;
+    case "block":
+      await addBlockedPhrase(parsed.phrase);
+      break;
+    case "unblock":
+      await removeBlockedPhrase(parsed.phrase);
+      break;
+    case "list_blocked":
+      await listBlockedPhrases();
       break;
     case "help":
       await sendMessage(HELP_TEXT);

@@ -90,6 +90,10 @@ insert into public.telegram_job_watch (id, keywords)
 values (1, '{}')
 on conflict (id) do nothing;
 
+-- Phrases that suppress a keyword match (/block, /unblock, /blocked).
+alter table public.telegram_job_watch
+  add column if not exists blocked_keywords text[] not null default '{}';
+
 alter table public.telegram_job_watch enable row level security;
 
 -- Same reasoning as the tables above: no policies, only the
