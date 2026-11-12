@@ -41,6 +41,7 @@
 //   /exp <amount> [category] [payment] [note]   e.g. /exp 12.50 Food Amex lunch with team
 //   /set <exercise> <weight> <reps>             e.g. /set squat 60 5
 //   /diary <text>                               e.g. /diary Had a great day at the gym
+//   /replied                                    GP MediList: mark a sent lead as having replied
 //
 // Guided flows (button taps, walks you through it):
 //   /exp    - asks amount (add a note after it in the same reply if you
@@ -617,6 +618,19 @@ function buildMessageLink(message: any): string | null {
   return null;
 }
 
+// A keyword right after a negation ("No telemedicine.", "not remote",
+// "nor ACLS", "without a telemed component") is the post ruling it out,
+// not offering it — so only count occurrences that aren't negated.
+const NEGATION_BEFORE = /\b(?:no|not|nor|without|non)[\s-]+(?:(?:a|an|any)\s+)?$/;
+
+function hasUnnegatedHit(lower: string, keyword: string): boolean {
+  const k = keyword.toLowerCase();
+  for (let i = lower.indexOf(k); i !== -1; i = lower.indexOf(k, i + 1)) {
+    if (!NEGATION_BEFORE.test(lower.slice(Math.max(0, i - 30), i))) return true;
+  }
+  return false;
+}
+
 async function checkJobKeywords(message: any) {
   if (!message || typeof message.text !== "string") return;
   if (String(message.chat.id) === CHAT_ID) return; // never scan your own DM with the bot
@@ -625,11 +639,18 @@ async function checkJobKeywords(message: any) {
   if (keywords.length === 0) return;
 
   const lower = message.text.toLowerCase();
-  const matched = keywords.filter((k) => lower.includes(k.toLowerCase()));
+  const matched = keywords.filter((k) => hasUnnegatedHit(lower, k));
   if (matched.length === 0) return;
 
+  // Also match the sender: a post's company name often only appears in
+  // Telegram's link preview (not in message.text), but the poster's name or
+  // @username (e.g. "DARosterTeam") is always on the message.
   const blocked = await getBlockedPhrases();
-  if (blocked.some((b) => lower.includes(b.toLowerCase()))) return;
+  const sender = [message.from?.first_name, message.from?.last_name, message.from?.username, message.sender_chat?.title, message.sender_chat?.username]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  if (blocked.some((b) => (lower + "\n" + sender).includes(b.toLowerCase()))) return;
 
   const chatTitle = message.chat.title || message.chat.username || "a monitored chat";
   const link = buildMessageLink(message);
@@ -651,6 +672,13 @@ async function checkJobKeywords(message: any) {
 // forwards their original post back into this chat with a drafted message.
 // Its ✅ Sent / Skip buttons (callback "out:<action>:<tg_user_id>") are
 // handled by handleOutreachCallback. See shared/outreach-schema.sql.
+//
+// Reply tracking: once a lead is marked Sent, its card gets a 💬 Replied
+// button (and /replied lists sent leads for older cards). Tapping it sets
+// replied_at + followup_state='needs_draft' so the daily Claude task drafts a
+// warm follow-up; the bot then asks for an optional one-line note (reply to
+// the prompt) saved to reply_note. Follow-up cards (delivered by
+// outreach-digest) have ✅ Followed up / ⏭ Skip buttons (out:fsent / out:fskip).
 // Capture failures are logged, never thrown, so they can't stall polling.
 // ---------------------------------------------------------------------
 
@@ -699,6 +727,82 @@ async function setOutreachButtons(messageId: number, rows: { text: string; data:
   });
 }
 
+const sentButtons = (id: number) => [
+  [{ text: "✅ Logged as sent · undo", data: `out:undo:${id}` }],
+  [{ text: "💬 They replied", data: `out:rep:${id}` }],
+];
+const followupButtons = (id: number) => [
+  [
+    { text: "✅ Followed up", data: `out:fsent:${id}` },
+    { text: "⏭ Skip", data: `out:fskip:${id}` },
+  ],
+];
+
+// Marks a lead as having replied and asks (optionally) for a one-line note.
+// Reply-to-message matching on the "[#<id>]" tag saves the note (see
+// handleOutreachNote).
+async function markReplied(tgUserId: number, now: string) {
+  const { data: row } = await supabase.from("outreach_contacts").select("status, sender_name, clinic").eq("tg_user_id", tgUserId).maybeSingle();
+  if (!row) return;
+  const update: Record<string, unknown> = {
+    replied_at: now,
+    followup_state: "needs_draft",
+    followup_kind: "warm",
+    updated_at: now,
+  };
+  if (row.status === "digested") {
+    update.status = "sent";
+    update.sent_at = now;
+  }
+  await supabase.from("outreach_contacts").update(update).eq("tg_user_id", tgUserId);
+  const label = row.clinic || row.sender_name || "this lead";
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: CHAT_ID,
+      text: `💬 Logged — ${label} replied. A follow-up draft will arrive in tomorrow's digest.\n\nOptional: reply to this message with a line on what they said (e.g. "asked about pricing", "wants a demo") so the draft fits. [#${tgUserId}]`,
+      reply_markup: { force_reply: true, selective: true, input_field_placeholder: "What did they say?" },
+    }),
+  });
+}
+
+// Saves the optional one-line note when you reply to a "💬 Logged" prompt.
+async function handleOutreachNote(message: any): Promise<boolean> {
+  const replyText: string | undefined = message.reply_to_message?.text;
+  if (!replyText || !replyText.startsWith("💬 Logged")) return false;
+  const m = replyText.match(/\[#(\d+)\]\s*$/);
+  if (!m) return false;
+  const tgUserId = Number(m[1]);
+  const note = String(message.text).trim().slice(0, 500);
+  const { error } = await supabase
+    .from("outreach_contacts")
+    .update({ reply_note: note, updated_at: new Date().toISOString() })
+    .eq("tg_user_id", tgUserId);
+  await sendMessage(error ? "Couldn't save that note." : "📝 Noted — it'll shape the follow-up draft.");
+  return true;
+}
+
+// /replied — lists leads marked sent that haven't been marked replied, so
+// older cards (that predate the 💬 button) can still be flagged.
+async function listRepliable() {
+  const { data } = await supabase
+    .from("outreach_contacts")
+    .select("tg_user_id, sender_name, clinic, org")
+    .eq("status", "sent")
+    .is("replied_at", null)
+    .order("sent_at", { ascending: false })
+    .limit(40);
+  if (!data || data.length === 0) {
+    await sendMessage("No sent leads waiting to be marked as replied.");
+    return;
+  }
+  const keyboard: Keyboard = data.map((c: any) => [
+    { text: String(c.clinic || c.org || c.sender_name || c.tg_user_id).slice(0, 60), data: `out:repl:${c.tg_user_id}` },
+  ]);
+  await sendMessage("Tap each lead who replied to you (most recent first):", keyboard);
+}
+
 async function handleOutreachCallback(cq: any) {
   try {
     if (!cq.message || String(cq.message.chat.id) !== CHAT_ID) return;
@@ -706,26 +810,72 @@ async function handleOutreachCallback(cq: any) {
     const tgUserId = Number(idStr);
     if (!Number.isFinite(tgUserId)) return;
     const now = new Date().toISOString();
+    const msgId = cq.message.message_id;
 
     if (action === "sent" || action === "skip") {
       await supabase
         .from("outreach_contacts")
         .update(action === "sent" ? { status: "sent", sent_at: now, updated_at: now } : { status: "skipped", updated_at: now })
         .eq("tg_user_id", tgUserId);
-      await setOutreachButtons(cq.message.message_id, [
-        [{ text: action === "sent" ? "✅ Logged as sent · undo" : "⏭ Skipped · undo", data: `out:undo:${tgUserId}` }],
-      ]);
+      await setOutreachButtons(
+        msgId,
+        action === "sent" ? sentButtons(tgUserId) : [[{ text: "⏭ Skipped · undo", data: `out:undo:${tgUserId}` }]]
+      );
     } else if (action === "undo") {
       await supabase
         .from("outreach_contacts")
-        .update({ status: "digested", sent_at: null, updated_at: now })
+        .update({ status: "digested", sent_at: null, replied_at: null, followup_state: null, followup_kind: null, updated_at: now })
         .eq("tg_user_id", tgUserId);
-      await setOutreachButtons(cq.message.message_id, [
+      await setOutreachButtons(msgId, [
         [
           { text: "✅ Sent", data: `out:sent:${tgUserId}` },
           { text: "⏭ Skip", data: `out:skip:${tgUserId}` },
         ],
       ]);
+    } else if (action === "rep") {
+      await markReplied(tgUserId, now);
+      await setOutreachButtons(msgId, [[{ text: "💬 Replied logged · undo", data: `out:unrep:${tgUserId}` }]]);
+    } else if (action === "repl") {
+      // From the /replied list: don't touch the list message's buttons.
+      await markReplied(tgUserId, now);
+    } else if (action === "unrep") {
+      await supabase
+        .from("outreach_contacts")
+        .update({ replied_at: null, reply_note: null, followup_state: null, followup_kind: null, updated_at: now })
+        .eq("tg_user_id", tgUserId)
+        .in("followup_state", ["needs_draft", "pending_send"]);
+      await supabase.from("outreach_contacts").update({ replied_at: null, updated_at: now }).eq("tg_user_id", tgUserId).is("followup_state", null);
+      await setOutreachButtons(msgId, sentButtons(tgUserId));
+    } else if (action === "fsent") {
+      const { data: row } = await supabase.from("outreach_contacts").select("followup_state, followup_count").eq("tg_user_id", tgUserId).maybeSingle();
+      await supabase
+        .from("outreach_contacts")
+        .update({
+          followup_state: "done",
+          followup_sent_at: now,
+          followup_count: row?.followup_state === "done" ? row.followup_count : (row?.followup_count ?? 0) + 1,
+          updated_at: now,
+        })
+        .eq("tg_user_id", tgUserId);
+      await setOutreachButtons(msgId, [
+        [{ text: "✅ Follow-up logged · undo", data: `out:fundo:${tgUserId}` }],
+        [{ text: "💬 They replied again", data: `out:rep:${tgUserId}` }],
+      ]);
+    } else if (action === "fskip") {
+      await supabase.from("outreach_contacts").update({ followup_state: "skipped", updated_at: now }).eq("tg_user_id", tgUserId);
+      await setOutreachButtons(msgId, [[{ text: "⏭ Skipped · undo", data: `out:fundo:${tgUserId}` }]]);
+    } else if (action === "fundo") {
+      const { data: row } = await supabase.from("outreach_contacts").select("followup_state, followup_count").eq("tg_user_id", tgUserId).maybeSingle();
+      await supabase
+        .from("outreach_contacts")
+        .update({
+          followup_state: "delivered",
+          followup_sent_at: null,
+          followup_count: row?.followup_state === "done" ? Math.max(0, (row.followup_count ?? 1) - 1) : (row?.followup_count ?? 0),
+          updated_at: now,
+        })
+        .eq("tg_user_id", tgUserId);
+      await setOutreachButtons(msgId, followupButtons(tgUserId));
     }
   } catch (err) {
     console.error("handleOutreachCallback", err);
@@ -750,6 +900,7 @@ type ParsedCommand =
   | { kind: "block"; phrase: string }
   | { kind: "unblock"; phrase: string }
   | { kind: "list_blocked" }
+  | { kind: "replied" }
   | { kind: "help" }
   | { kind: "unknown" };
 
@@ -779,6 +930,8 @@ function parseCommand(text: string): ParsedCommand {
 
   if (/^\/keywords\s*$/i.test(trimmed)) return { kind: "list_keywords" };
 
+  if (/^\/replied\s*$/i.test(trimmed)) return { kind: "replied" };
+
   const blockMatch = trimmed.match(/^\/block\s+([\s\S]+)$/i);
   if (blockMatch) return { kind: "block", phrase: blockMatch[1].trim() };
 
@@ -805,6 +958,7 @@ const HELP_TEXT = [
   "/block <text> — never alert on job posts containing this, e.g. /block doctor anywhere",
   "/unblock <text> — stop blocking it",
   "/blocked — list blocked phrases",
+  "/replied — GP MediList: mark which sent leads replied to you",
 ].join("\n");
 
 // ---------------------------------------------------------------------
@@ -839,6 +993,9 @@ async function handleCommand(parsed: ParsedCommand) {
       break;
     case "list_keywords":
       await listJobKeywords();
+      break;
+    case "replied":
+      await listRepliable();
       break;
     case "block":
       await addBlockedPhrase(parsed.phrase);
@@ -923,6 +1080,7 @@ async function handleMessage(message: any) {
 
   const parsed = parseCommand(message.text);
   try {
+    if (message.reply_to_message && (await handleOutreachNote(message))) return;
     if (parsed.kind !== "unknown") {
       await handleCommand(parsed);
       return;
@@ -1114,45 +1272,43 @@ async function handleCallback(cq: any) {
 
 const POLL_LOCK_STALE_MS = 20 * 1000;
 
-// Atomically claims the poll lock, returning the last processed update id
-// — or null if another invocation is already mid-poll and the lock isn't
-// stale yet, meaning the caller should just skip this tick. Telegram's
-// getUpdates doesn't "consume" an update until you ack it with a higher
-// offset, so without this, two overlapping invocations (which become
-// likely once the cron interval is only a few seconds) could both read
-// the same not-yet-advanced offset, both receive the same update from
-// Telegram, and both process/reply to it — a run that crashes before
-// releasing the lock self-heals once locked_at is older than this.
-async function claimPollLock(): Promise<number | null> {
-  const staleBefore = new Date(Date.now() - POLL_LOCK_STALE_MS).toISOString();
-  const { data, error } = await supabase
+async function getOffset(): Promise<number> {
+  const { data } = await supabase.from("telegram_poll_state").select("last_update_id").eq("id", 1).maybeSingle();
+  return data?.last_update_id ?? 0;
+}
+
+async function setOffset(id: number) {
+  await supabase.from("telegram_poll_state").upsert({ id: 1, last_update_id: id, updated_at: new Date().toISOString() });
+}
+
+// Claims the single poll lock via a conditional UPDATE (atomic at the row
+// level: two concurrent calls can't both see locked_at as free), so
+// overlapping cron-triggered invocations don't process the same Telegram
+// update twice. Returns false if another invocation currently holds it.
+async function acquirePollLock(): Promise<boolean> {
+  const staleCutoff = new Date(Date.now() - POLL_LOCK_STALE_MS).toISOString();
+  const { data } = await supabase
     .from("telegram_poll_state")
     .update({ locked_at: new Date().toISOString() })
     .eq("id", 1)
-    .or(`locked_at.is.null,locked_at.lt.${staleBefore}`)
-    .select("last_update_id")
-    .maybeSingle();
-  if (error) throw error;
-  return data ? data.last_update_id ?? 0 : null;
+    .or(`locked_at.is.null,locked_at.lt.${staleCutoff}`)
+    .select("id");
+  return (data?.length ?? 0) > 0;
 }
 
-async function releasePollLock(id: number) {
-  await supabase
-    .from("telegram_poll_state")
-    .update({ last_update_id: id, locked_at: null, updated_at: new Date().toISOString() })
-    .eq("id", 1);
+async function releasePollLock() {
+  await supabase.from("telegram_poll_state").update({ locked_at: null }).eq("id", 1);
 }
 
 async function pollOnce(): Promise<number> {
-  const offset = await claimPollLock();
-  if (offset === null) return 0; // another invocation is still in flight
+  if (!(await acquirePollLock())) return 0;
 
   try {
+    const offset = await getOffset();
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=${offset + 1}&timeout=0`);
     const data = await res.json();
     if (!data.ok) {
       console.error("getUpdates failed", data);
-      await releasePollLock(offset);
       return 0;
     }
 
@@ -1177,12 +1333,13 @@ async function pollOnce(): Promise<number> {
       }
     }
 
-    const maxId = updates.length > 0 ? Math.max(...updates.map((u: any) => u.update_id)) : offset;
-    await releasePollLock(maxId);
+    if (updates.length > 0) {
+      const maxId = Math.max(...updates.map((u: any) => u.update_id));
+      await setOffset(maxId);
+    }
     return updates.length;
-  } catch (err) {
-    await releasePollLock(offset);
-    throw err;
+  } finally {
+    await releasePollLock();
   }
 }
 
