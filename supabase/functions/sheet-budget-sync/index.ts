@@ -1,23 +1,29 @@
-// Supabase Edge Function: two-way sync between a Google Sheet and the
-// expenses app's budget.
-//   - Pulls the current month's budget out of the sheet (cell R15) and
-//     writes it into app_state.monthlyBudget, so the number entered in
-//     the sheet is the one the app (and budget-alert) actually uses.
+// Supabase Edge Function: two-way sync between Google Sheets and the
+// expenses app's budgets.
+//   - Pulls the current month's personal budget out of the Accounts sheet
+//     (cell R15) and writes it into app_state.monthlyBudget, so the number
+//     entered in the sheet is the one the app (and budget-alert) actually uses.
+//   - Pulls the combined household budget out of the Household Expenses
+//     sheet (Summary!B1, itself a live formula from TeoLoh) and writes it
+//     into app_state.combinedMonthlyBudget, so the household budget follows
+//     TeoLoh's fixed costs without a manual update.
 //   - Pushes the current month's total spend (computed from app_state,
-//     same as budget-alert) back into the sheet (cell R16), so the sheet
-//     always shows an up-to-date spent figure without manual entry.
+//     same as budget-alert) back into the Accounts sheet (cell R16), so the
+//     sheet always shows an up-to-date spent figure without manual entry.
 //
-// The sheet gets a new tab every month with no fixed naming convention,
-// but new tabs are always added as the leftmost tab — so this always
-// reads/writes the leftmost (index 0) tab rather than trying to guess a
-// tab name from the current date. R15/R16 are in the same position on
-// every monthly tab.
+// The Accounts sheet gets a new tab every month with no fixed naming
+// convention, but new tabs are always added as the leftmost tab — so this
+// always reads/writes the leftmost (index 0) tab rather than trying to
+// guess a tab name from the current date. R15/R16 are in the same position
+// on every monthly tab. The Household sheet has a fixed "Summary" tab, so
+// that read is by tab name.
 //
 // Auth is via a Google service account (not your own Google login) so
 // this can run unattended on a schedule: the sheet is shared with the
 // service account's email as an EDITOR (view-only isn't enough now that
 // this writes R16), and the account's private key is used to mint a
-// short-lived access token on each run.
+// short-lived access token on each run. The service account is already
+// an editor on both sheets.
 //
 // Meant to be triggered on a schedule by a Database > Cron Job calling
 // this via pg_net, same as budget-alert — see that function's header
@@ -30,8 +36,16 @@
 //   GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY  - "private_key" from the same
 //                                          JSON key file, including the
 //                                          -----BEGIN/END PRIVATE KEY----- lines
-//   GOOGLE_SHEET_ID                     - the id from the sheet's URL
+//   GOOGLE_SHEET_ID                     - the Accounts sheet id from the
+//                                          sheet's URL
 //                                          (docs.google.com/spreadsheets/d/<this>/edit)
+//   GOOGLE_HOUSEHOLD_SHEET_ID           - the Household Expenses sheet id
+//                                          (same URL pattern). Optional:
+//                                          if it isn't set, the combined
+//                                          budget sync is skipped and the
+//                                          personal sync still runs, so
+//                                          deploying before setting the
+//                                          secret can't break anything.
 //   WILLOW_USER_ID, DB_WEBHOOK_SECRET   - reuse the same values already
 //                                          set for the other functions
 
@@ -41,11 +55,14 @@ import { JWT } from "npm:google-auth-library@9";
 const USER_ID = Deno.env.get("WILLOW_USER_ID")!;
 const WEBHOOK_SECRET = Deno.env.get("DB_WEBHOOK_SECRET")!;
 const SHEET_ID = Deno.env.get("GOOGLE_SHEET_ID")!;
+const HOUSEHOLD_SHEET_ID = Deno.env.get("GOOGLE_HOUSEHOLD_SHEET_ID");
 const SERVICE_ACCOUNT_EMAIL = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_EMAIL")!;
 const SERVICE_ACCOUNT_KEY = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY")!.replace(/\\n/g, "\n");
 
 const BUDGET_CELL = "R15";
 const SPENT_CELL = "R16";
+const HOUSEHOLD_BUDGET_TAB = "Summary";
+const HOUSEHOLD_BUDGET_CELL = "B1";
 
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -60,8 +77,8 @@ async function getAccessToken(): Promise<string> {
   return token;
 }
 
-async function getLeftmostTabTitle(accessToken: string): Promise<string> {
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties(title,index)`;
+async function getLeftmostTabTitle(accessToken: string, sheetId: string): Promise<string> {
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties(title,index)`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new Error(`sheets.get failed: ${res.status} ${await res.text()}`);
   const data = await res.json();
@@ -71,9 +88,9 @@ async function getLeftmostTabTitle(accessToken: string): Promise<string> {
   return sheets[0].title;
 }
 
-async function getCellValue(accessToken: string, tabTitle: string, cell: string): Promise<number | null> {
+async function getCellValue(accessToken: string, sheetId: string, tabTitle: string, cell: string): Promise<number | null> {
   const range = `${tabTitle}!${cell}`;
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new Error(`values.get failed: ${res.status} ${await res.text()}`);
   const data = await res.json();
@@ -81,9 +98,9 @@ async function getCellValue(accessToken: string, tabTitle: string, cell: string)
   return typeof raw === "number" ? raw : null;
 }
 
-async function setCellValue(accessToken: string, tabTitle: string, cell: string, value: number): Promise<void> {
+async function setCellValue(accessToken: string, sheetId: string, tabTitle: string, cell: string, value: number): Promise<void> {
   const range = `${tabTitle}!${cell}`;
-  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`;
   const res = await fetch(url, {
     method: "PUT",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
@@ -123,8 +140,8 @@ Deno.serve(async (req) => {
   let budget: number | null;
   try {
     accessToken = await getAccessToken();
-    tabTitle = await getLeftmostTabTitle(accessToken);
-    budget = await getCellValue(accessToken, tabTitle, BUDGET_CELL);
+    tabTitle = await getLeftmostTabTitle(accessToken, SHEET_ID);
+    budget = await getCellValue(accessToken, SHEET_ID, tabTitle, BUDGET_CELL);
   } catch (err) {
     console.error(err);
     return new Response(`error reading sheet: ${err}`, { status: 500 });
@@ -159,9 +176,48 @@ Deno.serve(async (req) => {
     notes.push(`budget updated to ${budget}`);
   }
 
+  if (!HOUSEHOLD_SHEET_ID) {
+    notes.push("GOOGLE_HOUSEHOLD_SHEET_ID not set — skipping combined budget sync");
+  } else {
+    let combinedBudget: number | null;
+    try {
+      combinedBudget = await getCellValue(accessToken, HOUSEHOLD_SHEET_ID, HOUSEHOLD_BUDGET_TAB, HOUSEHOLD_BUDGET_CELL);
+    } catch (err) {
+      console.error(err);
+      return new Response(`${notes.join("; ")}; error reading household sheet: ${err}`, { status: 500 });
+    }
+
+    const { data: autoRow, error: autoError } = await supabase
+      .from("app_state")
+      .select("state")
+      .eq("user_id", USER_ID)
+      .eq("app", "expenses_automation")
+      .maybeSingle();
+    if (autoError) {
+      console.error(autoError);
+      return new Response(`${notes.join("; ")}; error reading expenses_automation app_state`, { status: 500 });
+    }
+
+    const autoState = autoRow?.state ?? {};
+    if (combinedBudget === null) {
+      notes.push("Household Summary!B1 is empty or non-numeric — leaving combined budget untouched");
+    } else if (autoState.combinedMonthlyBudget === combinedBudget) {
+      notes.push(`combined budget unchanged (${combinedBudget})`);
+    } else {
+      const { error: autoUpsertError } = await supabase
+        .from("app_state")
+        .upsert({ user_id: USER_ID, app: "expenses_automation", state: { ...autoState, combinedMonthlyBudget: combinedBudget }, updated_at: new Date().toISOString() });
+      if (autoUpsertError) {
+        console.error(autoUpsertError);
+        return new Response(`${notes.join("; ")}; error writing expenses_automation app_state`, { status: 500 });
+      }
+      notes.push(`combined budget updated to ${combinedBudget}`);
+    }
+  }
+
   const spent = monthlySpend(state.expenses);
   try {
-    await setCellValue(accessToken, tabTitle, SPENT_CELL, spent);
+    await setCellValue(accessToken, SHEET_ID, tabTitle, SPENT_CELL, spent);
     notes.push(`${SPENT_CELL} set to ${spent}`);
   } catch (err) {
     console.error(err);
