@@ -395,6 +395,7 @@ main {
 .pill.today, .pill.trip { background: #e5f2e4; color: #3d6848; }
 .pill.clinic { background: #e6e8f6; color: #596390; }
 .pill.birthday { background: #f8e8c4; color: #8a6420; }
+.pill.family { background: #e4eaf3; color: #3e5674; }
 .pill.home, .pill.bill { background: #f6e7d4; color: #8a5a2a; }
 .pill.note { background: #f0ebe3; color: var(--soft); }
 
@@ -510,6 +511,7 @@ main {
   padding: 12px;
   box-shadow: var(--shadow);
 }
+.family-note { margin: 0 2px 12px; color: var(--soft); font-size: 13px; }
 .footnote { margin: 14px 4px 0; }
 .quiet-card { margin-top: 12px; }
 .plain, .trip-lines { list-style: none; margin: 8px 0 0; padding: 0; }

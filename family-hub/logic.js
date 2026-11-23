@@ -206,7 +206,7 @@
     return item.where || item.rruleNote || "";
   }
 
-  function eventsOn(state, iso) {
+  function eventsOn(state, iso, extras) {
     const events = [];
     for (const item of state.recurring || []) {
       if (!occursOn(item, iso)) continue;
@@ -260,14 +260,27 @@
         });
       }
     }
+    for (const extra of extras || []) {
+      if (!extra || extra.date !== iso || !extra.title) continue;
+      const when = extra.allDay || !extra.start ? "All day" : extra.end ? `${extra.start}–${extra.end}` : String(extra.start);
+      events.push({
+        id: extra.id || `family:${iso}:${extra.title}`,
+        source: "family",
+        sourceId: extra.id || extra.title,
+        title: extra.title,
+        subtitle: when,
+        kind: "family",
+        date: iso,
+      });
+    }
     return events;
   }
 
-  function homeAgenda(state, today) {
+  function homeAgenda(state, today, extras) {
     const end = addDays(weekStart(today), 6);
     const out = [];
     for (let iso = today; iso <= end; iso = addDays(iso, 1)) {
-      for (const ev of eventsOn(state, iso)) {
+      for (const ev of eventsOn(state, iso, extras)) {
         const rec = (state.recurring || []).find((r) => r.id === ev.sourceId);
         if (ev.source === "recurring" && rec && /\bweekdays?\b/i.test(rec.rruleNote || "") && iso !== today) continue;
         out.push(ev);
@@ -367,13 +380,17 @@
     const source = hub || { trips: [], keyDates: [], recurring: [] };
     const personal = expenseRows(expensesState);
     const excluded = excludedRows(autoState);
-    const budgetRaw = expensesState ? expensesState.monthlyBudget : null;
-    const budget = budgetRaw === null || budgetRaw === undefined || budgetRaw === "" ? null : round2(asAmount(budgetRaw));
     const month = monthKey(today);
-    const monthExpenses = personal.filter((row) => monthKey(row.date) === month);
-    const spent = round2(monthExpenses.reduce((sum, row) => sum + row.amount, 0));
+    // Household budget card mirrors expense-tracker's Combined tab month
+    // total: excludedExpenses with type "combined" in this calendar month.
+    // The budget figure is combinedMonthlyBudget (Household Expenses
+    // Summary!B1), not the personal monthlyBudget.
+    const combinedRows = excluded.filter((row) => row.type === "combined" && monthKey(row.date) === month);
+    const spent = round2(combinedRows.reduce((sum, row) => sum + row.amount, 0));
+    const budgetRaw = autoState ? autoState.combinedMonthlyBudget : null;
+    const budget = budgetRaw === null || budgetRaw === undefined || budgetRaw === "" ? null : round2(asAmount(budgetRaw));
     const totals = new Map();
-    for (const row of monthExpenses) {
+    for (const row of combinedRows) {
       const name = row.category || "Uncategorised";
       totals.set(name, (totals.get(name) || 0) + row.amount);
     }
@@ -449,12 +466,6 @@
         charge: lastChargeFor(item, expensesState, autoState),
       }));
 
-    const sharedRows = excluded.filter((row) => row.type === "combined" && monthKey(row.date) === month);
-    const sharedSpent = round2(sharedRows.reduce((sum, row) => sum + row.amount, 0));
-    const sharedBudgetRaw = autoState ? autoState.combinedMonthlyBudget : null;
-    const sharedBudget =
-      sharedBudgetRaw === null || sharedBudgetRaw === undefined || sharedBudgetRaw === "" ? null : round2(asAmount(sharedBudgetRaw));
-
     return {
       month,
       monthTitle: monthTitle(today),
@@ -473,7 +484,6 @@
       },
       otherTrips: [...otherMap.values()].sort((a, b) => b.total - a.total),
       bills: datedBills.concat(monthlyBills),
-      shared: sharedRows.length || sharedBudget !== null ? { spent: sharedSpent, budget: sharedBudget } : null,
       foundExpenses: Boolean(expensesState),
       foundAutomation: Boolean(autoState),
     };

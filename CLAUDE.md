@@ -374,19 +374,22 @@ without the user needing to re-explain anything — read this first.
   Lists, milestones, vaccines, notes, baby prep, key dates, trips, and
   doc links are edited in the app and written only to that row: each save
   `pullState`s `"familyhub"`, applies the one change, then
-  `pushStateNow`. The Money tab is read-only against Penny's expense
+  `pushStateNow`.   The Money tab is read-only against Penny's expense
   data. It `pullState`s `"expenses"` and `"expenses_automation"` and
-  never pushes them. The budget bar is `expenses.monthlyBudget` against
-  this Singapore calendar month's `expenses.expenses` (the same sum as
-  expense-tracker's `monthlyTotalSpent`). Category bars use that same
-  list. Trip spend is separate: `excludedExpenses` with `type === "trip"`
-  (plus any trip-typed rows that landed in `expenses`), matched to the
-  current trip via `tripRules` / the row's `trip` label, not estimated.
-  Bill amounts render only when a real non-trip charge matches; otherwise
-  the row is a name and a date. No new secrets, cron jobs, or Edge
-  Functions. Calendar is hub data plus a link to Google Calendar — no
-  OAuth. Zhen Ling does not have her own login yet. Handover for later
-  edits: `family-hub/HANDOVER.md`.
+  never pushes them. The budget bar is the combined household month:
+  `excludedExpenses` with `type === "combined"` in the current Singapore
+  calendar month, against `expenses_automation.combinedMonthlyBudget`
+  (Household Expenses Summary!B1 via `sheet-budget-sync`). Personal
+  `monthlyBudget` is not shown. Category bars use those combined rows.
+  Trip spend stays separate (`type === "trip"`, matched via `tripRules`
+  / the row's `trip` label). If `combinedMonthlyBudget` is null the card
+  says so. Bill amounts render only when a real non-trip charge matches.
+  Home and Calendar also merge the Google Family calendar for the next
+  14 days via the on-demand `family-calendar` Edge Function (user JWT,
+  no cron). The secret iCal URL is `FAMILY_CAL_ICS_URL` and is never
+  committed; until it is set the page says the Family calendar is not
+  connected. No OAuth client. Zhen Ling does not have her own login yet.
+  Handover for later edits: `family-hub/HANDOVER.md`.
 
 ## Sync architecture (shared/)
 

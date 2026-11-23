@@ -71,7 +71,7 @@ test("Japan hero counts six days on the mockup week", () => {
   assert.equal(logic.featuredTrip(seed, "2026-12-12"), null);
 });
 
-test("money uses the personal monthly budget and keeps trip spend separate", () => {
+test("money uses the combined household budget and keeps trip spend separate", () => {
   const expenses = {
     monthlyBudget: 6319.189999999999,
     expenses: [
@@ -92,18 +92,21 @@ test("money uses the personal monthly budget and keeps trip spend separate", () 
       { id: "j2", date: "2026-11-14", amount: 10, type: "trip", trip: "Japan Dec 2026", category: "Travel", note: "SINGLIFE booking 5D4K3Y" },
       { id: "k1", date: "2026-11-14", amount: 80, type: "trip", trip: "Korea Feb 2027", category: "Travel", note: "hotel" },
       { id: "empress", date: "2026-11-09", amount: 383, type: "combined", category: "Food", note: "EMPRESS porridge" },
+      { id: "groceries", date: "2026-11-18", amount: 42.5, type: "combined", category: "Food", note: "fairprice" },
+      { id: "last-month", date: "2026-10-18", amount: 500, type: "combined", category: "Food", note: "old" },
       { id: "mcst", date: "2026-11-01", amount: 70, type: "fixed", category: "Bills", note: "MCST quarterly" },
       { id: "wife", date: "2026-11-03", amount: 40, type: "wife_personal", category: "Shopping", note: "personal" },
     ],
   };
 
   const summary = logic.summarizeMoney(expenses, automation, TODAY, seed);
-  assert.equal(summary.budget, 6319.19);
-  assert.equal(summary.spent, 147.08);
-  assert.equal(summary.remaining, 6172.11);
+  assert.equal(summary.budget, 3502.78);
+  assert.notEqual(summary.budget, 6319.19);
+  assert.equal(summary.spent, 425.5);
+  assert.equal(summary.remaining, 3077.28);
   assert.deepEqual(
-    summary.categories.map((row) => row.name),
-    ["Food", "Shopping", "Travel"]
+    summary.categories.map((row) => [row.name, row.amount]),
+    [["Food", 425.5]]
   );
   assert.equal(summary.trip.total, 75.5);
   assert.equal(summary.trip.title, "Japan trip spend");
@@ -112,8 +115,6 @@ test("money uses the personal monthly budget and keeps trip spend separate", () 
     summary.otherTrips.map((row) => row.label),
     ["Korea Feb 2027"]
   );
-  assert.equal(summary.shared.spent, 383);
-  assert.equal(summary.shared.budget, 3502.78);
 
   const byTitle = Object.fromEntries(summary.bills.map((bill) => [bill.id, bill]));
   assert.equal(byTitle["empress-renew"].charge.amount, 383);
@@ -124,17 +125,33 @@ test("money uses the personal monthly budget and keeps trip spend separate", () 
   assert.equal(byTitle["icloud-renew"].charge, null);
   assert.equal(byTitle["geneco-monthly"].charge, null);
   assert.equal(byTitle["simba-monthly"].charge, null);
-  assert.equal(logic.formatMoney(summary.budget), "S$6,319.19");
+  assert.equal(logic.formatMoney(summary.budget), "S$3,502.78");
   assert.equal(logic.formatMoney(-2), "−S$2.00");
 });
 
 test("empty trip data stays empty instead of inventing a figure", () => {
-  const summary = logic.summarizeMoney({ monthlyBudget: null, expenses: [] }, { excludedExpenses: [], tripRules: [] }, TODAY, seed);
+  const summary = logic.summarizeMoney({ monthlyBudget: 1000, expenses: [{ id: "p", date: "2026-11-02", amount: 80, category: "Food" }] }, { excludedExpenses: [], tripRules: [] }, TODAY, seed);
   assert.equal(summary.budget, null);
   assert.equal(summary.spent, 0);
+  assert.deepEqual(summary.categories, []);
   assert.equal(summary.trip.emptyMessage, "No trip-type entries found in expenses_automation.");
   assert.equal(summary.trip.total, 0);
   assert.equal(summary.bills.every((bill) => bill.charge === null), true);
+});
+
+test("family calendar events join this week without replacing hub items", () => {
+  const extras = [
+    { id: "swim", title: "Swimming", date: "2026-11-25", allDay: false, start: "16:00", end: "17:00" },
+    { id: "later", title: "Too far", date: "2026-12-20", allDay: true },
+  ];
+  const home = logic.homeAgenda(seed, TODAY, extras);
+  const swim = home.find((event) => event.title === "Swimming");
+  assert.ok(swim);
+  assert.equal(swim.date, "2026-11-25");
+  assert.equal(swim.kind, "family");
+  assert.equal(swim.subtitle, "16:00–17:00");
+  assert.equal(home.some((event) => event.title === "Too far"), false);
+  assert.equal(home.filter((event) => event.sourceId === "childcare-dropoff").length, 1);
 });
 
 test("doc links only allow http(s)", () => {
