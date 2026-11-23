@@ -22,6 +22,10 @@ let saveChain = Promise.resolve();
 let moneyStatus = "loading";
 let expensesState = null;
 let autoState = null;
+let familyEvents = [];
+let familyStatus = "loading";
+let familyFrom = "";
+let familyLoadingFrom = "";
 let toastTimer = 0;
 
 const editor = { mode: "", id: "", listId: "" };
@@ -146,6 +150,8 @@ async function boot(user) {
     state = normalize(loadLocal() || clone(SEED));
     editsPaused = false;
     moneyStatus = "signed-out";
+    familyStatus = "signed-out";
+    familyFrom = today();
     persistLocal();
     render();
     return;
@@ -174,6 +180,7 @@ async function boot(user) {
   }
   render();
   loadMoney();
+  loadFamily(today());
 }
 
 async function loadMoney() {
@@ -264,6 +271,7 @@ function pencilSvg() {
 function dotColor(kind) {
   const colors = {
     routine: "#e0a15a",
+    family: "#6d88a8",
     clinic: "#7f8cc4",
     birthday: "#e0a15a",
     trip: "#6e9a78",
@@ -288,7 +296,7 @@ function weekStrip(start, selected) {
     const label = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][i];
     const dots = [];
     const seen = new Set();
-    for (const event of L.eventsOn(state, iso)) {
+    for (const event of L.eventsOn(state, iso, familyEvents)) {
       const color = dotColor(event.kind);
       if (seen.has(color)) continue;
       seen.add(color);
@@ -313,6 +321,7 @@ function whenBlock(iso, day) {
 }
 
 function pillFor(event, day) {
+  if (event.kind === "family") return ["family", "Family"];
   if (event.kind === "routine") return ["today", event.date === day ? "Today" : "Drop-off"];
   if (event.kind === "clinic") return ["clinic", "Clinic"];
   if (event.kind === "birthday") return ["birthday", "Birthday"];
@@ -370,7 +379,7 @@ function membersHtml() {
 function renderHome(day) {
   const week = L.weekStart(day);
   const selected = ui.homeDay || day;
-  const events = ui.homeDay ? L.eventsOn(state, ui.homeDay) : L.homeAgenda(state, day);
+  const events = ui.homeDay ? L.eventsOn(state, ui.homeDay, familyEvents) : L.homeAgenda(state, day, familyEvents);
   const hero = L.tripHero(L.featuredTrip(state, day), day);
   const dates = L.upcomingKeyDates(state, day, 4);
   const list = L.shoppingList(state);
@@ -407,6 +416,7 @@ function renderHome(day) {
     </header>
     ${heroHtml}
     ${weekStrip(week, selected)}
+    ${familyNote()}
     ${sectionHead(ui.homeDay ? L.formatWeekdayDayMonth(ui.homeDay) : "Today & coming up", filterNote)}
     ${agendaCard(events, day)}
     ${sectionHead("Key dates", '<span class="aside">Upcoming</span>', plusButton("keyDate"))}
@@ -417,12 +427,14 @@ function renderHome(day) {
 
 function renderCalendar(day) {
   const start = ui.calWeek || L.weekStart(day);
+  const weekEndForFetch = L.addDays(start, 6);
+  if (!familyWindowCovers(familyFrom, start, weekEndForFetch)) loadFamily(start);
   const selected = ui.calDay;
   const events = [];
   for (let i = 0; i < 7; i += 1) {
     const iso = L.addDays(start, i);
     if (selected && iso !== selected) continue;
-    events.push(...L.eventsOn(state, iso));
+    events.push(...L.eventsOn(state, iso, familyEvents));
   }
   const weekEnd = L.addDays(start, 6);
   const later = (state.keyDates || [])
@@ -454,11 +466,60 @@ function renderCalendar(day) {
     </div>
     ${weekStrip(start, selected || (day >= start && day <= weekEnd ? day : ""))}
     <a class="calendar-link" href="${CALENDAR_URL}" target="_blank" rel="noopener noreferrer">Open Google Calendar</a>
+    ${familyNote()}
     ${sectionHead(selected ? L.formatWeekdayDayMonth(selected) : "This week", selected ? '<button type="button" class="text-btn" data-action="clear-cal">Whole week</button>' : "")}
     ${agendaCard(events, day)}
     ${sectionHead("Key dates", "", plusButton("keyDate"))}
     ${dateCard(soon) || '<div class="card empty-card">Nothing further in the next year.</div>'}
     ${far.length ? `${sectionHead("Further ahead", "")}${dateCard(far)}` : ""}`;
+}
+
+function familyWindowCovers(from, start, end) {
+  if (!from) return false;
+  return start >= from && end <= L.addDays(from, 13);
+}
+
+function familyNote() {
+  if (familyStatus === "ready") return "";
+  const text =
+    familyStatus === "loading"
+      ? "Checking the Family calendar…"
+      : familyStatus === "unavailable"
+        ? "Couldn't reach the Family calendar."
+        : "Family calendar not connected yet.";
+  return `<p class="family-note">${esc(text)}</p>`;
+}
+
+async function loadFamily(from) {
+  if (!from) return;
+  if (familyLoadingFrom === from) return;
+  if (familyFrom === from && (familyStatus === "ready" || familyStatus === "disconnected" || familyStatus === "signed-out")) return;
+  familyLoadingFrom = from;
+  if (!window.SupaSync || !SupaSync.configured || !currentUser) {
+    familyStatus = "signed-out";
+    familyEvents = [];
+    familyFrom = from;
+    familyLoadingFrom = "";
+    render();
+    return;
+  }
+  familyStatus = "loading";
+  const result = await SupaSync.invokeFunction("family-calendar", { from });
+  if (familyLoadingFrom !== from && familyFrom && familyFrom !== from) return;
+  const data = result && result.ok ? result.data : null;
+  if (!result || !result.ok) {
+    familyStatus = "unavailable";
+    familyEvents = [];
+  } else if (!data || data.connected === false) {
+    familyStatus = "disconnected";
+    familyEvents = [];
+  } else {
+    familyStatus = "ready";
+    familyEvents = Array.isArray(data.events) ? data.events : [];
+  }
+  familyFrom = from;
+  familyLoadingFrom = "";
+  render();
 }
 
 function moneyMessage() {
@@ -471,14 +532,14 @@ function renderMoney(day) {
   const summary = moneyStatus === "ready" ? L.summarizeMoney(expensesState, autoState, day, state) : null;
   const bills = (summary || L.summarizeMoney({ monthlyBudget: null, expenses: [] }, { excludedExpenses: [] }, day, state)).bills;
   let budgetHtml;
-  if (!summary || !summary.foundExpenses) {
-    budgetHtml = `<section class="card budget-card"><h2>${esc(L.monthTitle(day).replace(/\s+\d{4}$/, ""))} budget</h2><p class="empty-copy">${esc(moneyMessage())}</p></section>`;
+  if (!summary || !summary.foundAutomation) {
+    budgetHtml = `<section class="card budget-card"><h2>${esc(L.monthTitle(day).replace(/\s+\d{4}$/, ""))} budget</h2><p class="lede">Household spend · trip spend kept separate</p><p class="empty-copy">${esc(moneyMessage())}</p></section>`;
   } else if (summary.budget === null) {
     budgetHtml = `<section class="card budget-card">
       <h2>${esc(summary.monthTitle.replace(/\s+\d{4}$/, ""))} budget</h2>
-      <p class="lede">Personal spending · trip spend kept separate</p>
+      <p class="lede">Household spend · trip spend kept separate</p>
       <div class="figure">${esc(L.formatMoney(summary.spent))}</div>
-      <p class="empty-copy">No budget is set. Set one in the Money app. Spent ${esc(L.formatMoney(summary.spent))} so far this month.</p>
+      <p class="empty-copy">No combined budget is set. Spent ${esc(L.formatMoney(summary.spent))} of combined expenses so far this month.</p>
     </section>`;
   } else {
     const pct = summary.budget > 0 ? Math.min(100, (summary.spent / summary.budget) * 100) : 0;
@@ -486,7 +547,7 @@ function renderMoney(day) {
     const left = summary.remaining >= 0 ? `${L.formatMoney(summary.remaining)} left` : `${L.formatMoney(Math.abs(summary.remaining))} over`;
     budgetHtml = `<section class="card budget-card">
       <h2>${esc(summary.monthTitle.replace(/\s+\d{4}$/, ""))} budget</h2>
-      <p class="lede">Personal spending · trip spend kept separate</p>
+      <p class="lede">Household spend · trip spend kept separate</p>
       <div class="figure">${esc(L.formatMoney(summary.spent))}</div>
       <p class="figure-sub">spent of ${esc(L.formatMoney(summary.budget))}</p>
       <div class="track"><span class="${tone}" style="width:${pct}%"></span></div>
@@ -495,7 +556,7 @@ function renderMoney(day) {
   }
 
   let bars = "";
-  if (summary && summary.foundExpenses) {
+  if (summary && summary.foundAutomation) {
     bars = summary.categories.length
       ? `<div class="card bars">${summary.categories
           .map((row, index) => {
@@ -506,7 +567,7 @@ function renderMoney(day) {
             </div>`;
           })
           .join("")}</div>`
-      : '<div class="card empty-card">No personal expenses logged this month yet.</div>';
+      : '<div class="card empty-card">No combined expenses logged this month yet.</div>';
   }
 
   let tripHtml = "";
@@ -527,7 +588,7 @@ function renderMoney(day) {
           (line) => `<li><span>${esc(L.formatDayMonth(line.date))} · ${esc(line.category)}</span><b>${esc(L.formatMoney(line.amount))}</b></li>`
         )
         .join("")}</ul>
-      ${overlap ? `<p class="hero-note">${overlap} of these still sit in the personal expenses list, so they are also inside the budget above.</p>` : ""}
+      ${overlap ? `<p class="hero-note">${overlap} of these are still on the personal expenses list. They are not part of the household budget above.</p>` : ""}
     </section>`;
   }
 
@@ -558,13 +619,6 @@ function renderMoney(day) {
       : '<p class="empty-line">No bills or renewals in the next ten weeks.</p>'
   }</div>`;
 
-  const shared =
-    summary && summary.shared
-      ? `<p class="footnote">Shared cards this month: ${esc(L.formatMoney(summary.shared.spent))}${
-          summary.shared.budget !== null ? ` of ${esc(L.formatMoney(summary.shared.budget))}` : ""
-        }. Not included in the budget above.</p>`
-      : "";
-
   return `
     <header class="top">
       <p class="kicker">Loh Family Hub</p>
@@ -578,8 +632,7 @@ function renderMoney(day) {
     ${others}
     ${sectionHead("Upcoming bills & renewals", "", plusButton("keyDate"))}
     ${billHtml}
-    ${shared}
-    <p class="footnote">Synced from Penny's expense app. <a href="${MONEY_URL}">Edit in Money</a></p>`;
+    <p class="footnote">Synced from Penny's expense app. Combined spend only. <a href="${MONEY_URL}">Edit in Money</a></p>`;
 }
 
 function renderAnya(day) {

@@ -28,6 +28,9 @@ have her own login yet. See the end of this note before adding her.
 - `seed.js` — the starting hub document. Same object as the SQL below.
 - `logic.test.cjs` — checks the dates and the money rules.
   Run from the repo root: `node --test family-hub/logic.test.cjs`
+- `supabase/functions/family-calendar/` — on-demand Family calendar
+  read. `parse.ts` turns the iCal feed into events;
+  `node --experimental-strip-types --test supabase/functions/family-calendar/parse.test.ts`
 
 Shared code, unchanged by this app: `shared/supabase-config.js` and
 `shared/supabase-sync.js`. The public anon key in the config file is
@@ -497,28 +500,33 @@ to aim at the wrong item. Look up the id, as above.
 
 Money never writes. It only reads.
 
-The budget card is the personal monthly budget from `app = 'expenses'`:
+The budget card is the **combined household** budget, the same numbers
+as expense-tracker's Combined tab plus the household budget figure
+`sheet-budget-sync` stores:
 
-- Budget: `state.monthlyBudget`. If it is null, the card says no budget
-  is set. There is no stand-in figure.
-- Spent: sum of `state.expenses` whose `date` falls in the current
-  Singapore calendar month (`YYYY-MM`). This is the same sum as
-  `monthlyTotalSpent()` in `expense-tracker/script.js`.
-- Category bars: that same month's expenses, grouped by `category`.
-  Width is relative to the largest category. There are no per-category
-  budgets in the data, so the card does not invent them.
+- Spent: sum of `expenses_automation.excludedExpenses` whose `type` is
+  `"combined"` and whose `date` falls in the current Singapore calendar
+  month (`YYYY-MM`). That is the Combined tab's "this month" total
+  (`renderCombinedExpenseList`). Personal `expenses`, `type: "fixed"`,
+  `type: "wife_personal"`, and `type: "trip"` are not in this sum.
+  `expenses.monthlyBudget` is not shown.
+- Budget: `expenses_automation.combinedMonthlyBudget`. That field is
+  filled from Household Expenses sheet Summary!B1. If it is null or
+  missing, the card says no combined budget is set and still shows the
+  spent figure. It does not copy the personal budget across and it does
+  not estimate one.
+- Category bars: those same combined rows, grouped by `category`. Width
+  is relative to the largest category. There are no per-category
+  budgets, so the card does not invent them.
+- If the automation row cannot be read, the card says so. It does not
+  show S$0 as if that were a real month.
 
-`expenses_automation.excludedExpenses` is not part of that bar. Shared
-card spend (`type === "combined"`) is a footnote, with
-`combinedMonthlyBudget` when that field is a number. It is labelled as
-not included in the budget above.
-
-Trip spend is its own card:
+Trip spend is its own card, still outside the household total:
 
 - Rows with `type === "trip"` on `excludedExpenses`.
 - Any row on `expenses` that has `type === "trip"` or a `trip` label
-  (in case one was logged on the personal list). A line says so when
-  that happens, because those dollars are also inside the budget sum.
+  (in case one was logged on the personal list). A line says so. Those
+  dollars are not part of the household budget above.
 - The current trip is the hub trip that has not ended and starts within
   45 days (Japan, while that trip is close).
 - `expenses_automation.tripRules` has `{ from, to, label }`. The rule
@@ -553,13 +561,55 @@ https://weiliang93-stack.github.io/willow/money/ for editing.
 
 - Do not write `expenses`, `expenses_automation`, or any other app's row
   from this app or from a "helpful" SQL update.
-- Do not add a cron job, an Edge Function, a secret, or a Google
-  Calendar OAuth client. The free-tier function quota is already tight,
-  and the calendar tab is deliberately just a link.
+- Do not add a cron job, and do not add a Google Calendar OAuth client
+  or commit an iCal secret. The one new function, `family-calendar`,
+  runs only when the app asks, and the secret stays in Supabase.
 - Do not change Auth or Row Level Security in order to add Zhen Ling
   inside this piece of work. That is a later, separate change.
-- `teleconsult-check-roster` reads the clinic roster. It is not a family
-  calendar. Leave it alone.
+- `teleconsult-check-roster` reads the clinic roster. It is not the
+  Family calendar. Leave it alone.
+
+## Family calendar
+
+Home and Calendar show hub items (childcare, clinic, trips, key dates)
+and, when connected, events from the Google calendar named Family.
+
+The browser never sees the calendar address. It calls the Edge Function
+`family-calendar` with the signed-in session. The function reads the
+secret `FAMILY_CAL_ICS_URL`, fetches that iCal feed, and returns the
+next 14 days in Asia/Singapore. Hub items stay. Family events are extra
+rows tagged Family.
+
+Until the secret is set, the page says "Family calendar not connected
+yet." The "Open Google Calendar" link stays.
+
+### What to do by hand
+
+1. On the phone or computer, open Google Calendar → Settings → the
+   calendar named **Family** (not the main account calendar, and not
+   the clinic calendar).
+2. Under **Integrate calendar**, copy **Secret address in iCal format**.
+   It looks like `https://calendar.google.com/calendar/ical/.../basic.ics`.
+   Treat it like a password. Anyone with it can read that calendar.
+   Do not paste it into git, this file, or a chat.
+3. The function is already deployed with `verify_jwt` on. If you ever
+   need to deploy it again:
+
+   ```bash
+   supabase functions deploy family-calendar --project-ref fozipnpmmjmmlthkdplf
+   ```
+
+   Leave `verify_jwt` on. The function also checks the caller is
+   `WILLOW_USER_ID`, which is already set for the other functions.
+4. In the Supabase dashboard, Edge Functions → Secrets, add
+   `FAMILY_CAL_ICS_URL` with that secret address. There is no MCP or
+   repo path for secrets. Do not put it in `.env` in this repo.
+5. Open the hub, signed in, and pull to refresh. Family events for the
+   next 14 days should appear on Home and Calendar. Moving further than
+   that in the calendar asks for the next 14 days.
+
+The feed URL must be `https://calendar.google.com/...`. The function
+refuses anything else and does not echo the address back.
 
 ## Deploy
 
@@ -579,12 +629,15 @@ again.
   to write the seed over a row it might have missed. Reload on a working
   connection. If it keeps happening, read the row in SQL before doing
   anything else.
-- **Money has no figures.** He is signed out, the expense read failed, or
-  this month really has no personal expenses. The copy on the card says
-  which. Do not type sample numbers into the page.
-- **Money looks smaller than "household" spend.** The main bar is the
-  personal `expenses` budget, matching the expense app. Shared-card spend
-  and trip spend are outside that bar on purpose.
+- **Money has no figures.** He is signed out, the automation row could
+  not be read, or this month has no combined expenses. If the card says
+  no combined budget is set, `combinedMonthlyBudget` is null. Do not
+  type sample numbers into the page, and do not substitute
+  `monthlyBudget`.
+- **Family calendar not connected yet.** The function is not deployed,
+  or `FAMILY_CAL_ICS_URL` is not set. Hub items still show. Follow the
+  steps above. "Couldn't reach the Family calendar" means the fetch
+  failed after the secret was set.
 - **A SQL edit vanished.** An open phone saved afterwards. It does pull
   first, so this only happens if that save started from an older read.
   Edit again, or edit in the app.

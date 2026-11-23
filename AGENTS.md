@@ -11,8 +11,9 @@ After merge it is served at
 https://weiliang93-stack.github.io/willow/family-hub/
 
 Its Supabase row is `app_state.app = "familyhub"`. The Money tab is
-read-only: it may `pullState("expenses")` and
-`pullState("expenses_automation")` and must never push those rows, or any
-other app's row. Do not add cron jobs, Edge Functions, secrets, or Google
-Calendar OAuth for this app. Plain-English notes for later edits, including
-the seed SQL, are in `family-hub/HANDOVER.md`.
+read-only and shows combined household spend (`type === "combined"`)
+against `combinedMonthlyBudget`. It may `pullState("expenses")` and
+`pullState("expenses_automation")` and must never push those rows.
+`family-calendar` is an on-demand Edge Function; its iCal secret
+`FAMILY_CAL_ICS_URL` is never committed. No cron and no Google OAuth
+client. Plain-English notes: `family-hub/HANDOVER.md`.
