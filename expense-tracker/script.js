@@ -504,9 +504,14 @@ function renderCards() {
     }
 
     const { start, end } = getCardCycleRange(card, todayStr());
-    const spent = expenses
-      .filter((e) => e.cardId === card.id && e.date >= start && e.date <= end)
-      .reduce((sum, e) => sum + e.amount, 0);
+    // Card bars count every charge on the card, including excluded ones
+    // (e.g. wife's personal spending): the cap is about the card, not the
+    // budget. The monthly budget bar still uses `expenses` only.
+    const inCycle = (e) =>
+      e.cardId === card.id && e.date >= start && e.date <= end;
+    const spent =
+      expenses.filter(inCycle).reduce((sum, e) => sum + e.amount, 0) +
+      excludedExpenses.filter(inCycle).reduce((sum, e) => sum + e.amount, 0);
 
     const pct = card.cap > 0 ? Math.min((spent / card.cap) * 100, 100) : 0;
     let fillClass = "";
