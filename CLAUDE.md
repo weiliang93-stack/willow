@@ -366,6 +366,27 @@ without the user needing to re-explain anything — read this first.
   `localStorage` keys/Supabase session as either standalone page, so
   switching between "opened via clinic/" and "opened directly" is
   seamless.
+- **family-hub/** — Loh Family Hub, a phone-first home screen for the
+  week ahead, a family calendar, Anya, and baby #2 / household documents.
+  Tabs are Home, Calendar, Money, Anya, and Docs. Its own Supabase row is
+  `app_state.app = "familyhub"` (seeded once on first signed-in boot if
+  that row is missing; later edits never replace the whole row blindly).
+  Lists, milestones, vaccines, notes, baby prep, key dates, trips, and
+  doc links are edited in the app and written only to that row: each save
+  `pullState`s `"familyhub"`, applies the one change, then
+  `pushStateNow`. The Money tab is read-only against Penny's expense
+  data. It `pullState`s `"expenses"` and `"expenses_automation"` and
+  never pushes them. The budget bar is `expenses.monthlyBudget` against
+  this Singapore calendar month's `expenses.expenses` (the same sum as
+  expense-tracker's `monthlyTotalSpent`). Category bars use that same
+  list. Trip spend is separate: `excludedExpenses` with `type === "trip"`
+  (plus any trip-typed rows that landed in `expenses`), matched to the
+  current trip via `tripRules` / the row's `trip` label, not estimated.
+  Bill amounts render only when a real non-trip charge matches; otherwise
+  the row is a name and a date. No new secrets, cron jobs, or Edge
+  Functions. Calendar is hub data plus a link to Google Calendar — no
+  OAuth. Zhen Ling does not have her own login yet. Handover for later
+  edits: `family-hub/HANDOVER.md`.
 
 ## Sync architecture (shared/)
 

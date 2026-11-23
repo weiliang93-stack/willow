@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f3eee6">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Family Hub">
+  <title>Loh Family Hub</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500..650&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=20261123">
+</head>
+<body>
+  <div class="stage">
+    <header class="gate-brand" id="gateBrand">
+      <p class="kicker">Wei Liang &amp; Zhen Ling</p>
+      <h1>Loh Family Hub</h1>
+      <p class="gate-lead">This week, money, Anya, and home.</p>
+    </header>
+    <div id="authGate" class="auth-gate"></div>
+    <div id="app-content" class="app" style="display:none" hidden>
+      <main id="main"></main>
+      <nav class="tabbar" id="tabbar" aria-label="Sections">
+        <button type="button" data-tab="home">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5.2v-5.2h-3.6V21H5a1 1 0 0 1-1-1v-9.5Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+          <span>Home</span>
+        </button>
+        <button type="button" data-tab="calendar">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M8 3.5v3.2M16 3.5v3.2M4 10h16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <span>Calendar</span>
+        </button>
+        <button type="button" data-tab="money">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.2" y="6" width="17.6" height="12.2" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3.2 10.2h17.6" stroke="currentColor" stroke-width="1.7"/><path d="M7 14.2h4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <span>Money</span>
+        </button>
+        <button type="button" data-tab="anya">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.1" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5.6 19.4c1.3-3.1 3.5-4.6 6.4-4.6s5.1 1.5 6.4 4.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <span>Anya</span>
+        </button>
+        <button type="button" data-tab="docs">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.6h6.6L19 9v11a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4.6a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M13.4 3.8V9H19" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>
+          <span>Docs</span>
+        </button>
+      </nav>
+    </div>
+  </div>
+
+  <dialog id="editor" class="sheet">
+    <form id="editor-form">
+      <h3 id="editor-title">Edit</h3>
+      <div id="editor-fields"></div>
+      <div class="sheet-actions">
+        <button type="button" id="editor-delete" class="danger" hidden>Delete</button>
+        <span class="sheet-spacer"></span>
+        <button type="button" id="editor-cancel" class="ghost">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="../shared/supabase-config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="../shared/supabase-sync.js?v=20261123"></script>
+  <script src="seed.js?v=20261123"></script>
+  <script src="logic.js?v=20261123"></script>
+  <script src="script.js?v=20261123"></script>
+</body>
+</html>
