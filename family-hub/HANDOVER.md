@@ -500,9 +500,13 @@ to aim at the wrong item. Look up the id, as above.
 
 Money never writes. It only reads.
 
-The budget card is the **combined household** budget, the same numbers
-as expense-tracker's Combined tab plus the household budget figure
-`sheet-budget-sync` stores:
+The variable-spend card is labelled **Variable household spend**. It is
+the combined household month, the same numbers as expense-tracker's
+Combined tab plus the household budget figure `sheet-budget-sync`
+stores. Open the Household Expenses sheet from the card:
+https://docs.google.com/spreadsheets/d/13JBXgENPoin92lAHq7BAHTcvV2YMqEY9a-_wtywoLY0/edit
+Its Summary tab shows Household Budget (Monthly) and Spent This Month.
+The hub still computes those live rather than typing them in:
 
 - Spent: sum of `expenses_automation.excludedExpenses` whose `type` is
   `"combined"` and whose `date` falls in the current Singapore calendar
@@ -554,8 +558,235 @@ the latest matching charge, with the date it was charged. Rows with
 charge is not shown as Anya's renewal premium. If nothing matches, the
 row has a name and a date and no amount.
 
-The footer says "Synced from Penny's expense app" and links to
-https://weiliang93-stack.github.io/willow/money/ for editing.
+The footer says "Figures synced from the household expense log" and
+links to https://weiliang93-stack.github.io/willow/money/ to edit the
+variable spend. Do not put a person's or a bot's name on that line.
+
+### Fixed monthly costs
+
+These are not computed. They live on the `familyhub` row as
+`state.fixedCosts`, copied from TeoLoh Financial Planning, tab
+Saving/Spending, table Fixed Monthly Expense. The card links to
+https://docs.google.com/spreadsheets/d/1JboHp21d8kCjBpLLxrCV0Q1Ok5hgbrSLYlxK3yb4tkY/edit
+
+```json
+{
+  "source": "TeoLoh Financial Planning",
+  "asOf": "2026-01-15",
+  "items": [
+    { "name": "Example rent", "amount": 1, "note": "fake" },
+    { "name": "Example levy", "amount": 2 }
+  ],
+  "total": 3,
+  "monthlyContribution": 4,
+  "householdFixedCosts": 5,
+  "variableAllocations": { "Example groceries": 6 }
+}
+```
+
+`variableAllocations` may be a number or an object of name to amount.
+If `fixedCosts` is missing, the card says "Fixed costs not loaded yet"
+and still shows the sheet link. The seed does not include this object.
+Do not commit real amounts. Editing an item in the app rewrites only
+`familyhub`, and sets `total` to the sum of the items. The other
+summary fields stay as they were loaded.
+
+Replace the whole object (fake numbers only):
+
+```sql
+update app_state
+set state = jsonb_set(
+      state,
+      '{fixedCosts}',
+      '{
+        "source": "TeoLoh Financial Planning",
+        "asOf": "2026-01-15",
+        "items": [
+          {"name": "Example rent", "amount": 1, "note": "fake"},
+          {"name": "Example levy", "amount": 2}
+        ],
+        "total": 3,
+        "monthlyContribution": 4,
+        "householdFixedCosts": 5,
+        "variableAllocations": {"Example groceries": 6}
+      }'::jsonb,
+      true
+    ),
+    updated_at = now()
+where app = 'familyhub'
+  and user_id = 'USER_ID_HERE';
+```
+
+Read the row first. Change the path and the numbers to the real snapshot
+only in the database, not in git.
+
+### Insurance
+
+Also on the Money tab, from the Insurance tab of the same TeoLoh
+workbook. Stored as `state.insurance`. No policy numbers, in the app or
+in this file.
+
+```json
+{
+  "asOf": "2026-01-01",
+  "policies": [
+    {
+      "person": "Wei Liang",
+      "category": "Life",
+      "name": "Example life",
+      "cover": "Sample sum",
+      "premium": 2,
+      "frequency": "monthly",
+      "payment": "Card",
+      "nextDue": "2026-11-30",
+      "status": "active"
+    }
+  ]
+}
+```
+
+`person` is Wei Liang, Zhen Ling, or Anya. `category` is Life, Health,
+or Extras. `frequency` is monthly or yearly. `status` is active or
+cancelled. `nextDue` is `YYYY-MM-DD` or null. `cover` is a short
+description of what it covers, not a policy number.
+
+The card groups active policies by person and hides cancelled ones
+until "Show cancelled". "Renewals in next 60 days" lists active
+policies with a `nextDue` in that window, soonest first. Those same
+renewals also appear in Home and Calendar key dates, and on the week
+list when the due date falls in the week. If `insurance` is missing,
+the card says "Insurance not loaded yet".
+
+```sql
+update app_state
+set state = jsonb_set(
+      state,
+      '{insurance}',
+      '{
+        "asOf": "2026-01-01",
+        "policies": [
+          {
+            "person": "Anya",
+            "category": "Health",
+            "name": "Example cover",
+            "cover": "Sample ward",
+            "premium": 1,
+            "frequency": "yearly",
+            "payment": "Cash",
+            "nextDue": "2026-12-20",
+            "status": "active"
+          }
+        ]
+      }'::jsonb,
+      true
+    ),
+    updated_at = now()
+where app = 'familyhub'
+  and user_id = 'USER_ID_HERE';
+```
+
+### Condo, car, childcare, net worth, annual dates, folder links
+
+These also live only on the `familyhub` row. The seed does not include them. If a block is missing, the card says it is not loaded yet. Do not commit real amounts, unit numbers, plate numbers, or policy numbers. The examples below are fake.
+
+Condo card on Home, `state.home`:
+
+```json
+{
+  "mcst": {
+    "agent": "Example agent",
+    "mcstNo": "0000",
+    "quarterlyTotal": 9,
+    "breakdown": { "management": 4, "sinking": 4, "gst": 1 },
+    "currentPeriod": { "start": "2026-11-01", "end": "2027-01-31" },
+    "nextDue": "2026-12-03",
+    "folderUrl": "https://drive.google.com/drive/folders/example-home"
+  },
+  "warranties": [
+    { "item": "Example fridge", "until": null, "note": "Show this note" }
+  ],
+  "facts": [{ "label": "Example floor", "value": "Sample" }]
+}
+```
+
+`nextDue` is added to key dates. Warranties with `until` in the past are hidden. `until: null` shows the note.
+
+Car card on Docs. There are no plate, chassis, or policy-number fields. If `roadTax.end` or `insurance.end` is before today, the card shows "Renewal not on file — check". `coeExpiry`, `roadTax.end`, and `insurance.end` join key dates when they are still ahead.
+
+```json
+{
+  "model": "Example hatch",
+  "registered": "2020-01-01",
+  "owner": "Example owner",
+  "coeExpiry": "2027-02-01",
+  "loan": { "lender": "Example bank", "monthly": 7, "method": "GIRO" },
+  "roadTax": { "amount": 8, "start": "2025-10-01", "end": "2026-10-01" },
+  "insurance": { "insurer": "Example insurer", "premium": 5, "start": "2026-03-01", "end": "2027-03-01", "ncd": "10%" },
+  "folderUrl": "https://drive.google.com/drive/folders/example-car"
+}
+```
+
+Anya's childcare, `state.childcare`. Upcoming closures join key dates.
+
+```json
+{
+  "centre": "Example centre",
+  "className": "Sample class",
+  "monthlyFee": 3,
+  "closures": [{ "date": "2026-12-04", "reason": "Example holiday" }],
+  "folderUrl": "https://drive.google.com/drive/folders/example-care"
+}
+```
+
+Household net worth on Money, `state.netWorth`. The link text is "Open Household Ledger Data".
+
+```json
+{
+  "asOf": "2026-01-15",
+  "total": 10,
+  "byPerson": [{ "name": "Example person", "amount": 10 }],
+  "sourceUrl": "https://docs.google.com/spreadsheets/d/example"
+}
+```
+
+Annual dates, `state.annualDates`: `{ "label", "month", "day", "sinceYear" }`. The hub shows the next occurrence on or after today, and not before `sinceYear`.
+
+```json
+[{ "label": "Example anniversary", "month": 1, "day": 2, "sinceYear": 2020 }]
+```
+
+Docs folder list, `state.docLinks`: `{ "group", "label", "url" }`. Links only. No previews.
+
+```json
+[{ "group": "Home", "label": "Example folder", "url": "https://drive.google.com/drive/folders/example" }]
+```
+
+One fake write for the condo block. Repeat the same shape for the other keys (`car`, `childcare`, `netWorth`, `annualDates`, `docLinks`), and read the row first.
+
+```sql
+update app_state
+set state = jsonb_set(
+      state,
+      '{home}',
+      '{
+        "mcst": {
+          "agent": "Example agent",
+          "mcstNo": "0000",
+          "quarterlyTotal": 9,
+          "breakdown": {"management": 4, "sinking": 4, "gst": 1},
+          "currentPeriod": {"start": "2026-11-01", "end": "2027-01-31"},
+          "nextDue": "2026-12-03",
+          "folderUrl": "https://drive.google.com/drive/folders/example-home"
+        },
+        "warranties": [{"item": "Example fridge", "until": null, "note": "Show this note"}],
+        "facts": [{"label": "Example floor", "value": "Sample"}]
+      }'::jsonb,
+      true
+    ),
+    updated_at = now()
+where app = 'familyhub'
+  and user_id = 'USER_ID_HERE';
+```
 
 ## What not to touch
 

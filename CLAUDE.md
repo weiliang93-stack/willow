@@ -374,9 +374,17 @@ without the user needing to re-explain anything — read this first.
   Lists, milestones, vaccines, notes, baby prep, key dates, trips, and
   doc links are edited in the app and written only to that row: each save
   `pullState`s `"familyhub"`, applies the one change, then
-  `pushStateNow`.   The Money tab is read-only against Penny's expense
-  data. It `pullState`s `"expenses"` and `"expenses_automation"` and
-  never pushes them. The budget bar is the combined household month:
+  `pushStateNow`. The Money tab reads `expenses` and
+  `expenses_automation` and never pushes them. Variable household spend
+  is `excludedExpenses` with `type === "combined"` this Singapore month,
+  against `combinedMonthlyBudget`, with a link to the Household Expenses
+  sheet. Fixed monthly costs and insurance are snapshots on the
+  `familyhub` row (`fixedCosts`, `insurance`), edited in the app or by
+  SQL, and are not seeded with real amounts or policy numbers. The same
+  row can also hold `home` (MCST, warranties, facts), `car` (no plate or
+  policy number), `childcare`, `netWorth`, `annualDates`, and `docLinks`.
+  Dates from those blocks join the key-date list. The
+  budget bar is the combined household month:
   `excludedExpenses` with `type === "combined"` in the current Singapore
   calendar month, against `expenses_automation.combinedMonthlyBudget`
   (Household Expenses Summary!B1 via `sheet-budget-sync`). Personal
