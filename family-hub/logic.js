@@ -263,6 +263,9 @@
     for (const item of insuranceOnDate(state.insurance, iso)) {
       events.push(item);
     }
+    for (const item of remindersOnDate(state, iso)) {
+      events.push(item);
+    }
     for (const extra of extras || []) {
       if (!extra || extra.date !== iso || !extra.title) continue;
       const when = extra.allDay || !extra.start ? "All day" : extra.end ? `${extra.start}–${extra.end}` : String(extra.start);
@@ -310,10 +313,11 @@
       .filter((item) => item.date >= today && diffDays(today, item.date) <= 120 && !agendaIds.has(item.id))
       .map((item) => ({ ...item, source: "keyDate" }));
     const renewals = insuranceReminders(state.insurance, today, 60).filter((item) => !agendaIds.has(item.id));
+    const extra = upcomingReminders(state, today, 120).filter((item) => !agendaIds.has(item.id));
     return hub
-      .concat(renewals)
+      .concat(renewals, extra)
       .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.title).localeCompare(String(b.title)))
-      .slice(0, limit || 6);
+      .slice(0, limit || 8);
   }
 
   function remindersAfter(state, afterDate) {
@@ -321,8 +325,88 @@
       .filter((item) => item.date > afterDate)
       .map((item) => ({ id: item.id, title: item.title, date: item.date, kind: item.kind || "date", source: "keyDate" }));
     const renewals = insuranceReminders(state.insurance, afterDate, 800).filter((item) => item.date > afterDate);
+    const extra = upcomingReminders(state, addDays(afterDate, 1), 800);
     return hub
-      .concat(renewals)
+      .concat(renewals, extra)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+  }
+
+  function reminder(id, title, date, kind, subtitle) {
+    return { id, title, date, kind: kind || "date", source: "snapshot", subtitle: subtitle || "" };
+  }
+
+  function oneOffReminders(state) {
+    const out = [];
+    const mcst = state.home && state.home.mcst;
+    if (mcst && mcst.nextDue) out.push(reminder("mcst-due", "MCST bill due", mcst.nextDue, "bill", mcst.agent || ""));
+    const car = state.car || null;
+    if (car && car.coeExpiry) out.push(reminder("car-coe", "Car COE expires", car.coeExpiry, "car", car.model || ""));
+    if (car && car.roadTax && car.roadTax.end) out.push(reminder("car-road-tax", "Road tax ends", car.roadTax.end, "car", ""));
+    if (car && car.insurance && car.insurance.end) out.push(reminder("car-insurance", "Car insurance ends", car.insurance.end, "car", (car.insurance && car.insurance.insurer) || ""));
+    const closures = (state.childcare && state.childcare.closures) || [];
+    closures.forEach((closure, index) => {
+      if (!closure || !closure.date) return;
+      const reason = closure.reason ? `Childcare closed · ${closure.reason}` : "Childcare closed";
+      out.push(reminder(closure.id || `closure-${index}`, reason, closure.date, "task", (state.childcare && state.childcare.centre) || ""));
+    });
+    return out.filter((item) => item.date);
+  }
+
+  function annualDateFor(entry, year) {
+    const month = Number(entry && entry.month);
+    const day = Number(entry && entry.day);
+    if (!month || !day || month > 12 || day > 31) return null;
+    const iso = isoOf(new Date(Date.UTC(year, month - 1, day)));
+    if (Number(iso.slice(5, 7)) !== month || Number(iso.slice(8, 10)) !== day) return null;
+    return iso;
+  }
+
+  function nextAnnualDate(entry, today) {
+    if (!entry || !entry.label) return null;
+    const year = Number(String(today).slice(0, 4));
+    let iso = annualDateFor(entry, year);
+    if (iso && iso < today) iso = annualDateFor(entry, year + 1);
+    if (!iso) return null;
+    if (entry.sinceYear && Number(iso.slice(0, 4)) < Number(entry.sinceYear)) {
+      iso = annualDateFor(entry, Number(entry.sinceYear));
+      if (iso && iso < today) iso = annualDateFor(entry, Number(entry.sinceYear) + 1);
+    }
+    return iso;
+  }
+
+  function annualReminders(state, today, withinDays) {
+    return (state.annualDates || [])
+      .map((entry, index) => {
+        const date = nextAnnualDate(entry, today);
+        if (!date || diffDays(today, date) > withinDays) return null;
+        return reminder(entry.id || `annual-${index}`, entry.label, date, "family", "Every year");
+      })
+      .filter(Boolean);
+  }
+
+  function remindersOnDate(state, iso) {
+    const hits = oneOffReminders(state).filter((item) => item.date === iso);
+    (state.annualDates || []).forEach((entry, index) => {
+      const year = Number(iso.slice(0, 4));
+      if (annualDateFor(entry, year) !== iso) return;
+      if (entry.sinceYear && year < Number(entry.sinceYear)) return;
+      hits.push(reminder(entry.id || `annual-${index}`, entry.label, iso, "family", "Every year"));
+    });
+    return hits.map((item) => ({
+      id: item.id,
+      source: "snapshot",
+      sourceId: item.id,
+      title: item.title,
+      subtitle: item.subtitle,
+      kind: item.kind,
+      date: iso,
+    }));
+  }
+
+  function upcomingReminders(state, today, withinDays) {
+    return oneOffReminders(state)
+      .filter((item) => item.date >= today && diffDays(today, item.date) <= withinDays)
+      .concat(annualReminders(state, today, withinDays))
       .sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
   }
 
@@ -623,6 +707,101 @@
     };
   }
 
+  function homeCondoView(home, today) {
+    if (!home || typeof home !== "object") return null;
+    const mcst = home.mcst && typeof home.mcst === "object" ? home.mcst : null;
+    if (!mcst && !Array.isArray(home.warranties) && !Array.isArray(home.facts)) return null;
+    const breakdown = (mcst && mcst.breakdown) || {};
+    const warranties = (Array.isArray(home.warranties) ? home.warranties : [])
+      .filter((item) => item && item.item && (!item.until || item.until >= today))
+      .map((item) => ({ item: item.item, until: item.until || null, note: item.note || "" }));
+    const facts = (Array.isArray(home.facts) ? home.facts : [])
+      .filter((fact) => fact && fact.label)
+      .map((fact) => ({ label: String(fact.label), value: fact.value == null ? "" : String(fact.value) }));
+    return {
+      hasMcst: Boolean(mcst),
+      agent: (mcst && mcst.agent) || "",
+      mcstNo: (mcst && mcst.mcstNo) || "",
+      quarterlyTotal: moneyOrNull(mcst && mcst.quarterlyTotal),
+      breakdown: {
+        management: moneyOrNull(breakdown.management),
+        sinking: moneyOrNull(breakdown.sinking),
+        gst: moneyOrNull(breakdown.gst),
+      },
+      currentPeriod: (mcst && mcst.currentPeriod) || null,
+      nextDue: (mcst && mcst.nextDue) || "",
+      folderUrl: safeUrl(mcst && mcst.folderUrl),
+      warranties,
+      facts,
+      warrantiesLoaded: Array.isArray(home.warranties),
+      factsLoaded: Array.isArray(home.facts),
+    };
+  }
+
+  function carView(car, today) {
+    if (!car || typeof car !== "object" || !car.model && !car.coeExpiry && !car.roadTax && !car.insurance) return null;
+    const roadEnd = car.roadTax && car.roadTax.end;
+    const coverEnd = car.insurance && car.insurance.end;
+    return {
+      model: car.model || "",
+      registered: car.registered || "",
+      owner: car.owner || "",
+      coeExpiry: car.coeExpiry || "",
+      loan: car.loan ? { lender: car.loan.lender || "", monthly: moneyOrNull(car.loan.monthly), method: car.loan.method || "" } : null,
+      roadTax: car.roadTax ? { amount: moneyOrNull(car.roadTax.amount), start: car.roadTax.start || "", end: car.roadTax.end || "" } : null,
+      insurance: car.insurance
+        ? { insurer: car.insurance.insurer || "", premium: moneyOrNull(car.insurance.premium), start: car.insurance.start || "", end: car.insurance.end || "", ncd: car.insurance.ncd || "" }
+        : null,
+      folderUrl: safeUrl(car.folderUrl),
+      roadTaxCheck: Boolean(roadEnd && roadEnd < today),
+      insuranceCheck: Boolean(coverEnd && coverEnd < today),
+    };
+  }
+
+  function childcareView(childcare, today) {
+    if (!childcare || typeof childcare !== "object") return null;
+    const closures = (Array.isArray(childcare.closures) ? childcare.closures : [])
+      .filter((item) => item && item.date && item.date >= today)
+      .map((item) => ({ date: item.date, reason: item.reason || "" }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    return {
+      centre: childcare.centre || "",
+      className: childcare.className || "",
+      monthlyFee: moneyOrNull(childcare.monthlyFee),
+      closures,
+      folderUrl: safeUrl(childcare.folderUrl),
+    };
+  }
+
+  function netWorthView(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const people = (Array.isArray(raw.byPerson) ? raw.byPerson : [])
+      .filter((person) => person && person.name)
+      .map((person) => ({ name: String(person.name), amount: moneyOrNull(person.amount) }));
+    return {
+      asOf: raw.asOf || "",
+      total: moneyOrNull(raw.total),
+      byPerson: people,
+      sourceUrl: safeUrl(raw.sourceUrl),
+    };
+  }
+
+  function docLinkGroups(links) {
+    if (!Array.isArray(links) || !links.length) return [];
+    const groups = [];
+    for (const link of links) {
+      if (!link || !link.label) continue;
+      const group = link.group || "Folders";
+      let bucket = groups.find((item) => item.group === group);
+      if (!bucket) {
+        bucket = { group, links: [] };
+        groups.push(bucket);
+      }
+      bucket.links.push({ label: String(link.label), url: safeUrl(link.url) });
+    }
+    return groups;
+  }
+
   function safeUrl(url) {
     try {
       const parsed = new URL(String(url || "").trim());
@@ -674,6 +853,13 @@
     insuranceView,
     insuranceReminders,
     remindersAfter,
+    upcomingReminders,
+    nextAnnualDate,
+    homeCondoView,
+    carView,
+    childcareView,
+    netWorthView,
+    docLinkGroups,
     safeUrl,
     shoppingList,
     WEEKDAYS,

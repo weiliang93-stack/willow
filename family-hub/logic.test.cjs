@@ -204,6 +204,90 @@ test("fixed costs and insurance use the hub snapshot, with fake figures only", (
   assert.equal(JSON.stringify(view).includes("policyNumber"), false);
 });
 
+test("condo, car, childcare, net worth, annual dates, and folder links stay on the hub row", () => {
+  const today = "2026-11-23";
+  assert.equal(logic.homeCondoView(null, today), null);
+  assert.equal(logic.carView(null, today), null);
+  assert.equal(logic.childcareView(null, today), null);
+  assert.equal(logic.netWorthView(null), null);
+  assert.deepEqual(logic.docLinkGroups(null), []);
+
+  const hub = {
+    keyDates: [],
+    home: {
+      mcst: {
+        agent: "Example agent",
+        mcstNo: "0000",
+        quarterlyTotal: 9,
+        breakdown: { management: 4, sinking: 4, gst: 1 },
+        currentPeriod: { start: "2026-11-01", end: "2027-01-31" },
+        nextDue: "2026-12-03",
+        folderUrl: "https://drive.google.com/drive/folders/example-home",
+      },
+      warranties: [
+        { item: "Example fridge", until: null, note: "Show this note" },
+        { item: "Old example", until: "2020-01-01", note: "expired" },
+      ],
+      facts: [{ label: "Example floor", value: "Sample" }],
+    },
+    car: {
+      model: "Example hatch",
+      registered: "2020-01-01",
+      owner: "Example owner",
+      coeExpiry: "2027-02-01",
+      loan: { lender: "Example bank", monthly: 7, method: "GIRO" },
+      roadTax: { amount: 8, start: "2025-10-01", end: "2026-10-01" },
+      insurance: { insurer: "Example insurer", premium: 5, start: "2026-03-01", end: "2027-03-01", ncd: "10%" },
+      folderUrl: "https://drive.google.com/drive/folders/example-car",
+      plate: "SHOULD-NOT-SHOW",
+    },
+    childcare: {
+      centre: "Example centre",
+      className: "Sample class",
+      monthlyFee: 3,
+      closures: [{ date: "2026-12-04", reason: "Example holiday" }, { date: "2026-01-01", reason: "Past" }],
+      folderUrl: "https://drive.google.com/drive/folders/example-care",
+    },
+    netWorth: { asOf: "2026-01-15", total: 10, byPerson: [{ name: "Example person", amount: 10 }], sourceUrl: "https://docs.google.com/spreadsheets/d/example" },
+    annualDates: [
+      { label: "Example anniversary", month: 1, day: 2, sinceYear: 2020 },
+      { label: "Too early", month: 6, day: 1, sinceYear: 2030 },
+    ],
+    docLinks: [
+      { group: "Home", label: "Example folder", url: "https://drive.google.com/drive/folders/example" },
+      { group: "Home", label: "Blocked", url: "javascript:alert(1)" },
+    ],
+    insurance: {
+      asOf: "2026-01-01",
+      policies: [{ person: "Anya", category: "Health", name: "Example cover", cover: "Sample ward", premium: 1, frequency: "yearly", payment: "Cash", nextDue: "2026-12-20", status: "active" }],
+    },
+  };
+
+  const condo = logic.homeCondoView(hub.home, today);
+  assert.equal(condo.quarterlyTotal, 9);
+  assert.deepEqual(condo.warranties.map((item) => item.item), ["Example fridge"]);
+  assert.equal(condo.warranties[0].note, "Show this note");
+  const car = logic.carView(hub.car, today);
+  assert.equal(car.roadTaxCheck, true);
+  assert.equal(car.insuranceCheck, false);
+  assert.equal(JSON.stringify(car).includes("SHOULD-NOT-SHOW"), false);
+  assert.equal(JSON.stringify(car).includes("plate"), false);
+  const care = logic.childcareView(hub.childcare, today);
+  assert.deepEqual(care.closures.map((item) => item.reason), ["Example holiday"]);
+  assert.equal(logic.netWorthView(hub.netWorth).total, 10);
+  assert.equal(logic.docLinkGroups(hub.docLinks)[0].links[1].url, "");
+  assert.equal(logic.nextAnnualDate(hub.annualDates[0], today), "2027-01-02");
+  assert.equal(logic.nextAnnualDate(hub.annualDates[1], today), "2030-06-01");
+  const titles = logic.upcomingKeyDates(hub, today, 20).map((item) => item.title);
+  assert.ok(titles.includes("MCST bill due"));
+  assert.ok(titles.includes("Car COE expires"));
+  assert.equal(titles.includes("Road tax ends"), false);
+  assert.ok(titles.includes("Childcare closed · Example holiday"));
+  assert.ok(titles.includes("Example anniversary"));
+  assert.ok(titles.includes("Anya · Example cover"));
+  assert.equal(logic.insuranceView(hub.insurance, today, false).groups[0].person, "Anya");
+});
+
 test("the app script only pulls expense rows and only pushes familyhub", () => {
   const src = fs.readFileSync(path.join(__dirname, "script.js"), "utf8");
   assert.match(src, /pullState\(\s*["']expenses["']\s*\)/);

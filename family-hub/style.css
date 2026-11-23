@@ -323,6 +323,7 @@ main {
   box-shadow: var(--shadow);
 }
 .list-card { padding: 4px 4px; }
+.list-card a.date-row { color: inherit; text-decoration: none; }
 .empty-card, .empty-line { padding: 16px; color: var(--soft); margin: 0; }
 .budget-card, .quiet-card, .note-card { padding: 16px 16px 14px; }
 .budget-card h2, .quiet-card h3 { margin: 0; font-size: 16px; }
@@ -523,6 +524,16 @@ main {
 .plain, .trip-lines { list-style: none; margin: 8px 0 0; padding: 0; }
 .trip-lines { font-size: 14px; }
 .trip-lines li { padding: 4px 0; }
+.flag {
+  display: inline-block;
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #f8e8c4;
+  color: #6d5016;
+  font-size: 13px;
+  font-weight: 650;
+}
 .banner {
   background: #f8e8c4;
   color: #6d5016;

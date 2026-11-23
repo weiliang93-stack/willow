@@ -685,6 +685,109 @@ where app = 'familyhub'
   and user_id = 'USER_ID_HERE';
 ```
 
+### Condo, car, childcare, net worth, annual dates, folder links
+
+These also live only on the `familyhub` row. The seed does not include them. If a block is missing, the card says it is not loaded yet. Do not commit real amounts, unit numbers, plate numbers, or policy numbers. The examples below are fake.
+
+Condo card on Home, `state.home`:
+
+```json
+{
+  "mcst": {
+    "agent": "Example agent",
+    "mcstNo": "0000",
+    "quarterlyTotal": 9,
+    "breakdown": { "management": 4, "sinking": 4, "gst": 1 },
+    "currentPeriod": { "start": "2026-11-01", "end": "2027-01-31" },
+    "nextDue": "2026-12-03",
+    "folderUrl": "https://drive.google.com/drive/folders/example-home"
+  },
+  "warranties": [
+    { "item": "Example fridge", "until": null, "note": "Show this note" }
+  ],
+  "facts": [{ "label": "Example floor", "value": "Sample" }]
+}
+```
+
+`nextDue` is added to key dates. Warranties with `until` in the past are hidden. `until: null` shows the note.
+
+Car card on Docs. There are no plate, chassis, or policy-number fields. If `roadTax.end` or `insurance.end` is before today, the card shows "Renewal not on file — check". `coeExpiry`, `roadTax.end`, and `insurance.end` join key dates when they are still ahead.
+
+```json
+{
+  "model": "Example hatch",
+  "registered": "2020-01-01",
+  "owner": "Example owner",
+  "coeExpiry": "2027-02-01",
+  "loan": { "lender": "Example bank", "monthly": 7, "method": "GIRO" },
+  "roadTax": { "amount": 8, "start": "2025-10-01", "end": "2026-10-01" },
+  "insurance": { "insurer": "Example insurer", "premium": 5, "start": "2026-03-01", "end": "2027-03-01", "ncd": "10%" },
+  "folderUrl": "https://drive.google.com/drive/folders/example-car"
+}
+```
+
+Anya's childcare, `state.childcare`. Upcoming closures join key dates.
+
+```json
+{
+  "centre": "Example centre",
+  "className": "Sample class",
+  "monthlyFee": 3,
+  "closures": [{ "date": "2026-12-04", "reason": "Example holiday" }],
+  "folderUrl": "https://drive.google.com/drive/folders/example-care"
+}
+```
+
+Household net worth on Money, `state.netWorth`. The link text is "Open Household Ledger Data".
+
+```json
+{
+  "asOf": "2026-01-15",
+  "total": 10,
+  "byPerson": [{ "name": "Example person", "amount": 10 }],
+  "sourceUrl": "https://docs.google.com/spreadsheets/d/example"
+}
+```
+
+Annual dates, `state.annualDates`: `{ "label", "month", "day", "sinceYear" }`. The hub shows the next occurrence on or after today, and not before `sinceYear`.
+
+```json
+[{ "label": "Example anniversary", "month": 1, "day": 2, "sinceYear": 2020 }]
+```
+
+Docs folder list, `state.docLinks`: `{ "group", "label", "url" }`. Links only. No previews.
+
+```json
+[{ "group": "Home", "label": "Example folder", "url": "https://drive.google.com/drive/folders/example" }]
+```
+
+One fake write for the condo block. Repeat the same shape for the other keys (`car`, `childcare`, `netWorth`, `annualDates`, `docLinks`), and read the row first.
+
+```sql
+update app_state
+set state = jsonb_set(
+      state,
+      '{home}',
+      '{
+        "mcst": {
+          "agent": "Example agent",
+          "mcstNo": "0000",
+          "quarterlyTotal": 9,
+          "breakdown": {"management": 4, "sinking": 4, "gst": 1},
+          "currentPeriod": {"start": "2026-11-01", "end": "2027-01-31"},
+          "nextDue": "2026-12-03",
+          "folderUrl": "https://drive.google.com/drive/folders/example-home"
+        },
+        "warranties": [{"item": "Example fridge", "until": null, "note": "Show this note"}],
+        "facts": [{"label": "Example floor", "value": "Sample"}]
+      }'::jsonb,
+      true
+    ),
+    updated_at = now()
+where app = 'familyhub'
+  and user_id = 'USER_ID_HERE';
+```
+
 ## What not to touch
 
 - Do not write `expenses`, `expenses_automation`, or any other app's row

@@ -378,6 +378,100 @@ function membersHtml() {
     .join("")}</div>`;
 }
 
+function moneyLine(label, amount) {
+  if (amount === null || amount === undefined) return "";
+  return `<p class="aside-line"><span>${esc(label)}</span><b>${esc(L.formatMoney(amount))}</b></p>`;
+}
+
+function condoHtml(day) {
+  const view = L.homeCondoView(state.home, day);
+  if (!view) {
+    return `<section class="card budget-card"><h2>Condo (MCST)</h2><p class="empty-copy">Condo details not loaded yet.</p><p class="empty-copy">No warranties loaded yet.</p><p class="empty-copy">No home facts loaded yet.</p></section>`;
+  }
+  const period = view.currentPeriod && view.currentPeriod.start ? `${L.formatDayMonth(view.currentPeriod.start)} – ${view.currentPeriod.end ? L.formatDayMonth(view.currentPeriod.end) : ""}` : "";
+  const warranties = !view.warrantiesLoaded
+    ? `<p class="empty-copy">No warranties loaded yet.</p>`
+    : view.warranties.length
+      ? view.warranties.map((item) => `<div class="check-row"><span><b>${esc(item.item)}</b><small class="aside">${item.until ? `Until ${esc(L.formatDayMonthYear(item.until))}` : esc(item.note)}</small></span></div>`).join("")
+      : `<p class="empty-copy">No active warranties.</p>`;
+  const facts = !view.factsLoaded
+    ? `<p class="empty-copy">No home facts loaded yet.</p>`
+    : view.facts.length
+      ? view.facts.map((fact) => `<p class="aside-line"><span>${esc(fact.label)}</span><b>${esc(fact.value)}</b></p>`).join("")
+      : `<p class="empty-copy">No home facts loaded yet.</p>`;
+  return `<section class="card budget-card">
+    <h2>Condo (MCST)</h2>
+    ${view.hasMcst ? "" : `<p class="empty-copy">Condo details not loaded yet.</p>`}
+    ${view.agent ? `<p class="lede">${esc(view.agent)}</p>` : ""}
+    ${view.mcstNo ? `<p class="aside-line"><span>MCST</span><b>${esc(view.mcstNo)}</b></p>` : ""}
+    ${moneyLine("Quarterly total", view.quarterlyTotal)}
+    ${moneyLine("Management", view.breakdown.management)}
+    ${moneyLine("Sinking fund", view.breakdown.sinking)}
+    ${moneyLine("GST", view.breakdown.gst)}
+    ${period ? `<p class="lede">This period ${esc(period)}</p>` : ""}
+    ${view.nextDue ? `<p class="lede">Next due ${esc(L.formatDayMonthYear(view.nextDue))}</p>` : ""}
+    ${view.folderUrl ? sheetLink(view.folderUrl, "Open folder") : ""}
+    <h3 class="subhead">Warranties</h3>
+    ${warranties}
+    <h3 class="subhead">Facts</h3>
+    ${facts}
+  </section>`;
+}
+
+function carHtml(day) {
+  const view = L.carView(state.car, day);
+  if (!view) return `<section class="card budget-card"><h2>Car</h2><p class="empty-copy">Car details not loaded yet.</p></section>`;
+  const flag = view.roadTaxCheck || view.insuranceCheck ? `<p class="flag">Renewal not on file — check</p>` : "";
+  return `<section class="card budget-card">
+    <h2>Car</h2>
+    <p class="lede">${esc(view.model)}</p>
+    ${view.registered ? `<p class="aside-line"><span>Registered</span><b>${esc(view.registered)}</b></p>` : ""}
+    ${view.owner ? `<p class="aside-line"><span>Owner</span><b>${esc(view.owner)}</b></p>` : ""}
+    ${view.coeExpiry ? `<p class="aside-line"><span>COE expires</span><b>${esc(L.formatDayMonthYear(view.coeExpiry))}</b></p>` : ""}
+    ${view.loan ? `<p class="aside-line"><span>${esc(view.loan.lender || "Loan")}</span><b>${view.loan.monthly === null ? "" : esc(L.formatMoney(view.loan.monthly))}</b></p>${view.loan.method ? `<p class="lede">${esc(view.loan.method)}</p>` : ""}` : ""}
+    ${view.roadTax ? `<p class="aside-line"><span>Road tax</span><b>${view.roadTax.amount === null ? "" : esc(L.formatMoney(view.roadTax.amount))}</b></p><p class="lede">${view.roadTax.start ? esc(L.formatDayMonth(view.roadTax.start)) : ""} – ${view.roadTax.end ? esc(L.formatDayMonthYear(view.roadTax.end)) : ""}</p>` : ""}
+    ${view.insurance ? `<p class="aside-line"><span>${esc(view.insurance.insurer || "Insurance")}</span><b>${view.insurance.premium === null ? "" : esc(L.formatMoney(view.insurance.premium))}</b></p><p class="lede">${view.insurance.ncd ? `NCD ${esc(view.insurance.ncd)} · ` : ""}${view.insurance.end ? `until ${esc(L.formatDayMonthYear(view.insurance.end))}` : ""}</p>` : ""}
+    ${flag}
+    ${view.folderUrl ? `<p>${sheetLink(view.folderUrl, "Open folder")}</p>` : ""}
+  </section>`;
+}
+
+function childcareHtml(day) {
+  const view = L.childcareView(state.childcare, day);
+  if (!view) return `<section class="card budget-card"><h2>Childcare</h2><p class="empty-copy">Childcare details not loaded yet.</p></section>`;
+  return `<section class="card budget-card">
+    <h2>Childcare</h2>
+    <p class="lede">${esc(view.centre)}${view.className ? ` · ${esc(view.className)}` : ""}</p>
+    ${moneyLine("Monthly fee", view.monthlyFee)}
+    <h3 class="subhead">Upcoming closures</h3>
+    ${view.closures.length ? view.closures.map((item) => `<p class="aside-line"><span>${esc(L.formatDayMonthYear(item.date))}</span><b>${esc(item.reason)}</b></p>`).join("") : `<p class="empty-copy">No upcoming closures.</p>`}
+    ${view.folderUrl ? `<p>${sheetLink(view.folderUrl, "Open folder")}</p>` : ""}
+  </section>`;
+}
+
+function netWorthHtml() {
+  const view = L.netWorthView(state.netWorth);
+  if (!view) return `<section class="card budget-card"><h2>Household net worth</h2><p class="empty-copy">Net worth not loaded yet.</p></section>`;
+  return `<section class="card budget-card">
+    <div class="section-head"><h2>Household net worth</h2>${view.sourceUrl ? sheetLink(view.sourceUrl, "Open Household Ledger Data") : ""}</div>
+    ${view.asOf ? `<p class="lede">As of ${esc(L.formatDayMonthYear(view.asOf))}</p>` : ""}
+    ${view.total === null ? "" : `<div class="figure">${esc(L.formatMoney(view.total))}</div>`}
+    ${view.byPerson.map((person) => moneyLine(person.name, person.amount)).join("")}
+  </section>`;
+}
+
+function docLinksHtml() {
+  const groups = L.docLinkGroups(state.docLinks);
+  if (!groups.length) return `${sectionHead("Folder links", "")}<div class="card empty-card">No extra folder links yet.</div>`;
+  return `${sectionHead("Folder links", "")}<div class="card list-card">${groups
+    .map(
+      (group) => `<h3 class="subhead">${esc(group.group)}</h3>${group.links
+        .map((link) => link.url ? `<a class="date-row" href="${esc(link.url)}" target="_blank" rel="noopener noreferrer"><span class="date-title">${esc(link.label)}</span></a>` : `<div class="date-row"><span class="date-title">${esc(link.label)}</span></div>`)
+        .join("")}`
+    )
+    .join("")}</div>`;
+}
+
 function renderHome(day) {
   const week = L.weekStart(day);
   const selected = ui.homeDay || day;
@@ -420,7 +514,8 @@ function renderHome(day) {
     ${sectionHead("Key dates", '<span class="aside">Upcoming</span>', plusButton("keyDate"))}
     ${datesHtml}
     ${sectionHead("Shopping list", list && list.shared ? '<span class="aside">Shared</span>' : "")}
-    ${listHtml}`;
+    ${listHtml}
+    ${condoHtml(day)}`;
 }
 
 function renderCalendar(day) {
@@ -519,13 +614,13 @@ function sheetLink(href, label) {
 }
 
 function dateButton(item, long) {
-  const mode = item.source === "insurance" ? "insurance" : "keyDate";
   const when = long ? L.formatDayMonthYear(item.date) : L.formatDayMonth(item.date);
-  return `<button type="button" class="date-row" data-edit="${mode}" data-id="${esc(item.id)}">
-    <i class="dot" style="background:${dotColor(item.kind)}"></i>
+  const inner = `<i class="dot" style="background:${dotColor(item.kind)}"></i>
     <span class="date-title">${esc(item.title)}${item.subtitle ? `<small>${esc(item.subtitle)}</small>` : ""}</span>
-    <span class="date-when">${esc(when)}</span>
-  </button>`;
+    <span class="date-when">${esc(when)}</span>`;
+  if (item.source === "snapshot") return `<div class="date-row">${inner}</div>`;
+  const mode = item.source === "insurance" ? "insurance" : "keyDate";
+  return `<button type="button" class="date-row" data-edit="${mode}" data-id="${esc(item.id)}">${inner}</button>`;
 }
 
 function moneyMessage() {
@@ -711,6 +806,7 @@ function renderMoney(day) {
         <button type="button" class="text-btn" data-action="refresh-money">Refresh</button>
       </div>
     </header>
+    ${netWorthHtml()}
     ${budgetHtml}
     ${bars}
     ${fixedCostsHtml()}
@@ -749,6 +845,7 @@ function renderAnya(day) {
       </div>
     </header>
     ${banner}
+    ${childcareHtml(day)}
     ${sectionHead("Milestones", "", plusButton("milestone"))}
     <div class="card list-card">${checkRows(state.anya.milestones || [], "milestone")}${inlineAdd("milestone", "", "Add a milestone")}</div>
     <button type="button" class="note-card" data-edit="notes">${esc(state.anya.notes || "Add a note")}</button>
@@ -824,6 +921,7 @@ function renderDocs(day) {
       <div class="track light"><span style="width:${Math.round(pregnancy.progress * 100)}%"></span></div>
       <div class="hero-foot"><span>${esc(left)}</span><span>${esc(dueMonth)}</span></div>
     </section>
+    ${carHtml(day)}
     ${sectionHead("Prep checklist", `<span class="aside">${esc(before)}</span>`)}
     <div class="card list-card">${checkRows(state.baby2.prep || [], "prep")}${inlineAdd("prep", "", "Add a prep item")}</div>
     ${sectionHead("Documents", '<span class="aside">Quick links</span>', plusButton("doc"))}
@@ -837,7 +935,8 @@ function renderDocs(day) {
         }
         return `<div class="doc-card"><a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${inner}</a>${edit}</div>`;
       })
-      .join("")}</div>`;
+      .join("")}</div>
+    ${docLinksHtml()}`;
 }
 
 function render() {
