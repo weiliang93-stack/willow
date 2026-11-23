@@ -367,8 +367,11 @@ without the user needing to re-explain anything — read this first.
   switching between "opened via clinic/" and "opened directly" is
   seamless.
 - **family-hub/** — Loh Family Hub, a phone-first home screen for the
-  week ahead, a family calendar, Anya, and baby #2 / household documents.
-  Tabs are Home, Calendar, Money, Anya, and Docs. Its own Supabase row is
+  week ahead, a family calendar, the kids, and baby #2 / household documents.
+  Tabs are Home, Calendar, Money, Kids, and Docs. Kids switches between
+  Anya and Yuna (`state.kids`, migrated from the older `anya` keys; Yuna
+  is due 10 May 2027 and stays on the unborn cards until `bornDate` is
+  set). Its own Supabase row is
   `app_state.app = "familyhub"` (seeded once on first signed-in boot if
   that row is missing; later edits never replace the whole row blindly).
   Lists, milestones, vaccines, notes, baby prep, key dates, trips, and
@@ -378,9 +381,11 @@ without the user needing to re-explain anything — read this first.
   `expenses_automation` and never pushes them. Variable household spend
   is `excludedExpenses` with `type === "combined"` this Singapore month,
   against `combinedMonthlyBudget`, with a link to the Household Expenses
-  sheet. Fixed monthly costs and insurance are snapshots on the
-  `familyhub` row (`fixedCosts`, `insurance`), edited in the app or by
-  SQL, and are not seeded with real amounts or policy numbers. The same
+  sheet.   Insurance is a snapshot on the `familyhub` row (`insurance`), edited
+  in the app or by SQL. Fixed monthly costs (`fixedCosts`) are read-only
+  in the app: `sync-fixed-costs` copies the TeoLoh Fixed Monthly Expense
+  table once a day and writes only that key. Neither is seeded with real
+  amounts or policy numbers. The same
   row can also hold `home` (MCST, warranties, facts), `car` (no plate or
   policy number), `childcare`, `netWorth`, `annualDates`, and `docLinks`.
   Dates from those blocks join the key-date list. The

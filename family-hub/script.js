@@ -6,6 +6,7 @@ const L = window.FamilyHubLogic;
 const SEED = window.FAMILY_HUB_SEED;
 const LOCAL_KEY = "familyhub.cache";
 const TAB_KEY = "familyhub.activeTab";
+const CHILD_KEY = "familyhub.activeChild";
 const TABS = ["home", "calendar", "money", "anya", "docs"];
 const MONEY_URL = "https://weiliang93-stack.github.io/willow/money/";
 const HOUSEHOLD_SHEET_URL = "https://docs.google.com/spreadsheets/d/13JBXgENPoin92lAHq7BAHTcvV2YMqEY9a-_wtywoLY0/edit";
@@ -15,7 +16,7 @@ const MEMBER_COLOR = { wl: "#3f6b4f", zl: "#2c3b4d", anya: "#d2652e" };
 const BAR_COLORS = ["#6e8f78", "#d07a56", "#6d88a8", "#d2a24e", "#7f9a72", "#b9837a", "#8b7eaa"];
 const DOC_ORDER = ["d-car", "d-insurance", "d-home", "d-archive", "d-archive-sheet"];
 
-const ui = { tab: "home", homeDay: null, calWeek: null, calDay: null, showCancelled: false };
+const ui = { tab: "home", child: "anya", homeDay: null, calWeek: null, calDay: null, showCancelled: false };
 let state = null;
 let currentUser = null;
 let editsPaused = false;
@@ -93,7 +94,33 @@ function normalize(raw) {
   if (!s.baby2 || typeof s.baby2 !== "object") s.baby2 = { due: SEED.baby2.due, prep: [] };
   if (!s.baby2.due) s.baby2.due = SEED.baby2.due;
   if (!Array.isArray(s.baby2.prep)) s.baby2.prep = [];
+  L.normalizeKids(s);
   return s;
+}
+
+function activeChildId() {
+  const kids = (state && state.kids) || [];
+  if (kids.some((kid) => kid.id === ui.child)) return ui.child;
+  return kids[0] ? kids[0].id : "anya";
+}
+
+function kidOf(draft, id) {
+  const kids = (draft && draft.kids) || [];
+  return kids.find((kid) => kid && kid.id === (id || activeChildId())) || null;
+}
+
+function writeKid(draft, fn) {
+  const kid = kidOf(draft);
+  if (!kid) return null;
+  fn(kid);
+  if (kid.id === "anya" && draft.anya) {
+    if (kid.bornDate) draft.anya.born = kid.bornDate;
+    draft.anya.sleep = kid.sleep;
+    draft.anya.milestones = kid.milestones;
+    draft.anya.vaccines = kid.vaccines;
+    draft.anya.notes = kid.notes || "";
+  }
+  return kid;
 }
 
 function today() {
@@ -146,6 +173,8 @@ async function boot(user) {
   revealApp();
   const saved = localStorage.getItem(TAB_KEY);
   if (TABS.includes(saved)) ui.tab = saved;
+  const savedChild = localStorage.getItem(CHILD_KEY);
+  if (savedChild) ui.child = savedChild;
   ui.calWeek = L.weekStart(today());
 
   if (!window.SupaSync || !SupaSync.configured || !user) {
@@ -348,14 +377,14 @@ function agendaCard(events, day) {
 }
 
 function checkRows(items, kind, listId) {
-  if (!items.length) return '<p class="empty-line">Nothing here yet.</p>';
+  if (!items.length) return `<p class="empty-line">${kind === "kidprep" ? "No prep items yet." : "Nothing here yet."}</p>`;
   return items
     .map((item) => {
       const extra = listId ? `data-list="${esc(listId)}"` : "";
       return `<div class="check-row${item.done ? " is-done" : ""}">
         <input type="checkbox" data-check="${esc(kind)}" data-id="${esc(item.id)}" ${extra} ${item.done ? "checked" : ""} aria-label="${esc(item.text)}">
         <span>${esc(item.text)}</span>
-        ${pencilButton(kind === "prep" ? "prep" : kind === "milestone" ? "milestone" : "list", item.id, extra)}
+        ${pencilButton(kind === "prep" || kind === "kidprep" || kind === "milestone" ? kind : "list", item.id, extra)}
       </div>`;
     })
     .join("");
@@ -436,8 +465,9 @@ function carHtml(day) {
   </section>`;
 }
 
-function childcareHtml(day) {
-  const view = L.childcareView(state.childcare, day);
+function childcareHtml(day, kid) {
+  const source = (kid && kid.childcare) || (kid && kid.id === "anya" ? state.childcare : null);
+  const view = L.childcareView(source, day);
   if (!view) return `<section class="card budget-card"><h2>Childcare</h2><p class="empty-copy">Childcare details not loaded yet.</p></section>`;
   return `<section class="card budget-card">
     <h2>Childcare</h2>
@@ -636,7 +666,6 @@ function fixedCostsHtml() {
     return `<section class="card budget-card">
       <div class="section-head"><h2>Fixed monthly costs</h2>${link}</div>
       <p class="empty-copy">Fixed costs not loaded yet.</p>
-      <button type="button" class="text-btn" data-add="fixedItem">Add an item</button>
     </section>`;
   }
   const lines = [
@@ -644,21 +673,20 @@ function fixedCostsHtml() {
     view.householdFixedCosts === null ? "" : `<p class="aside-line"><span>Household fixed costs</span><b>${esc(L.formatMoney(view.householdFixedCosts))}</b></p>`,
     ...view.allocations.map((row) => `<p class="aside-line"><span>${esc(row.name)}</span><b>${esc(L.formatMoney(row.amount))}</b></p>`),
   ].join("");
+  const synced = view.asOf ? `Synced from sheet ${L.formatDayMonthYear(view.asOf)}` : "Synced from sheet";
   return `<section class="card budget-card">
     <div class="section-head"><h2>Fixed monthly costs</h2>${link}</div>
-    <p class="lede">${view.asOf ? `As of ${esc(L.formatDayMonthYear(view.asOf))}` : "No as-of date"}</p>
+    <p class="lede">${esc(synced)}</p>
     <div class="list-card">${view.items
       .map(
         (item) => `<div class="check-row">
           <span><b>${esc(item.name)}</b>${item.note ? `<small class="aside">${esc(item.note)}</small>` : ""}</span>
           <b>${item.amount === null ? "" : esc(L.formatMoney(item.amount))}</b>
-          ${pencilButton("fixedItem", item.id)}
         </div>`
       )
       .join("")}</div>
     <p class="track-meta">Total ${esc(L.formatMoney(view.total))}</p>
     ${lines}
-    <button type="button" class="text-btn" data-add="fixedItem">Add an item</button>
   </section>`;
 }
 
@@ -818,8 +846,19 @@ function renderMoney(day) {
     <p class="footnote">Figures synced from the household expense log. <a href="${MONEY_URL}">Edit variable spend in Money</a></p>`;
 }
 
-function renderAnya(day) {
-  const born = state.anya.born;
+function kidSwitch() {
+  const current = activeChildId();
+  const kids = state.kids || [];
+  return `<div class="kid-switch" role="tablist" aria-label="Child">${kids
+    .map((kid) => {
+      const on = kid.id === current;
+      return `<button type="button" data-child="${esc(kid.id)}" role="tab" aria-selected="${on}" class="${on ? "is-on" : ""}">${esc(kid.name || kid.id)}</button>`;
+    })
+    .join("")}</div>`;
+}
+
+function bornChildHtml(day, kid) {
+  const born = kid.bornDate;
   const age = L.ageParts(born, day);
   const birthday = L.nextBirthday(born, day);
   const showBanner = birthday.days <= 21;
@@ -833,22 +872,24 @@ function renderAnya(day) {
         <p>${esc(L.formatLong(birthday.date))}</p>
       </section>`
     : "";
-  const sleep = state.anya.sleep || {};
-  const vaccines = state.anya.vaccines || [];
+  const sleep = kid.sleep || {};
+  const vaccines = kid.vaccines || [];
+  const letter = (kid.name || "?").slice(0, 1);
   return `
+    ${kidSwitch()}
     <header class="top anya-top">
-      <span class="avatar">A</span>
+      <span class="avatar">${esc(letter)}</span>
       <div>
         <p class="kicker">Daughter</p>
-        <h1>Anya</h1>
+        <h1>${esc(kid.name)}</h1>
         <p class="lede">Born ${esc(L.formatDayMonthYear(born))} · ${esc(age.label)}</p>
       </div>
     </header>
     ${banner}
-    ${childcareHtml(day)}
+    ${childcareHtml(day, kid)}
     ${sectionHead("Milestones", "", plusButton("milestone"))}
-    <div class="card list-card">${checkRows(state.anya.milestones || [], "milestone")}${inlineAdd("milestone", "", "Add a milestone")}</div>
-    <button type="button" class="note-card" data-edit="notes">${esc(state.anya.notes || "Add a note")}</button>
+    <div class="card list-card">${checkRows(kid.milestones || [], "milestone")}${inlineAdd("milestone", "", "Add a milestone")}</div>
+    <button type="button" class="note-card" data-edit="notes">${esc(kid.notes || "Add a note")}</button>
     ${sectionHead("Next vaccinations", '<span class="aside">Per NCIS schedule</span>', plusButton("vaccine"))}
     <div class="card list-card">${
       vaccines.length
@@ -869,6 +910,48 @@ function renderAnya(day) {
       <div class="sleep-tile naps"><span>Naps</span><b>${esc(sleep.napsPerDay ?? "—")} a day</b><small>${esc(sleep.napNote || "")}</small></div>
       <div class="sleep-tile bed"><span>Bedtime</span><b>${esc(L.formatBedtime(sleep.bedtime))}</b><small>${esc(sleep.bedtimeNote || "")}</small></div>
     </div>`;
+}
+
+function unbornChildHtml(day, kid) {
+  const countdown = L.dueCountdown(kid.dueDate, day) || "Due date not set";
+  const appointments = L.antenatalFor(state, kid, familyEvents);
+  const letter = (kid.name || "?").slice(0, 1);
+  const appointmentHtml = appointments.length
+    ? appointments
+        .map((item) => {
+          const when = item.date ? L.formatDayMonthYear(item.date) : "";
+          const where = item.where ? `<small>${esc(item.where)}</small>` : "";
+          return `<div class="date-row"><span class="date-title">${esc(item.title)}${where}</span><span class="date-when">${esc(when)}</span></div>`;
+        })
+        .join("")
+    : '<p class="empty-line">No antenatal appointments tagged to her yet.</p>';
+  return `
+    ${kidSwitch()}
+    <header class="top anya-top">
+      <span class="avatar">${esc(letter)}</span>
+      <div>
+        <p class="kicker">On the way</p>
+        <h1>${esc(kid.name)}</h1>
+        <p class="lede">${kid.dueDate ? `Due ${esc(L.formatDayMonthYear(kid.dueDate))}` : "Due date not set"}</p>
+      </div>
+    </header>
+    <section class="hero hero-baby">
+      <p class="hero-kicker">Due date</p>
+      <h2>${esc(countdown)}</h2>
+      <p>${kid.dueDate ? esc(L.formatLong(kid.dueDate)) : ""}</p>
+    </section>
+    ${sectionHead("Antenatal appointments", "")}
+    <div class="card list-card">${appointmentHtml}</div>
+    ${sectionHead("Baby prep", "", plusButton("kidprep"))}
+    <div class="card list-card">${checkRows(kid.prep || [], "kidprep")}${inlineAdd("kidprep", "", "Add a prep item")}</div>
+    <button type="button" class="text-btn" data-edit="born">Set birth date</button>`;
+}
+
+function renderKids(day) {
+  const kid = kidOf(state);
+  if (!kid) return `<header class="top"><h1>Kids</h1></header><p class="empty-copy">No children on file.</p>`;
+  if (kid.bornDate) return bornChildHtml(day, kid);
+  return unbornChildHtml(day, kid);
 }
 
 function syringeSvg() {
@@ -941,9 +1024,10 @@ function renderDocs(day) {
 
 function render() {
   if (!state) return;
+  if (state.kids && state.kids.length) ui.child = activeChildId();
   const day = today();
   const main = document.getElementById("main");
-  const pages = { home: renderHome, calendar: renderCalendar, money: renderMoney, anya: renderAnya, docs: renderDocs };
+  const pages = { home: renderHome, calendar: renderCalendar, money: renderMoney, anya: renderKids, docs: renderDocs };
   const banner = editsPaused ? '<p class="banner">Edits are paused until the hub can be read. <button type="button" data-action="reload">Reload</button></p>' : "";
   main.innerHTML = banner + pages[ui.tab](day);
   document.querySelectorAll(".tabbar button").forEach((button) => {
@@ -954,6 +1038,7 @@ function render() {
   });
   try {
     localStorage.setItem(TAB_KEY, ui.tab);
+    localStorage.setItem(CHILD_KEY, activeChildId());
   } catch (err) {
     /* ignore */
   }
@@ -968,6 +1053,12 @@ function onClick(event) {
   }
   const root = event.target.closest("#main");
   if (!root) return;
+  const childBtn = event.target.closest("[data-child]");
+  if (childBtn && childBtn.dataset.child) {
+    ui.child = childBtn.dataset.child;
+    render();
+    return;
+  }
   const actionEl = event.target.closest("[data-action], [data-day], [data-week], [data-add], [data-edit], [data-vax]");
   if (!actionEl) return;
   if (actionEl.dataset.action === "reload") {
@@ -1010,15 +1101,18 @@ function onClick(event) {
   if (actionEl.dataset.vax) {
     const id = actionEl.dataset.vax;
     commit((draft) => {
-      const item = draft.anya.vaccines.find((row) => row.id === id);
-      if (item) item.status = item.status === "done" ? "due" : "done";
+      writeKid(draft, (kid) => {
+        const item = (kid.vaccines || []).find((row) => row.id === id);
+        if (item) item.status = item.status === "done" ? "due" : "done";
+      });
     });
     return;
   }
   if (actionEl.dataset.add) {
     const mode = actionEl.dataset.add === "milestone" ? "milestone" : actionEl.dataset.add;
-    if (mode === "milestone") {
-      document.querySelector('.inline-add[data-inline="milestone"] input')?.focus();
+    if (mode === "fixedItem") return;
+    if (mode === "milestone" || mode === "kidprep") {
+      document.querySelector(`.inline-add[data-inline="${mode}"] input`)?.focus();
       return;
     }
     openEditor(mode, "", actionEl.dataset.list || "");
@@ -1042,11 +1136,18 @@ function onChange(event) {
       const item = list && (list.items || []).find((row) => row.id === id);
       if (item) item.done = done;
     } else if (kind === "milestone") {
-      const item = draft.anya.milestones.find((row) => row.id === id);
-      if (item) item.done = done;
+      writeKid(draft, (kid) => {
+        const item = (kid.milestones || []).find((row) => row.id === id);
+        if (item) item.done = done;
+      });
     } else if (kind === "prep") {
       const item = draft.baby2.prep.find((row) => row.id === id);
       if (item) item.done = done;
+    } else if (kind === "kidprep") {
+      writeKid(draft, (kid) => {
+        const item = (kid.prep || []).find((row) => row.id === id);
+        if (item) item.done = done;
+      });
     }
   });
 }
@@ -1068,9 +1169,17 @@ function onSubmit(event) {
       list.items = list.items || [];
       list.items.push({ id: uid(), text, done: false });
     } else if (kind === "milestone") {
-      draft.anya.milestones.push({ id: uid(), text, done: false });
+      writeKid(draft, (kid) => {
+        kid.milestones = kid.milestones || [];
+        kid.milestones.push({ id: uid(), text, done: false });
+      });
     } else if (kind === "prep") {
       draft.baby2.prep.push({ id: uid(), text, done: false });
+    } else if (kind === "kidprep") {
+      writeKid(draft, (kid) => {
+        kid.prep = kid.prep || [];
+        kid.prep.push({ id: uid(), text, done: false });
+      });
     }
   });
 }
@@ -1130,22 +1239,23 @@ function findItem(mode, id, listId) {
     const list = state.lists.find((row) => row.id === listId) || L.shoppingList(state);
     return list && (list.items || []).find((row) => row.id === id);
   }
-  if (mode === "milestone") return state.anya.milestones.find((row) => row.id === id);
+  if (mode === "milestone") {
+    const kid = kidOf(state);
+    return kid && (kid.milestones || []).find((row) => row.id === id);
+  }
   if (mode === "prep") return state.baby2.prep.find((row) => row.id === id);
-  if (mode === "vaccine") return state.anya.vaccines.find((row) => row.id === id);
+  if (mode === "kidprep") {
+    const kid = kidOf(state);
+    return kid && (kid.prep || []).find((row) => row.id === id);
+  }
+  if (mode === "vaccine") {
+    const kid = kidOf(state);
+    return kid && (kid.vaccines || []).find((row) => row.id === id);
+  }
   if (mode === "keyDate") return state.keyDates.find((row) => row.id === id);
   if (mode === "doc") return state.docs.find((row) => row.id === id);
-  if (mode === "fixedItem" && state.fixedCosts) return fixedItemById(state.fixedCosts, id);
   if (mode === "insurance" && state.insurance) return policyById(state.insurance, id);
   return null;
-}
-
-function fixedItemById(costs, id) {
-  const items = (costs && costs.items) || [];
-  const found = items.find((item) => item && item.id === id);
-  if (found) return found;
-  const index = /^fc(\d+)$/.exec(id || "");
-  return index ? items[Number(index[1])] || null : null;
 }
 
 function policyById(insurance, id) {
@@ -1156,17 +1266,6 @@ function policyById(insurance, id) {
   return index ? policies[Number(index[1])] || null : null;
 }
 
-function ensureFixed(draft) {
-  if (!draft.fixedCosts || typeof draft.fixedCosts !== "object") {
-    draft.fixedCosts = { source: "TeoLoh Financial Planning", asOf: today(), items: [] };
-  }
-  if (!Array.isArray(draft.fixedCosts.items)) draft.fixedCosts.items = [];
-  if (!draft.fixedCosts.source) draft.fixedCosts.source = "TeoLoh Financial Planning";
-  if (!draft.fixedCosts.asOf) draft.fixedCosts.asOf = today();
-  draft.fixedCosts.total = L.round2(draft.fixedCosts.items.reduce((sum, item) => sum + (Number(item.amount) || 0), 0));
-  return draft.fixedCosts;
-}
-
 function ensureInsurance(draft) {
   if (!draft.insurance || typeof draft.insurance !== "object") draft.insurance = { asOf: today(), policies: [] };
   if (!Array.isArray(draft.insurance.policies)) draft.insurance.policies = [];
@@ -1175,6 +1274,7 @@ function ensureInsurance(draft) {
 }
 
 function openEditor(mode, id, listId) {
+  if (mode === "fixedItem") return;
   editor.mode = mode;
   editor.id = id || "";
   editor.listId = listId || "";
@@ -1183,11 +1283,11 @@ function openEditor(mode, id, listId) {
   const title = document.getElementById("editor-title");
   const del = document.getElementById("editor-delete");
   fields.replaceChildren();
-  del.hidden = !id || mode === "notes" || mode === "sleep";
+  del.hidden = !id || mode === "notes" || mode === "sleep" || mode === "born";
   del.textContent = "Delete";
   del.dataset.armed = "";
   const item = findItem(mode, id, listId);
-  if (mode === "list" || mode === "milestone" || mode === "prep") {
+  if (mode === "list" || mode === "milestone" || mode === "prep" || mode === "kidprep") {
     title.textContent = id ? "Edit item" : "Add item";
     fields.append(field("text", "text", "Item", item ? item.text : ""));
   } else if (mode === "vaccine") {
@@ -1215,14 +1315,10 @@ function openEditor(mode, id, listId) {
       ])
     );
     fields.append(field("notes", "text", "Note (optional)", item ? item.notes || "" : ""));
-  } else if (mode === "fixedItem") {
-    title.textContent = id ? "Edit fixed cost" : "Add fixed cost";
-    fields.append(field("name", "text", "Name", item ? item.name : ""));
-    fields.append(field("amount", "number", "Amount", item && item.amount != null ? item.amount : ""));
-    fields.append(field("note", "text", "Note (optional)", item ? item.note || "" : ""));
+    fields.append(selectField("child", "Child (optional)", item && item.child ? item.child : "", [["", "None"], ["anya", "Anya"], ["yuna", "Yuna"]]));
   } else if (mode === "insurance") {
     title.textContent = id ? "Edit cover" : "Add cover";
-    fields.append(selectField("person", "Person", item ? item.person : "Wei Liang", [["Wei Liang", "Wei Liang"], ["Zhen Ling", "Zhen Ling"], ["Anya", "Anya"]]));
+    fields.append(selectField("person", "Person", item ? item.person : "Wei Liang", [["Wei Liang", "Wei Liang"], ["Zhen Ling", "Zhen Ling"], ["Anya", "Anya"], ["Yuna", "Yuna"]]));
     fields.append(selectField("category", "Category", item ? item.category : "Health", [["Life", "Life"], ["Health", "Health"], ["Extras", "Extras"]]));
     fields.append(field("name", "text", "Name", item ? item.name : ""));
     fields.append(field("cover", "text", "What it covers", item ? item.cover || "" : ""));
@@ -1237,11 +1333,18 @@ function openEditor(mode, id, listId) {
     fields.append(field("subtitle", "text", "Subtitle", item ? item.subtitle || "" : ""));
     fields.append(field("url", "url", "Link", item ? item.url || "" : ""));
   } else if (mode === "notes") {
-    title.textContent = "Anya's note";
-    fields.append(area("notes", "Note", state.anya.notes || ""));
+    const kid = kidOf(state);
+    title.textContent = kid ? `${kid.name}'s note` : "Note";
+    fields.append(area("notes", "Note", kid ? kid.notes || "" : ""));
+  } else if (mode === "born") {
+    const kid = kidOf(state);
+    title.textContent = "Birth date";
+    del.hidden = true;
+    fields.append(field("bornDate", "date", "Born", kid && kid.bornDate ? kid.bornDate : today()));
   } else if (mode === "sleep") {
     title.textContent = "Sleep";
-    const sleep = state.anya.sleep || {};
+    const kid = kidOf(state);
+    const sleep = (kid && kid.sleep) || {};
     fields.append(field("napsPerDay", "number", "Naps a day", sleep.napsPerDay ?? 2));
     fields.append(field("napNote", "text", "Nap note", sleep.napNote || ""));
     fields.append(field("bedtime", "time", "Bedtime", sleep.bedtime || "19:00"));
@@ -1259,8 +1362,12 @@ function onEditorSubmit(event) {
   const mode = editor.mode;
   const id = editor.id;
   const listId = editor.listId;
+  if (mode === "fixedItem") {
+    document.getElementById("editor").close();
+    return;
+  }
   commit((draft) => {
-    if (mode === "list" || mode === "milestone" || mode === "prep") {
+    if (mode === "list" || mode === "milestone" || mode === "prep" || mode === "kidprep") {
       if (!text("text")) return;
       const apply = (list) => {
         if (id) {
@@ -1273,35 +1380,38 @@ function onEditorSubmit(event) {
         if (!list) return;
         list.items = list.items || [];
         apply(list.items);
-      } else if (mode === "milestone") apply(draft.anya.milestones);
-      else apply(draft.baby2.prep);
+      } else if (mode === "milestone") {
+        writeKid(draft, (kid) => {
+          kid.milestones = kid.milestones || [];
+          apply(kid.milestones);
+        });
+      } else if (mode === "kidprep") {
+        writeKid(draft, (kid) => {
+          kid.prep = kid.prep || [];
+          apply(kid.prep);
+        });
+      } else apply(draft.baby2.prep);
     } else if (mode === "vaccine") {
       if (!text("name")) return;
-      if (id) {
-        const item = draft.anya.vaccines.find((row) => row.id === id);
-        if (!item) return;
-        item.name = text("name");
-        item.notes = text("notes");
-        item.status = text("status") === "done" ? "done" : "due";
-      } else {
-        draft.anya.vaccines.push({ id: uid(), name: text("name"), notes: text("notes"), status: text("status") === "done" ? "done" : "due" });
-      }
+      writeKid(draft, (kid) => {
+        kid.vaccines = kid.vaccines || [];
+        if (id) {
+          const item = kid.vaccines.find((row) => row.id === id);
+          if (!item) return;
+          item.name = text("name");
+          item.notes = text("notes");
+          item.status = text("status") === "done" ? "done" : "due";
+        } else {
+          kid.vaccines.push({ id: uid(), name: text("name"), notes: text("notes"), status: text("status") === "done" ? "done" : "due" });
+        }
+      });
     } else if (mode === "keyDate") {
       if (!text("title") || !text("date")) return;
-      const next = { title: text("title"), date: text("date"), kind: text("kind") || "task", notes: text("notes") };
+      const next = { title: text("title"), date: text("date"), kind: text("kind") || "task", notes: text("notes"), child: text("child") };
       if (id) {
         const item = draft.keyDates.find((row) => row.id === id);
         if (item) Object.assign(item, next);
       } else draft.keyDates.push({ id: uid(), ...next });
-    } else if (mode === "fixedItem") {
-      if (!text("name")) return;
-      const costs = ensureFixed(draft);
-      const amount = Number(text("amount"));
-      const next = { name: text("name"), amount: Number.isFinite(amount) ? amount : 0, note: text("note") };
-      const current = id ? fixedItemById(costs, id) : null;
-      if (current) Object.assign(current, next, { id: current.id || uid() });
-      else costs.items.push({ id: uid(), ...next });
-      ensureFixed(draft);
     } else if (mode === "insurance") {
       if (!text("name")) return;
       const book = ensureInsurance(draft);
@@ -1331,14 +1441,24 @@ function onEditorSubmit(event) {
         if (item) Object.assign(item, next);
       } else draft.docs.push({ id: uid(), ...next });
     } else if (mode === "notes") {
-      draft.anya.notes = text("notes");
+      writeKid(draft, (kid) => {
+        kid.notes = text("notes");
+      });
+    } else if (mode === "born") {
+      const born = text("bornDate");
+      if (!born) return;
+      writeKid(draft, (kid) => {
+        kid.bornDate = born;
+      });
     } else if (mode === "sleep") {
       const naps = Number(text("napsPerDay"));
-      draft.anya.sleep = draft.anya.sleep || {};
-      if (Number.isFinite(naps)) draft.anya.sleep.napsPerDay = naps;
-      draft.anya.sleep.napNote = text("napNote");
-      draft.anya.sleep.bedtime = text("bedtime") || draft.anya.sleep.bedtime;
-      draft.anya.sleep.bedtimeNote = text("bedtimeNote");
+      writeKid(draft, (kid) => {
+        kid.sleep = kid.sleep || {};
+        if (Number.isFinite(naps)) kid.sleep.napsPerDay = naps;
+        kid.sleep.napNote = text("napNote");
+        kid.sleep.bedtime = text("bedtime") || kid.sleep.bedtime;
+        kid.sleep.bedtimeNote = text("bedtimeNote");
+      });
     }
   });
   document.getElementById("editor").close();
@@ -1353,18 +1473,29 @@ function onEditorDelete() {
   }
   const mode = editor.mode;
   const id = editor.id;
+  if (mode === "fixedItem") {
+    document.getElementById("editor").close();
+    return;
+  }
   commit((draft) => {
     if (mode === "list") {
       const list = draft.lists.find((row) => row.id === editor.listId) || draft.lists[0];
       if (list) list.items = (list.items || []).filter((row) => row.id !== id);
-    } else if (mode === "milestone") draft.anya.milestones = draft.anya.milestones.filter((row) => row.id !== id);
-    else if (mode === "prep") draft.baby2.prep = draft.baby2.prep.filter((row) => row.id !== id);
-    else if (mode === "vaccine") draft.anya.vaccines = draft.anya.vaccines.filter((row) => row.id !== id);
-    else if (mode === "keyDate") draft.keyDates = draft.keyDates.filter((row) => row.id !== id);
-    else if (mode === "fixedItem" && draft.fixedCosts) {
-      draft.fixedCosts.items = (draft.fixedCosts.items || []).filter((item, index) => (item.id || `fc${index}`) !== id);
-      ensureFixed(draft);
-    } else if (mode === "insurance" && draft.insurance) {
+    } else if (mode === "milestone") {
+      writeKid(draft, (kid) => {
+        kid.milestones = (kid.milestones || []).filter((row) => row.id !== id);
+      });
+    } else if (mode === "prep") draft.baby2.prep = draft.baby2.prep.filter((row) => row.id !== id);
+    else if (mode === "kidprep") {
+      writeKid(draft, (kid) => {
+        kid.prep = (kid.prep || []).filter((row) => row.id !== id);
+      });
+    } else if (mode === "vaccine") {
+      writeKid(draft, (kid) => {
+        kid.vaccines = (kid.vaccines || []).filter((row) => row.id !== id);
+      });
+    } else if (mode === "keyDate") draft.keyDates = draft.keyDates.filter((row) => row.id !== id);
+    else if (mode === "insurance" && draft.insurance) {
       draft.insurance.policies = (draft.insurance.policies || []).filter((policy, index) => {
         if (policy && policy.id === id) return false;
         return `ins:${index}:${policy.person || ""}:${policy.name || ""}:${policy.nextDue || ""}` !== id;

@@ -146,6 +146,31 @@ main {
   gap: 12px;
   align-items: center;
 }
+.kid-switch {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin: 0 0 14px;
+  background: #efe8de;
+  border-radius: 999px;
+}
+.kid-switch button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  color: #8a7d70;
+  cursor: pointer;
+}
+.kid-switch button.is-on {
+  background: #fff;
+  color: #2a2622;
+  box-shadow: 0 1px 2px rgba(70, 52, 30, 0.08);
+}
 .anya-top h1 { font-size: 36px; }
 .title-row {
   display: flex;

@@ -224,8 +224,10 @@
     for (const item of state.keyDates || []) {
       if (item.date !== iso) continue;
       let subtitle = item.notes || "";
-      if (item.kind === "birthday" && state.anya && state.anya.born) {
-        subtitle = `Born ${formatDayMonthYear(state.anya.born)}`;
+      if (item.kind === "birthday") {
+        const tagged = (state.kids || []).find((kid) => kid && item.child && (kid.id === item.child || (kid.name && kid.name.toLowerCase() === String(item.child).toLowerCase())));
+        const born = tagged ? tagged.bornDate || tagged.born : state.anya && state.anya.born;
+        if (born) subtitle = `Born ${formatDayMonthYear(born)}`;
       }
       events.push({
         id: item.id,
@@ -692,7 +694,7 @@
     const policies = insurancePolicies(raw);
     if (!raw || typeof raw !== "object" || !Array.isArray(raw.policies)) return null;
     const visible = policies.filter((policy) => showCancelled || policy.status !== "cancelled");
-    const preferred = ["Wei Liang", "Zhen Ling", "Anya"];
+    const preferred = ["Wei Liang", "Zhen Ling", "Anya", "Yuna"];
     const people = preferred.concat(visible.map((policy) => policy.person).filter((person) => !preferred.includes(person)));
     const groups = [];
     for (const person of people) {
@@ -812,6 +814,116 @@
     return "";
   }
 
+  // Copies the legacy anya object into state.kids without dropping fields
+  // that are already stored on a child. Yuna is added with an empty prep
+  // list. baby2.prep is a different list and is not copied across.
+  function normalizeKids(state) {
+    if (!state || typeof state !== "object") return state;
+    if (!Array.isArray(state.kids)) state.kids = [];
+    state.kids = state.kids.filter((kid) => kid && typeof kid === "object" && kid.id);
+    const legacy = state.anya && typeof state.anya === "object" ? state.anya : {};
+    state.anya = legacy;
+
+    let anya = state.kids.find((kid) => kid.id === "anya");
+    if (!anya) {
+      anya = {
+        id: "anya",
+        name: "Anya",
+        bornDate: legacy.born || legacy.bornDate || null,
+        dueDate: legacy.dueDate || null,
+        sleep: legacy.sleep && typeof legacy.sleep === "object" ? legacy.sleep : null,
+        milestones: Array.isArray(legacy.milestones) ? legacy.milestones : [],
+        vaccines: Array.isArray(legacy.vaccines) ? legacy.vaccines : [],
+        notes: typeof legacy.notes === "string" ? legacy.notes : "",
+        prep: Array.isArray(legacy.prep) ? legacy.prep : [],
+      };
+      state.kids.unshift(anya);
+    } else {
+      if (!anya.name) anya.name = "Anya";
+      if (!Object.prototype.hasOwnProperty.call(anya, "bornDate") && (legacy.born || legacy.bornDate)) anya.bornDate = legacy.born || legacy.bornDate;
+      if (!anya.dueDate && legacy.dueDate) anya.dueDate = legacy.dueDate;
+      if (!anya.sleep && legacy.sleep && typeof legacy.sleep === "object") anya.sleep = legacy.sleep;
+      if (!Array.isArray(anya.milestones)) anya.milestones = Array.isArray(legacy.milestones) ? legacy.milestones : [];
+      if (!Array.isArray(anya.vaccines)) anya.vaccines = Array.isArray(legacy.vaccines) ? legacy.vaccines : [];
+      if (typeof anya.notes !== "string") anya.notes = typeof legacy.notes === "string" ? legacy.notes : "";
+      if (!Array.isArray(anya.prep)) anya.prep = [];
+    }
+
+    if (anya.bornDate) legacy.born = anya.bornDate;
+    else if (!Object.prototype.hasOwnProperty.call(anya, "bornDate") && legacy.born) anya.bornDate = legacy.born;
+    if (anya.sleep) legacy.sleep = anya.sleep;
+    else if (legacy.sleep && typeof legacy.sleep === "object") anya.sleep = legacy.sleep;
+    legacy.milestones = anya.milestones;
+    legacy.vaccines = anya.vaccines;
+    legacy.notes = typeof anya.notes === "string" ? anya.notes : "";
+    anya.notes = legacy.notes;
+
+    let yuna = state.kids.find((kid) => kid.id === "yuna");
+    if (!yuna) {
+      yuna = { id: "yuna", name: "Yuna", dueDate: "2027-05-10", bornDate: null, prep: [] };
+      state.kids.push(yuna);
+    } else {
+      if (!yuna.name) yuna.name = "Yuna";
+      if (!yuna.dueDate) yuna.dueDate = "2027-05-10";
+      if (!Object.prototype.hasOwnProperty.call(yuna, "bornDate")) yuna.bornDate = null;
+      if (!Array.isArray(yuna.prep)) yuna.prep = [];
+    }
+
+    for (const kid of state.kids) {
+      if (!Array.isArray(kid.milestones)) kid.milestones = [];
+      if (!Array.isArray(kid.vaccines)) kid.vaccines = [];
+      if (!Array.isArray(kid.prep)) kid.prep = [];
+      if (typeof kid.notes !== "string") kid.notes = "";
+    }
+    return state;
+  }
+
+  function dueCountdown(due, day) {
+    if (!due) return null;
+    const days = diffDays(day, due);
+    if (days == null) return null;
+    if (days > 1) return `${days} days to go`;
+    if (days === 1) return "1 day to go";
+    if (days === 0) return "Due today";
+    if (days === -1) return "1 day past the due date";
+    return `${Math.abs(days)} days past the due date`;
+  }
+
+  function antenatalFor(state, kid, events) {
+    if (!kid) return [];
+    const id = String(kid.id || "").toLowerCase();
+    const name = String(kid.name || "").toLowerCase();
+    const rows = [];
+    for (const item of (state && state.keyDates) || []) {
+      if (!item || !item.date) continue;
+      const tag = String(item.child || "").toLowerCase();
+      const person = String(item.person || "").toLowerCase();
+      if (!tag && !person) continue;
+      if (tag === id || tag === name || person === id || person === name) {
+        rows.push({
+          title: item.title || "Appointment",
+          date: item.date,
+          where: item.notes || "",
+          source: "keyDate",
+        });
+      }
+    }
+    if (name) {
+      for (const event of events || []) {
+        const title = String((event && event.title) || "");
+        if (!title.toLowerCase().includes(name)) continue;
+        rows.push({
+          title,
+          date: event.date || "",
+          where: event.where || event.time || "",
+          source: "calendar",
+        });
+      }
+    }
+    rows.sort((a, b) => String(a.date).localeCompare(String(b.date)) || a.title.localeCompare(b.title));
+    return rows;
+  }
+
   function shoppingList(state) {
     const lists = state.lists || [];
     return lists.find((list) => list.id === "shopping") || lists.find((list) => list.shared) || lists[0] || null;
@@ -862,6 +974,9 @@
     docLinkGroups,
     safeUrl,
     shoppingList,
+    normalizeKids,
+    dueCountdown,
+    antenatalFor,
     WEEKDAYS,
     MONTHS,
     MONTHS_SHORT,
