@@ -8,12 +8,14 @@ const LOCAL_KEY = "familyhub.cache";
 const TAB_KEY = "familyhub.activeTab";
 const TABS = ["home", "calendar", "money", "anya", "docs"];
 const MONEY_URL = "https://weiliang93-stack.github.io/willow/money/";
+const HOUSEHOLD_SHEET_URL = "https://docs.google.com/spreadsheets/d/13JBXgENPoin92lAHq7BAHTcvV2YMqEY9a-_wtywoLY0/edit";
+const TEOLOH_SHEET_URL = "https://docs.google.com/spreadsheets/d/1JboHp21d8kCjBpLLxrCV0Q1Ok5hgbrSLYlxK3yb4tkY/edit";
 const CALENDAR_URL = "https://calendar.google.com";
 const MEMBER_COLOR = { wl: "#3f6b4f", zl: "#2c3b4d", anya: "#d2652e" };
 const BAR_COLORS = ["#6e8f78", "#d07a56", "#6d88a8", "#d2a24e", "#7f9a72", "#b9837a", "#8b7eaa"];
 const DOC_ORDER = ["d-car", "d-insurance", "d-home", "d-archive", "d-archive-sheet"];
 
-const ui = { tab: "home", homeDay: null, calWeek: null, calDay: null };
+const ui = { tab: "home", homeDay: null, calWeek: null, calDay: null, showCancelled: false };
 let state = null;
 let currentUser = null;
 let editsPaused = false;
@@ -381,7 +383,7 @@ function renderHome(day) {
   const selected = ui.homeDay || day;
   const events = ui.homeDay ? L.eventsOn(state, ui.homeDay, familyEvents) : L.homeAgenda(state, day, familyEvents);
   const hero = L.tripHero(L.featuredTrip(state, day), day);
-  const dates = L.upcomingKeyDates(state, day, 4);
+  const dates = L.upcomingKeyDates(state, day, 6);
   const list = L.shoppingList(state);
   const heroHtml = hero
     ? `<section class="hero hero-trip">
@@ -395,11 +397,7 @@ function renderHome(day) {
   const datesHtml = dates.length
     ? `<div class="card list-card">${dates
         .map(
-          (item) => `<button type="button" class="date-row" data-edit="keyDate" data-id="${esc(item.id)}">
-            <i class="dot" style="background:${dotColor(item.kind)}"></i>
-            <span class="date-title">${esc(item.title)}</span>
-            <span class="date-when">${esc(L.formatDayMonth(item.date))}</span>
-          </button>`
+          (item) => dateButton(item, false)
         )
         .join("")}</div>`
     : '<div class="card empty-card">No other dates in the next few months.</div>';
@@ -437,20 +435,14 @@ function renderCalendar(day) {
     events.push(...L.eventsOn(state, iso, familyEvents));
   }
   const weekEnd = L.addDays(start, 6);
-  const later = (state.keyDates || [])
-    .filter((item) => item.date > weekEnd)
-    .sort((a, b) => a.date.localeCompare(b.date));
+  const later = L.remindersAfter(state, weekEnd);
   const soon = later.filter((item) => L.diffDays(day, item.date) <= 400).slice(0, 8);
   const far = later.filter((item) => !soon.includes(item));
   const dateCard = (items) =>
     items.length
       ? `<div class="card list-card">${items
           .map(
-            (item) => `<button type="button" class="date-row" data-edit="keyDate" data-id="${esc(item.id)}">
-              <i class="dot" style="background:${dotColor(item.kind)}"></i>
-              <span class="date-title">${esc(item.title)}</span>
-              <span class="date-when">${esc(L.formatDayMonthYear(item.date))}</span>
-            </button>`
+            (item) => dateButton(item, true)
           )
           .join("")}</div>`
       : "";
@@ -522,10 +514,103 @@ async function loadFamily(from) {
   render();
 }
 
+function sheetLink(href, label) {
+  return `<a class="text-btn" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
+}
+
+function dateButton(item, long) {
+  const mode = item.source === "insurance" ? "insurance" : "keyDate";
+  const when = long ? L.formatDayMonthYear(item.date) : L.formatDayMonth(item.date);
+  return `<button type="button" class="date-row" data-edit="${mode}" data-id="${esc(item.id)}">
+    <i class="dot" style="background:${dotColor(item.kind)}"></i>
+    <span class="date-title">${esc(item.title)}${item.subtitle ? `<small>${esc(item.subtitle)}</small>` : ""}</span>
+    <span class="date-when">${esc(when)}</span>
+  </button>`;
+}
+
 function moneyMessage() {
-  if (moneyStatus === "loading") return "Loading live amounts from Penny's expense app…";
-  if (moneyStatus === "signed-out") return "Sign in to load live amounts from Penny's expense app. Nothing here is estimated.";
-  return "Couldn't read Penny's expense app just now. Nothing here is estimated.";
+  if (moneyStatus === "loading") return "Loading the household expense log…";
+  if (moneyStatus === "signed-out") return "Sign in to load the household expense log. Nothing here is estimated.";
+  return "Couldn't read the household expense log just now. Nothing here is estimated.";
+}
+
+function fixedCostsHtml() {
+  const view = L.fixedCostView(state.fixedCosts);
+  const link = sheetLink(TEOLOH_SHEET_URL, "Open TeoLoh Financial Planning");
+  if (!view) {
+    return `<section class="card budget-card">
+      <div class="section-head"><h2>Fixed monthly costs</h2>${link}</div>
+      <p class="empty-copy">Fixed costs not loaded yet.</p>
+      <button type="button" class="text-btn" data-add="fixedItem">Add an item</button>
+    </section>`;
+  }
+  const lines = [
+    view.monthlyContribution === null ? "" : `<p class="aside-line"><span>Monthly contribution</span><b>${esc(L.formatMoney(view.monthlyContribution))}</b></p>`,
+    view.householdFixedCosts === null ? "" : `<p class="aside-line"><span>Household fixed costs</span><b>${esc(L.formatMoney(view.householdFixedCosts))}</b></p>`,
+    ...view.allocations.map((row) => `<p class="aside-line"><span>${esc(row.name)}</span><b>${esc(L.formatMoney(row.amount))}</b></p>`),
+  ].join("");
+  return `<section class="card budget-card">
+    <div class="section-head"><h2>Fixed monthly costs</h2>${link}</div>
+    <p class="lede">${view.asOf ? `As of ${esc(L.formatDayMonthYear(view.asOf))}` : "No as-of date"}</p>
+    <div class="list-card">${view.items
+      .map(
+        (item) => `<div class="check-row">
+          <span><b>${esc(item.name)}</b>${item.note ? `<small class="aside">${esc(item.note)}</small>` : ""}</span>
+          <b>${item.amount === null ? "" : esc(L.formatMoney(item.amount))}</b>
+          ${pencilButton("fixedItem", item.id)}
+        </div>`
+      )
+      .join("")}</div>
+    <p class="track-meta">Total ${esc(L.formatMoney(view.total))}</p>
+    ${lines}
+    <button type="button" class="text-btn" data-add="fixedItem">Add an item</button>
+  </section>`;
+}
+
+function insuranceHtml(day) {
+  const view = L.insuranceView(state.insurance, day, ui.showCancelled);
+  const link = sheetLink(TEOLOH_SHEET_URL, "Open TeoLoh Financial Planning");
+  if (!view) {
+    return `<section class="card budget-card">
+      <div class="section-head"><h2>Insurance</h2>${link}</div>
+      <p class="empty-copy">Insurance not loaded yet.</p>
+      <button type="button" class="text-btn" data-add="insurance">Add a cover</button>
+    </section>`;
+  }
+  const renewals = view.renewals.length
+    ? `<h3 class="subhead">Renewals in next 60 days</h3><div class="list-card">${view.renewals
+        .map(
+          (item) => `<button type="button" class="date-row" data-edit="insurance" data-id="${esc(item.id)}">
+            <i class="dot" style="background:${dotColor("renewal")}"></i>
+            <span class="date-title">${esc(item.title)}<small>${esc(item.subtitle)}</small></span>
+            <span class="date-when">${esc(L.formatDayMonth(item.date))}</span>
+          </button>`
+        )
+        .join("")}</div>`
+    : `<p class="empty-copy">No renewals in the next 60 days.</p>`;
+  const groups = view.groups
+    .map(
+      (group) => `<h3 class="subhead">${esc(group.person)}</h3><div class="list-card">${group.policies
+        .map((policy) => {
+          const meta = [policy.category, policy.frequency, policy.payment].filter(Boolean).join(" · ");
+          const premium = policy.premium === null ? "" : L.formatMoney(policy.premium);
+          return `<div class="check-row${policy.status === "cancelled" ? " is-done" : ""}">
+            <span><b>${esc(policy.name)}</b><small class="aside">${esc(meta)}${policy.cover ? ` · ${esc(policy.cover)}` : ""}</small></span>
+            <b>${esc(premium)}</b>
+            ${pencilButton("insurance", policy.id)}
+          </div>`;
+        })
+        .join("")}</div>`
+    )
+    .join("");
+  return `<section class="card budget-card">
+    <div class="section-head"><h2>Insurance</h2>${link}</div>
+    <p class="lede">${view.asOf ? `As of ${esc(L.formatDayMonthYear(view.asOf))}` : "No as-of date"}</p>
+    ${view.cancelledCount ? `<button type="button" class="text-btn" data-action="toggle-cancelled">${ui.showCancelled ? "Hide cancelled" : "Show cancelled"}</button>` : ""}
+    ${renewals}
+    ${groups}
+    <button type="button" class="text-btn" data-add="insurance">Add a cover</button>
+  </section>`;
 }
 
 function renderMoney(day) {
@@ -533,11 +618,11 @@ function renderMoney(day) {
   const bills = (summary || L.summarizeMoney({ monthlyBudget: null, expenses: [] }, { excludedExpenses: [] }, day, state)).bills;
   let budgetHtml;
   if (!summary || !summary.foundAutomation) {
-    budgetHtml = `<section class="card budget-card"><h2>${esc(L.monthTitle(day).replace(/\s+\d{4}$/, ""))} budget</h2><p class="lede">Household spend · trip spend kept separate</p><p class="empty-copy">${esc(moneyMessage())}</p></section>`;
+    budgetHtml = `<section class="card budget-card"><div class="section-head"><h2>Variable household spend</h2>${sheetLink(HOUSEHOLD_SHEET_URL, "Open Household Expenses sheet")}</div><p class="lede">${esc(L.monthTitle(day))} · trip spend kept separate</p><p class="empty-copy">${esc(moneyMessage())}</p></section>`;
   } else if (summary.budget === null) {
     budgetHtml = `<section class="card budget-card">
-      <h2>${esc(summary.monthTitle.replace(/\s+\d{4}$/, ""))} budget</h2>
-      <p class="lede">Household spend · trip spend kept separate</p>
+      <div class="section-head"><h2>Variable household spend</h2>${sheetLink(HOUSEHOLD_SHEET_URL, "Open Household Expenses sheet")}</div>
+      <p class="lede">${esc(summary.monthTitle)} · trip spend kept separate</p>
       <div class="figure">${esc(L.formatMoney(summary.spent))}</div>
       <p class="empty-copy">No combined budget is set. Spent ${esc(L.formatMoney(summary.spent))} of combined expenses so far this month.</p>
     </section>`;
@@ -546,8 +631,8 @@ function renderMoney(day) {
     const tone = summary.spent >= summary.budget ? "over" : summary.spent >= summary.budget * 0.7 ? "warn" : "";
     const left = summary.remaining >= 0 ? `${L.formatMoney(summary.remaining)} left` : `${L.formatMoney(Math.abs(summary.remaining))} over`;
     budgetHtml = `<section class="card budget-card">
-      <h2>${esc(summary.monthTitle.replace(/\s+\d{4}$/, ""))} budget</h2>
-      <p class="lede">Household spend · trip spend kept separate</p>
+      <div class="section-head"><h2>Variable household spend</h2>${sheetLink(HOUSEHOLD_SHEET_URL, "Open Household Expenses sheet")}</div>
+      <p class="lede">${esc(summary.monthTitle)} · trip spend kept separate</p>
       <div class="figure">${esc(L.formatMoney(summary.spent))}</div>
       <p class="figure-sub">spent of ${esc(L.formatMoney(summary.budget))}</p>
       <div class="track"><span class="${tone}" style="width:${pct}%"></span></div>
@@ -572,7 +657,7 @@ function renderMoney(day) {
 
   let tripHtml = "";
   if (!summary || (!summary.foundAutomation && summary.trip.count === 0)) {
-    tripHtml = `<section class="hero hero-trip"><p class="hero-kicker">Trip spend</p><p class="hero-note">Trip-type rows show here once Penny's expenses load. Nothing is estimated.</p></section>`;
+    tripHtml = `<section class="hero hero-trip"><p class="hero-kicker">Trip spend</p><p class="hero-note">Trip-type rows show here once the household expense log loads. Nothing is estimated.</p></section>`;
   } else if (summary.trip.emptyMessage && !summary.foundAutomation) {
     tripHtml = `<section class="hero hero-trip"><p class="hero-kicker">${esc(summary.trip.title)}</p><p class="hero-note">Couldn't read trip rows, so nothing is shown for them.</p></section>`;
   } else if (summary.trip.emptyMessage) {
@@ -628,11 +713,13 @@ function renderMoney(day) {
     </header>
     ${budgetHtml}
     ${bars}
+    ${fixedCostsHtml()}
+    ${insuranceHtml(day)}
     ${tripHtml}
     ${others}
     ${sectionHead("Upcoming bills & renewals", "", plusButton("keyDate"))}
     ${billHtml}
-    <p class="footnote">Synced from Penny's expense app. Combined spend only. <a href="${MONEY_URL}">Edit in Money</a></p>`;
+    <p class="footnote">Figures synced from the household expense log. <a href="${MONEY_URL}">Edit variable spend in Money</a></p>`;
 }
 
 function renderAnya(day) {
@@ -792,6 +879,11 @@ function onClick(event) {
     loadMoney();
     return;
   }
+  if (actionEl.dataset.action === "toggle-cancelled") {
+    ui.showCancelled = !ui.showCancelled;
+    render();
+    return;
+  }
   if (actionEl.dataset.action === "clear-home") {
     ui.homeDay = null;
     render();
@@ -895,8 +987,8 @@ function field(name, type, label, value) {
   input.value = value == null ? "" : String(value);
   if (type === "number") {
     input.min = "0";
-    input.max = "8";
-    input.step = "1";
+    input.step = name === "napsPerDay" ? "1" : "0.01";
+    if (name === "napsPerDay") input.max = "8";
   }
   wrap.append(span, input);
   return wrap;
@@ -944,7 +1036,43 @@ function findItem(mode, id, listId) {
   if (mode === "vaccine") return state.anya.vaccines.find((row) => row.id === id);
   if (mode === "keyDate") return state.keyDates.find((row) => row.id === id);
   if (mode === "doc") return state.docs.find((row) => row.id === id);
+  if (mode === "fixedItem" && state.fixedCosts) return fixedItemById(state.fixedCosts, id);
+  if (mode === "insurance" && state.insurance) return policyById(state.insurance, id);
   return null;
+}
+
+function fixedItemById(costs, id) {
+  const items = (costs && costs.items) || [];
+  const found = items.find((item) => item && item.id === id);
+  if (found) return found;
+  const index = /^fc(\d+)$/.exec(id || "");
+  return index ? items[Number(index[1])] || null : null;
+}
+
+function policyById(insurance, id) {
+  const policies = (insurance && insurance.policies) || [];
+  const found = policies.find((policy) => policy && policy.id === id);
+  if (found) return found;
+  const index = /^ins:(\d+):/.exec(id);
+  return index ? policies[Number(index[1])] || null : null;
+}
+
+function ensureFixed(draft) {
+  if (!draft.fixedCosts || typeof draft.fixedCosts !== "object") {
+    draft.fixedCosts = { source: "TeoLoh Financial Planning", asOf: today(), items: [] };
+  }
+  if (!Array.isArray(draft.fixedCosts.items)) draft.fixedCosts.items = [];
+  if (!draft.fixedCosts.source) draft.fixedCosts.source = "TeoLoh Financial Planning";
+  if (!draft.fixedCosts.asOf) draft.fixedCosts.asOf = today();
+  draft.fixedCosts.total = L.round2(draft.fixedCosts.items.reduce((sum, item) => sum + (Number(item.amount) || 0), 0));
+  return draft.fixedCosts;
+}
+
+function ensureInsurance(draft) {
+  if (!draft.insurance || typeof draft.insurance !== "object") draft.insurance = { asOf: today(), policies: [] };
+  if (!Array.isArray(draft.insurance.policies)) draft.insurance.policies = [];
+  if (!draft.insurance.asOf) draft.insurance.asOf = today();
+  return draft.insurance;
 }
 
 function openEditor(mode, id, listId) {
@@ -988,6 +1116,22 @@ function openEditor(mode, id, listId) {
       ])
     );
     fields.append(field("notes", "text", "Note (optional)", item ? item.notes || "" : ""));
+  } else if (mode === "fixedItem") {
+    title.textContent = id ? "Edit fixed cost" : "Add fixed cost";
+    fields.append(field("name", "text", "Name", item ? item.name : ""));
+    fields.append(field("amount", "number", "Amount", item && item.amount != null ? item.amount : ""));
+    fields.append(field("note", "text", "Note (optional)", item ? item.note || "" : ""));
+  } else if (mode === "insurance") {
+    title.textContent = id ? "Edit cover" : "Add cover";
+    fields.append(selectField("person", "Person", item ? item.person : "Wei Liang", [["Wei Liang", "Wei Liang"], ["Zhen Ling", "Zhen Ling"], ["Anya", "Anya"]]));
+    fields.append(selectField("category", "Category", item ? item.category : "Health", [["Life", "Life"], ["Health", "Health"], ["Extras", "Extras"]]));
+    fields.append(field("name", "text", "Name", item ? item.name : ""));
+    fields.append(field("cover", "text", "What it covers", item ? item.cover || "" : ""));
+    fields.append(field("premium", "number", "Premium", item && item.premium != null ? item.premium : ""));
+    fields.append(selectField("frequency", "Frequency", item ? item.frequency || "yearly" : "yearly", [["monthly", "Monthly"], ["yearly", "Yearly"]]));
+    fields.append(field("payment", "text", "How it is paid", item ? item.payment || "" : ""));
+    fields.append(field("nextDue", "date", "Next due", item && item.nextDue ? item.nextDue : ""));
+    fields.append(selectField("status", "Status", item ? item.status || "active" : "active", [["active", "Active"], ["cancelled", "Cancelled"]]));
   } else if (mode === "doc") {
     title.textContent = id ? "Edit document" : "Add a document";
     fields.append(field("title", "text", "Title", item ? item.title : ""));
@@ -1050,6 +1194,36 @@ function onEditorSubmit(event) {
         const item = draft.keyDates.find((row) => row.id === id);
         if (item) Object.assign(item, next);
       } else draft.keyDates.push({ id: uid(), ...next });
+    } else if (mode === "fixedItem") {
+      if (!text("name")) return;
+      const costs = ensureFixed(draft);
+      const amount = Number(text("amount"));
+      const next = { name: text("name"), amount: Number.isFinite(amount) ? amount : 0, note: text("note") };
+      const current = id ? fixedItemById(costs, id) : null;
+      if (current) Object.assign(current, next, { id: current.id || uid() });
+      else costs.items.push({ id: uid(), ...next });
+      ensureFixed(draft);
+    } else if (mode === "insurance") {
+      if (!text("name")) return;
+      const book = ensureInsurance(draft);
+      const premium = Number(text("premium"));
+      const next = {
+        person: text("person") || "Wei Liang",
+        category: text("category") || "Health",
+        name: text("name"),
+        cover: text("cover"),
+        premium: Number.isFinite(premium) ? premium : 0,
+        frequency: text("frequency") === "monthly" ? "monthly" : "yearly",
+        payment: text("payment"),
+        nextDue: text("nextDue") || null,
+        status: text("status") === "cancelled" ? "cancelled" : "active",
+      };
+      const current = id ? policyById(book, id) : null;
+      if (current) {
+        const keepId = current.id || uid();
+        Object.keys(current).forEach((key) => delete current[key]);
+        Object.assign(current, next, { id: keepId });
+      } else book.policies.push({ id: uid(), ...next });
     } else if (mode === "doc") {
       if (!text("title")) return;
       const next = { title: text("title"), subtitle: text("subtitle"), url: text("url") };
@@ -1088,7 +1262,15 @@ function onEditorDelete() {
     else if (mode === "prep") draft.baby2.prep = draft.baby2.prep.filter((row) => row.id !== id);
     else if (mode === "vaccine") draft.anya.vaccines = draft.anya.vaccines.filter((row) => row.id !== id);
     else if (mode === "keyDate") draft.keyDates = draft.keyDates.filter((row) => row.id !== id);
-    else if (mode === "doc") draft.docs = draft.docs.filter((row) => row.id !== id);
+    else if (mode === "fixedItem" && draft.fixedCosts) {
+      draft.fixedCosts.items = (draft.fixedCosts.items || []).filter((item, index) => (item.id || `fc${index}`) !== id);
+      ensureFixed(draft);
+    } else if (mode === "insurance" && draft.insurance) {
+      draft.insurance.policies = (draft.insurance.policies || []).filter((policy, index) => {
+        if (policy && policy.id === id) return false;
+        return `ins:${index}:${policy.person || ""}:${policy.name || ""}:${policy.nextDue || ""}` !== id;
+      });
+    } else if (mode === "doc") draft.docs = draft.docs.filter((row) => row.id !== id);
   });
   document.getElementById("editor").close();
 }

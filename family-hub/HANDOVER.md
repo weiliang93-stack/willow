@@ -500,9 +500,13 @@ to aim at the wrong item. Look up the id, as above.
 
 Money never writes. It only reads.
 
-The budget card is the **combined household** budget, the same numbers
-as expense-tracker's Combined tab plus the household budget figure
-`sheet-budget-sync` stores:
+The variable-spend card is labelled **Variable household spend**. It is
+the combined household month, the same numbers as expense-tracker's
+Combined tab plus the household budget figure `sheet-budget-sync`
+stores. Open the Household Expenses sheet from the card:
+https://docs.google.com/spreadsheets/d/13JBXgENPoin92lAHq7BAHTcvV2YMqEY9a-_wtywoLY0/edit
+Its Summary tab shows Household Budget (Monthly) and Spent This Month.
+The hub still computes those live rather than typing them in:
 
 - Spent: sum of `expenses_automation.excludedExpenses` whose `type` is
   `"combined"` and whose `date` falls in the current Singapore calendar
@@ -554,8 +558,132 @@ the latest matching charge, with the date it was charged. Rows with
 charge is not shown as Anya's renewal premium. If nothing matches, the
 row has a name and a date and no amount.
 
-The footer says "Synced from Penny's expense app" and links to
-https://weiliang93-stack.github.io/willow/money/ for editing.
+The footer says "Figures synced from the household expense log" and
+links to https://weiliang93-stack.github.io/willow/money/ to edit the
+variable spend. Do not put a person's or a bot's name on that line.
+
+### Fixed monthly costs
+
+These are not computed. They live on the `familyhub` row as
+`state.fixedCosts`, copied from TeoLoh Financial Planning, tab
+Saving/Spending, table Fixed Monthly Expense. The card links to
+https://docs.google.com/spreadsheets/d/1JboHp21d8kCjBpLLxrCV0Q1Ok5hgbrSLYlxK3yb4tkY/edit
+
+```json
+{
+  "source": "TeoLoh Financial Planning",
+  "asOf": "2026-01-15",
+  "items": [
+    { "name": "Example rent", "amount": 1, "note": "fake" },
+    { "name": "Example levy", "amount": 2 }
+  ],
+  "total": 3,
+  "monthlyContribution": 4,
+  "householdFixedCosts": 5,
+  "variableAllocations": { "Example groceries": 6 }
+}
+```
+
+`variableAllocations` may be a number or an object of name to amount.
+If `fixedCosts` is missing, the card says "Fixed costs not loaded yet"
+and still shows the sheet link. The seed does not include this object.
+Do not commit real amounts. Editing an item in the app rewrites only
+`familyhub`, and sets `total` to the sum of the items. The other
+summary fields stay as they were loaded.
+
+Replace the whole object (fake numbers only):
+
+```sql
+update app_state
+set state = jsonb_set(
+      state,
+      '{fixedCosts}',
+      '{
+        "source": "TeoLoh Financial Planning",
+        "asOf": "2026-01-15",
+        "items": [
+          {"name": "Example rent", "amount": 1, "note": "fake"},
+          {"name": "Example levy", "amount": 2}
+        ],
+        "total": 3,
+        "monthlyContribution": 4,
+        "householdFixedCosts": 5,
+        "variableAllocations": {"Example groceries": 6}
+      }'::jsonb,
+      true
+    ),
+    updated_at = now()
+where app = 'familyhub'
+  and user_id = 'USER_ID_HERE';
+```
+
+Read the row first. Change the path and the numbers to the real snapshot
+only in the database, not in git.
+
+### Insurance
+
+Also on the Money tab, from the Insurance tab of the same TeoLoh
+workbook. Stored as `state.insurance`. No policy numbers, in the app or
+in this file.
+
+```json
+{
+  "asOf": "2026-01-01",
+  "policies": [
+    {
+      "person": "Wei Liang",
+      "category": "Life",
+      "name": "Example life",
+      "cover": "Sample sum",
+      "premium": 2,
+      "frequency": "monthly",
+      "payment": "Card",
+      "nextDue": "2026-11-30",
+      "status": "active"
+    }
+  ]
+}
+```
+
+`person` is Wei Liang, Zhen Ling, or Anya. `category` is Life, Health,
+or Extras. `frequency` is monthly or yearly. `status` is active or
+cancelled. `nextDue` is `YYYY-MM-DD` or null. `cover` is a short
+description of what it covers, not a policy number.
+
+The card groups active policies by person and hides cancelled ones
+until "Show cancelled". "Renewals in next 60 days" lists active
+policies with a `nextDue` in that window, soonest first. Those same
+renewals also appear in Home and Calendar key dates, and on the week
+list when the due date falls in the week. If `insurance` is missing,
+the card says "Insurance not loaded yet".
+
+```sql
+update app_state
+set state = jsonb_set(
+      state,
+      '{insurance}',
+      '{
+        "asOf": "2026-01-01",
+        "policies": [
+          {
+            "person": "Anya",
+            "category": "Health",
+            "name": "Example cover",
+            "cover": "Sample ward",
+            "premium": 1,
+            "frequency": "yearly",
+            "payment": "Cash",
+            "nextDue": "2026-12-20",
+            "status": "active"
+          }
+        ]
+      }'::jsonb,
+      true
+    ),
+    updated_at = now()
+where app = 'familyhub'
+  and user_id = 'USER_ID_HERE';
+```
 
 ## What not to touch
 

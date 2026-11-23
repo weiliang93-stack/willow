@@ -326,6 +326,12 @@ main {
 .empty-card, .empty-line { padding: 16px; color: var(--soft); margin: 0; }
 .budget-card, .quiet-card, .note-card { padding: 16px 16px 14px; }
 .budget-card h2, .quiet-card h3 { margin: 0; font-size: 16px; }
+.budget-card .section-head { margin: 0 0 8px; flex-wrap: wrap; }
+.budget-card .section-head .text-btn { flex-basis: 100%; text-align: left; }
+.budget-card + .budget-card, .bars { margin-top: 12px; }
+.subhead { margin: 14px 2px 6px; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.aside-line { display: flex; justify-content: space-between; gap: 12px; margin: 4px 0; font-size: 14px; }
+.check-row small.aside { display: block; }
 .figure {
   margin-top: 10px;
   font-family: var(--display);

@@ -260,6 +260,9 @@
         });
       }
     }
+    for (const item of insuranceOnDate(state.insurance, iso)) {
+      events.push(item);
+    }
     for (const extra of extras || []) {
       if (!extra || extra.date !== iso || !extra.title) continue;
       const when = extra.allDay || !extra.start ? "All day" : extra.end ? `${extra.start}–${extra.end}` : String(extra.start);
@@ -289,12 +292,38 @@
     return out;
   }
 
+  function insuranceOnDate(insurance, iso) {
+    return insuranceReminders(insurance, iso, 0).map((item) => ({
+      id: item.id,
+      source: "insurance",
+      sourceId: item.id,
+      title: item.title,
+      subtitle: item.subtitle,
+      kind: "renewal",
+      date: iso,
+    }));
+  }
+
   function upcomingKeyDates(state, today, limit) {
     const agendaIds = new Set(homeAgenda(state, today).filter((ev) => ev.source === "keyDate").map((ev) => ev.sourceId));
-    return (state.keyDates || [])
+    const hub = (state.keyDates || [])
       .filter((item) => item.date >= today && diffDays(today, item.date) <= 120 && !agendaIds.has(item.id))
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .slice(0, limit || 4);
+      .map((item) => ({ ...item, source: "keyDate" }));
+    const renewals = insuranceReminders(state.insurance, today, 60).filter((item) => !agendaIds.has(item.id));
+    return hub
+      .concat(renewals)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.title).localeCompare(String(b.title)))
+      .slice(0, limit || 6);
+  }
+
+  function remindersAfter(state, afterDate) {
+    const hub = (state.keyDates || [])
+      .filter((item) => item.date > afterDate)
+      .map((item) => ({ id: item.id, title: item.title, date: item.date, kind: item.kind || "date", source: "keyDate" }));
+    const renewals = insuranceReminders(state.insurance, afterDate, 800).filter((item) => item.date > afterDate);
+    return hub
+      .concat(renewals)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
   }
 
   function round2(n) {
@@ -410,8 +439,8 @@
       const start = featured.start;
       const end = featured.end;
       included = tripTagged.filter((row) => (rule && row.trip === rule.label) || (row.type === "trip" && row.date >= start && row.date <= end));
-      windowNote = rule
-        ? `Tagged “${rule.label}” in Penny's expense app, plus any trip-type charge dated ${formatDayMonth(start)}–${formatDayMonth(end)}.`
+        windowNote = rule
+        ? `Tagged “${rule.label}” in the household expense log, plus any trip-type charge dated ${formatDayMonth(start)}–${formatDayMonth(end)}.`
         : `Trip-type charges dated ${formatDayMonth(start)}–${formatDayMonth(end)}.`;
     } else {
       included = tripTagged.filter((row) => monthKey(row.date) === month);
@@ -489,6 +518,111 @@
     };
   }
 
+  function moneyOrNull(value) {
+    if (typeof value === "number" && Number.isFinite(value)) return round2(value);
+    if (typeof value === "string" && value.trim() !== "") {
+      const n = Number(value);
+      if (Number.isFinite(n)) return round2(n);
+    }
+    return null;
+  }
+
+  function allocationLines(value) {
+    if (typeof value === "number" || typeof value === "string") {
+      const amount = moneyOrNull(value);
+      return amount === null ? [] : [{ name: "Variable allocations", amount }];
+    }
+    if (Array.isArray(value)) {
+      return value
+        .filter((item) => item && item.name)
+        .map((item) => ({ name: String(item.name), amount: moneyOrNull(item.amount) }))
+        .filter((item) => item.amount !== null);
+    }
+    if (value && typeof value === "object") {
+      return Object.keys(value)
+        .map((name) => ({ name, amount: moneyOrNull(value[name]) }))
+        .filter((item) => item.amount !== null);
+    }
+    return [];
+  }
+
+  function fixedCostView(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const items = (Array.isArray(raw.items) ? raw.items : []).map((item, index) => ({
+      id: item && item.id ? String(item.id) : `fc${index}`,
+      name: (item && item.name) || "Item",
+      amount: moneyOrNull(item && item.amount),
+      note: (item && item.note) || "",
+    }));
+    const stored = moneyOrNull(raw.total);
+    const summed = round2(items.reduce((sum, item) => sum + (item.amount || 0), 0));
+    return {
+      source: raw.source || "TeoLoh Financial Planning",
+      asOf: raw.asOf || "",
+      items,
+      total: stored === null ? summed : stored,
+      monthlyContribution: moneyOrNull(raw.monthlyContribution),
+      householdFixedCosts: moneyOrNull(raw.householdFixedCosts),
+      allocations: allocationLines(raw.variableAllocations),
+    };
+  }
+
+  function policyIdentity(policy, index) {
+    if (policy && policy.id) return String(policy.id);
+    return `ins:${index}:${policy.person || ""}:${policy.name || ""}:${policy.nextDue || ""}`;
+  }
+
+  function insurancePolicies(raw) {
+    if (!raw || typeof raw !== "object" || !Array.isArray(raw.policies)) return [];
+    return raw.policies
+      .filter((policy) => policy && typeof policy === "object")
+      .map((policy, index) => ({
+        id: policyIdentity(policy, index),
+        person: policy.person || "Family",
+        category: policy.category || "",
+        name: policy.name || "Cover",
+        cover: policy.cover || "",
+        premium: moneyOrNull(policy.premium),
+        frequency: policy.frequency || "",
+        payment: policy.payment || "",
+        nextDue: policy.nextDue || null,
+        status: policy.status === "cancelled" ? "cancelled" : "active",
+      }));
+  }
+
+  function insuranceReminders(insurance, today, withinDays) {
+    return insurancePolicies(insurance)
+      .filter((policy) => policy.status !== "cancelled" && policy.nextDue && policy.nextDue >= today && diffDays(today, policy.nextDue) <= withinDays)
+      .map((policy) => ({
+        id: policy.id,
+        title: `${policy.person} · ${policy.name}`,
+        date: policy.nextDue,
+        kind: "renewal",
+        source: "insurance",
+        subtitle: [policy.category, policy.frequency].filter(Boolean).join(" · "),
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
+  }
+
+  function insuranceView(raw, today, showCancelled) {
+    const policies = insurancePolicies(raw);
+    if (!raw || typeof raw !== "object" || !Array.isArray(raw.policies)) return null;
+    const visible = policies.filter((policy) => showCancelled || policy.status !== "cancelled");
+    const preferred = ["Wei Liang", "Zhen Ling", "Anya"];
+    const people = preferred.concat(visible.map((policy) => policy.person).filter((person) => !preferred.includes(person)));
+    const groups = [];
+    for (const person of people) {
+      const rows = visible.filter((policy) => policy.person === person);
+      if (rows.length) groups.push({ person, policies: rows });
+    }
+    return {
+      asOf: raw.asOf || "",
+      groups,
+      renewals: insuranceReminders(raw, today, 60),
+      cancelledCount: policies.filter((policy) => policy.status === "cancelled").length,
+    };
+  }
+
   function safeUrl(url) {
     try {
       const parsed = new URL(String(url || "").trim());
@@ -536,6 +670,10 @@
     brandsIn,
     lastChargeFor,
     summarizeMoney,
+    fixedCostView,
+    insuranceView,
+    insuranceReminders,
+    remindersAfter,
     safeUrl,
     shoppingList,
     WEEKDAYS,

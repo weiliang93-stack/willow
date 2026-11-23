@@ -160,6 +160,50 @@ test("doc links only allow http(s)", () => {
   assert.equal(logic.safeUrl(""), "");
 });
 
+test("fixed costs and insurance use the hub snapshot, with fake figures only", () => {
+  assert.equal(logic.fixedCostView(null), null);
+  assert.equal(logic.insuranceView(null, TODAY, false), null);
+  const fixed = logic.fixedCostView({
+    source: "TeoLoh Financial Planning",
+    asOf: "2026-01-15",
+    items: [
+      { name: "Example rent", amount: 1 },
+      { name: "Example levy", amount: 2, note: "fake" },
+    ],
+    total: 3,
+    monthlyContribution: 4,
+    householdFixedCosts: 5,
+    variableAllocations: { "Example groceries": 6 },
+  });
+  assert.equal(fixed.total, 3);
+  assert.equal(fixed.items[1].note, "fake");
+  assert.deepEqual(fixed.allocations, [{ name: "Example groceries", amount: 6 }]);
+
+  const hub = {
+    ...seed,
+    insurance: {
+      asOf: "2026-01-01",
+      policies: [
+        { person: "Wei Liang", category: "Life", name: "Example life", cover: "Sample sum", premium: 2, frequency: "monthly", payment: "Card", nextDue: "2026-11-30", status: "active" },
+        { person: "Anya", category: "Health", name: "Example cover", cover: "Sample ward", premium: 1, frequency: "yearly", payment: "Cash", nextDue: "2026-12-20", status: "active" },
+        { person: "Zhen Ling", category: "Extras", name: "Old example", cover: "Sample", premium: 3, frequency: "yearly", payment: "Cash", nextDue: "2026-12-01", status: "cancelled" },
+        { person: "Zhen Ling", category: "Health", name: "Far example", cover: "Sample", premium: 4, frequency: "yearly", payment: "Cash", nextDue: "2027-06-01", status: "active" },
+      ],
+    },
+  };
+  const view = logic.insuranceView(hub.insurance, TODAY, false);
+  assert.deepEqual(view.renewals.map((item) => item.title), ["Wei Liang · Example life", "Anya · Example cover"]);
+  assert.equal(view.groups.some((group) => group.policies.some((policy) => policy.status === "cancelled")), false);
+  assert.equal(view.cancelledCount, 1);
+  const shown = logic.insuranceView(hub.insurance, TODAY, true);
+  assert.equal(shown.groups.some((group) => group.person === "Zhen Ling"), true);
+  const onDue = logic.eventsOn(hub, "2026-11-30").find((event) => event.source === "insurance");
+  assert.equal(onDue.title, "Wei Liang · Example life");
+  const upcoming = logic.upcomingKeyDates(hub, TODAY, 6);
+  assert.equal(upcoming[0].title, "Wei Liang · Example life");
+  assert.equal(JSON.stringify(view).includes("policyNumber"), false);
+});
+
 test("the app script only pulls expense rows and only pushes familyhub", () => {
   const src = fs.readFileSync(path.join(__dirname, "script.js"), "utf8");
   assert.match(src, /pullState\(\s*["']expenses["']\s*\)/);
@@ -167,4 +211,13 @@ test("the app script only pulls expense rows and only pushes familyhub", () => {
   assert.match(src, /pushStateNow\(\s*["']familyhub["']/);
   assert.equal(/pushState(?:Now)?\(\s*["']expenses/.test(src), false);
   assert.equal(/pushState(?:Now)?\(\s*["']expenses_automation/.test(src), false);
+});
+
+test("hub copy does not name Penny", () => {
+  const files = ["script.js", "logic.js", "HANDOVER.md", "seed.js"].map((name) => fs.readFileSync(path.join(__dirname, name), "utf8"));
+  files.push(fs.readFileSync(path.join(__dirname, "../AGENTS.md"), "utf8"));
+  const claude = fs.readFileSync(path.join(__dirname, "../CLAUDE.md"), "utf8");
+  const section = claude.slice(claude.indexOf("**family-hub/**"), claude.indexOf("## Sync architecture"));
+  files.push(section);
+  for (const text of files) assert.equal(/penny/i.test(text), false, text.slice(0, 80));
 });
