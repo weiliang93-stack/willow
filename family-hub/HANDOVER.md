@@ -6,7 +6,8 @@ The app is a normal phone page in this repo. It is not a mockup.
 ## What it is
 
 Wei Liang and Zhen Ling's shared home screen: the week ahead, a simple
-calendar, money, Anya, and baby #2 plus household document links.
+calendar, money, the kids (Anya and Yuna), and baby #2 plus household
+document links.
 
 After this branch is merged to `main`, the live page is:
 
@@ -26,11 +27,16 @@ have her own login yet. See the end of this note before adding her.
 - `script.js` — screen rendering, sign-in boot, and saves.
 - `logic.js` — dates, the week agenda, and the money maths. No network.
 - `seed.js` — the starting hub document. Same object as the SQL below.
-- `logic.test.cjs` — checks the dates and the money rules.
-  Run from the repo root: `node --test family-hub/logic.test.cjs`
+- `logic.test.cjs` — checks the dates, the money rules, and the kids
+  migration. Run from the repo root: `node --test family-hub/logic.test.cjs`
 - `supabase/functions/family-calendar/` — on-demand Family calendar
   read. `parse.ts` turns the iCal feed into events;
   `node --experimental-strip-types --test supabase/functions/family-calendar/parse.test.ts`
+- `supabase/functions/sync-fixed-costs/` — daily one-way read of the
+  TeoLoh Fixed Monthly Expense table into `familyhub.state.fixedCosts`.
+  `node --experimental-strip-types --test supabase/functions/sync-fixed-costs/parse.test.ts`
+- `shared/sync-fixed-costs.sql` — one-time `jsonb_set` helper. No cron
+  and no secrets.
 
 Shared code, unchanged by this app: `shared/supabase-config.js` and
 `shared/supabase-sync.js`. The public anon key in the config file is
@@ -59,6 +65,10 @@ Shape, shortened:
     "vaccines": [{ "id": "v1", "name": "MMR, 1st dose", "status": "due", "notes": "Per NCIS schedule, around 12 months" }],
     "notes": "Milestone ticks are a starter checklist, not a clinical record."
   },
+  "kids": [
+    { "id": "anya", "name": "Anya", "bornDate": "2025-11-27", "milestones": [], "vaccines": [], "notes": "", "prep": [] },
+    { "id": "yuna", "name": "Yuna", "dueDate": "2027-05-10", "bornDate": null, "prep": [] }
+  ],
   "baby2": { "due": "2027-05-10", "prep": [{ "id": "p1", "text": "Move crib to Bedroom 3", "done": false }] },
   "docs": [{ "id": "d-car", "title": "Car", "subtitle": "Add the Drive folder link", "url": "" }]
 }
@@ -73,6 +83,35 @@ and Home links start blank so Wei Liang can paste a Drive folder URL
 in the app. Life Archive already has its folder and index-sheet URLs.
 
 Milestones start unticked. They are a checklist, not a clinical record.
+
+### Kids
+
+The bottom tab is labelled Kids. A switch at the top chooses Anya or
+Yuna, and the last choice is remembered on the phone
+(`familyhub.activeChild`).
+
+`state.kids` is the list of children. On load, if Anya is missing from
+that list, she is copied from the older `state.anya` object (`born`
+becomes `bornDate`, and sleep, milestones, vaccines, and notes come
+across). Those arrays stay shared with `state.anya`, so an older reader
+still sees her. Nothing already stored on a child is overwritten.
+Yuna is added if she is missing: due 10 May 2027, `bornDate` null, and
+`prep` empty. Her prep list is not the Docs "baby #2" list. Do not
+invent prep items for her.
+
+While `bornDate` is null she shows a due-date countdown, antenatal
+appointments, and that prep checklist (add, tick, edit, delete). An
+appointment is hers when a key date has `child` or `person` set to
+`yuna` or `Yuna`, or when a Family calendar event title contains her
+name. Untagged dates stay where they are. Set a birth date and she gets
+the same cards as Anya: age, birthday, childcare, milestones, vaccines,
+sleep, and notes. Childcare still reads `state.childcare` for Anya.
+Another child uses `kid.childcare` only, so Yuna does not inherit
+Anya's centre.
+
+The seed file stays on the older `anya` shape. The migration runs in
+the page, so a phone that already has data does not lose it, and the
+repo does not gain a second copy of her lists.
 
 The Sunday clinic item has `skipDates: ["2026-11-29"]` because that
 Sunday is the Japan departure. The words in `notes` say the same thing.
@@ -587,9 +626,34 @@ https://docs.google.com/spreadsheets/d/1JboHp21d8kCjBpLLxrCV0Q1Ok5hgbrSLYlxK3yb4
 `variableAllocations` may be a number or an object of name to amount.
 If `fixedCosts` is missing, the card says "Fixed costs not loaded yet"
 and still shows the sheet link. The seed does not include this object.
-Do not commit real amounts. Editing an item in the app rewrites only
-`familyhub`, and sets `total` to the sum of the items. The other
-summary fields stay as they were loaded.
+Do not commit real amounts.
+
+The sheet is the master. The card is read-only. It shows
+"Synced from sheet" plus the `asOf` date (Asia/Singapore). There is no
+pencil and no "Add an item". A save from an old copy of the page cannot
+rewrite the list: the editor ignores `fixedItem`, and the page no longer
+recomputes `total` as the sum of the rows. `total` stays the Total cell
+from the sheet, even when that cell is a cent off the item sum.
+
+`sync-fixed-costs` reads tab Saving/Spending
+(`valueRenderOption=UNFORMATTED_VALUE`), finds the Fixed Monthly Expense
+header wherever it sits in the grid, and copies the name and amount rows
+until Total. It then reads Monthly contribution, Household fixed costs,
+and Variable allocations. Buffer is skipped. If any of those three
+summaries or Total is missing, the run fails and writes nothing. It
+updates only `state.fixedCosts` on `app = 'familyhub'` for
+`WILLOW_USER_ID`, via `set_familyhub_fixed_costs` in
+`shared/sync-fixed-costs.sql` (`jsonb_set` on `{fixedCosts}`, and it
+bumps `updated_at`). It does not write to Google and it does not touch
+any other table or any other key.
+
+Apply that SQL once in the SQL editor before the first run. Then schedule
+the function the same way as the other sheet jobs: `POST` to
+`/functions/v1/sync-fixed-costs` with the existing webhook header, cron
+`0 21 * * *` UTC (about 05:00 Asia/Singapore). Add that cron in the
+dashboard or the SQL editor. Do not commit the statement or the secret.
+Deploy with `verify_jwt` off, same as the other sheet crons. This note
+does not deploy it.
 
 Replace the whole object (fake numbers only):
 
@@ -645,7 +709,7 @@ in this file.
 }
 ```
 
-`person` is Wei Liang, Zhen Ling, or Anya. `category` is Life, Health,
+`person` is Wei Liang, Zhen Ling, Anya, or Yuna. `category` is Life, Health,
 or Extras. `frequency` is monthly or yearly. `status` is active or
 cancelled. `nextDue` is `YYYY-MM-DD` or null. `cover` is a short
 description of what it covers, not a policy number.
@@ -792,9 +856,11 @@ where app = 'familyhub'
 
 - Do not write `expenses`, `expenses_automation`, or any other app's row
   from this app or from a "helpful" SQL update.
-- Do not add a cron job, and do not add a Google Calendar OAuth client
-  or commit an iCal secret. The one new function, `family-calendar`,
-  runs only when the app asks, and the secret stays in Supabase.
+- Do not commit a cron statement or a webhook secret. `family-calendar`
+  runs only when the app asks, and its iCal secret stays in Supabase.
+  `sync-fixed-costs` is the one scheduled reader added for the fixed-cost
+  card. Its cron is created by hand, not in git. Do not add a Google
+  Calendar OAuth client.
 - Do not change Auth or Row Level Security in order to add Zhen Ling
   inside this piece of work. That is a later, separate change.
 - `teleconsult-check-roster` reads the clinic roster. It is not the

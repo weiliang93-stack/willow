@@ -297,6 +297,93 @@ test("the app script only pulls expense rows and only pushes familyhub", () => {
   assert.equal(/pushState(?:Now)?\(\s*["']expenses_automation/.test(src), false);
 });
 
+test("legacy Anya fields migrate into kids and Yuna starts with an empty prep list", () => {
+  const raw = {
+    anya: {
+      born: "2025-11-27",
+      notes: "Keep this note",
+      milestones: [{ id: "m1", text: "Sits steadily", done: true }],
+      vaccines: [{ id: "v1", name: "MMR, 1st dose", status: "due" }],
+      sleep: { napsPerDay: 2, bedtime: "19:00" },
+    },
+    baby2: { due: "2027-05-10", prep: [{ id: "p1", text: "Move crib to Bedroom 3", done: false }] },
+  };
+  const state = logic.normalizeKids(raw);
+  const anya = state.kids.find((kid) => kid.id === "anya");
+  const yuna = state.kids.find((kid) => kid.id === "yuna");
+  assert.equal(anya.bornDate, "2025-11-27");
+  assert.equal(anya.notes, "Keep this note");
+  assert.equal(anya.milestones[0].id, "m1");
+  assert.equal(anya.milestones, state.anya.milestones);
+  assert.equal(anya.vaccines[0].name, "MMR, 1st dose");
+  assert.equal(state.anya.born, "2025-11-27");
+  assert.equal(yuna.name, "Yuna");
+  assert.equal(yuna.dueDate, "2027-05-10");
+  assert.equal(yuna.bornDate, null);
+  assert.deepEqual(yuna.prep, []);
+  assert.equal(state.baby2.prep.length, 1);
+
+  anya.milestones.push({ id: "m2", text: "Added later", done: false });
+  assert.equal(state.anya.milestones.length, 2);
+
+  const again = logic.normalizeKids(state);
+  assert.equal(again.kids.filter((kid) => kid.id === "yuna").length, 1);
+  assert.equal(again.kids.find((kid) => kid.id === "anya").milestones.length, 2);
+});
+
+test("an existing child entry is kept, including a prep item already saved for Yuna", () => {
+  const state = logic.normalizeKids({
+    anya: { born: "2025-11-27", milestones: [{ id: "old", text: "Legacy", done: false }] },
+    kids: [
+      { id: "anya", name: "Anya", bornDate: "2025-11-27", milestones: [{ id: "kept", text: "Already on the child", done: false }], vaccines: [], notes: "Kid note", prep: [] },
+      { id: "yuna", name: "Yuna", dueDate: "2027-05-10", bornDate: null, prep: [{ id: "cloth", text: "Example muslin", done: false }] },
+    ],
+  });
+  assert.equal(state.kids.find((kid) => kid.id === "anya").milestones[0].id, "kept");
+  assert.equal(state.anya.notes, "Kid note");
+  assert.equal(state.kids.find((kid) => kid.id === "yuna").prep[0].text, "Example muslin");
+});
+
+test("Yuna countdown and tagged antenatal rows, with untagged dates left out", () => {
+  assert.equal(logic.dueCountdown("2027-05-10", TODAY), "168 days to go");
+  assert.equal(logic.dueCountdown("2026-11-23", TODAY), "Due today");
+  const state = {
+    keyDates: [
+      { id: "scan", title: "Example scan", date: "2026-12-15", child: "yuna" },
+      { id: "other", title: "MCST bill due", date: "2026-12-01", kind: "bill" },
+      { id: "person", title: "Example class", date: "2026-12-02", person: "Yuna" },
+    ],
+  };
+  const rows = logic.antenatalFor(state, { id: "yuna", name: "Yuna" }, [
+    { title: "Yuna midwife", date: "2026-12-20", where: "Clinic" },
+    { title: "School meeting", date: "2026-12-03" },
+  ]);
+  assert.deepEqual(rows.map((row) => row.title), ["Example class", "Example scan", "Yuna midwife"]);
+});
+
+test("fixed cost card keeps the stored total when it differs from the item sum", () => {
+  const view = logic.fixedCostView({
+    asOf: "2026-01-15",
+    items: [{ name: "Example rent", amount: 1 }, { name: "Example levy", amount: 2 }],
+    total: 3.01,
+    monthlyContribution: 4,
+    householdFixedCosts: 5,
+    variableAllocations: 6,
+  });
+  assert.equal(view.total, 3.01);
+  assert.equal(view.allocations[0].amount, 6);
+});
+
+test("the fixed-cost card is read-only and the kids tab is labelled Kids", () => {
+  const src = fs.readFileSync(path.join(__dirname, "script.js"), "utf8");
+  const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+  assert.match(src, /Synced from sheet/);
+  assert.equal(src.includes('data-add="fixedItem"'), false);
+  assert.equal(src.includes("ensureFixed"), false);
+  assert.match(html, /<span>Kids<\/span>/);
+  assert.match(html, /script\.js\?v=20261124/);
+});
+
 test("hub copy does not name Penny", () => {
   const files = ["script.js", "logic.js", "HANDOVER.md", "seed.js"].map((name) => fs.readFileSync(path.join(__dirname, name), "utf8"));
   files.push(fs.readFileSync(path.join(__dirname, "../AGENTS.md"), "utf8"));
