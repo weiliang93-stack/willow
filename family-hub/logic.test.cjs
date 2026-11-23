@@ -379,9 +379,12 @@ test("the fixed-cost card is read-only and the kids tab is labelled Kids", () =>
   const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
   assert.match(src, /Synced from sheet/);
   assert.equal(src.includes('data-add="fixedItem"'), false);
+  assert.equal(src.includes('data-add="insurance"'), false);
+  assert.equal(src.includes('pencilButton("insurance"'), false);
   assert.equal(src.includes("ensureFixed"), false);
+  assert.equal(src.includes("ensureInsurance"), false);
   assert.match(html, /<span>Kids<\/span>/);
-  assert.match(html, /script\.js\?v=20261124/);
+  assert.match(html, /script\.js\?v=20261125/);
 });
 
 test("hub copy does not name Penny", () => {

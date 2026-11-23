@@ -1,14 +1,18 @@
-// One-way daily copy of TeoLoh Financial Planning → familyhub.state.fixedCosts.
+// One-way daily copy of TeoLoh Financial Planning into the family hub.
 // The sheet is the master. This function only reads it. It never writes
-// to Google, and it updates only the fixedCosts key on the familyhub row.
+// to Google. One run copies two keys, each with its own jsonb_set:
+//   Saving/Spending → familyhub.state.fixedCosts
+//   Insurance       → familyhub.state.insurance
+// A failure in one does not skip the other. The HTTP status is 500 if
+// either part failed, so the cron still shows the error.
 //
 // Trigger: pg_cron net.http_post, verify_jwt off, header x-webhook-secret
 // equal to DB_WEBHOOK_SECRET. Schedule 0 21 * * * UTC (~05:00 Asia/Singapore).
 // The cron itself is added in the dashboard or SQL editor, not in git.
+// There is no second cron for insurance.
 //
-// Before the first run, apply shared/sync-fixed-costs.sql so
-// set_familyhub_fixed_costs exists. That function is jsonb_set on
-// {fixedCosts} only.
+// Before the first insurance run, re-apply shared/sync-fixed-costs.sql so
+// set_familyhub_insurance exists. set_familyhub_fixed_costs is unchanged.
 //
 // Required secrets, already used by the other sheet jobs:
 //   GOOGLE_SERVICE_ACCOUNT_EMAIL
@@ -21,6 +25,7 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { JWT } from "npm:google-auth-library@9";
+import { parseInsurance } from "./insurance.ts";
 import { parseFixedMonthlyExpense } from "./parse.ts";
 
 const USER_ID = Deno.env.get("WILLOW_USER_ID")!;
@@ -29,7 +34,8 @@ const SERVICE_ACCOUNT_EMAIL = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_EMAIL")!;
 const SERVICE_ACCOUNT_KEY = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY")!.replace(/\\n/g, "\n");
 
 const SHEET_ID = "1JboHp21d8kCjBpLLxrCV0Q1Ok5hgbrSLYlxK3yb4tkY";
-const TAB = "Saving/Spending";
+const COSTS_TAB = "Saving/Spending";
+const INSURANCE_TAB = "Insurance";
 
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -53,8 +59,8 @@ async function getAccessToken(): Promise<string> {
   return token;
 }
 
-async function readGrid(accessToken: string): Promise<unknown[][]> {
-  const range = `'${TAB}'`;
+async function readGrid(accessToken: string, tab: string): Promise<unknown[][]> {
+  const range = `'${tab}'`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!res.ok) throw new Error(`values.get failed: ${res.status} ${await res.text()}`);
@@ -67,24 +73,47 @@ Deno.serve(async (req) => {
     return new Response("Forbidden", { status: 403 });
   }
 
-  let costs;
+  let accessToken: string;
   try {
-    const accessToken = await getAccessToken();
-    const grid = await readGrid(accessToken);
-    costs = parseFixedMonthlyExpense(grid, todaySGT());
+    accessToken = await getAccessToken();
   } catch (err) {
-    console.error(err instanceof Error ? err.message : "sheet read failed");
+    console.error(err instanceof Error ? err.message : "sheet auth failed");
     return new Response(`error reading sheet: ${err instanceof Error ? err.message : err}`, { status: 500 });
   }
 
-  const { error } = await supabase.rpc("set_familyhub_fixed_costs", {
-    target_user: USER_ID,
-    costs,
-  });
-  if (error) {
-    console.error(error.message);
-    return new Response(`error writing fixedCosts: ${error.message}`, { status: 500 });
+  const asOf = todaySGT();
+  const notes: string[] = [];
+  let failed = false;
+
+  try {
+    const costs = parseFixedMonthlyExpense(await readGrid(accessToken, COSTS_TAB), asOf);
+    const { error } = await supabase.rpc("set_familyhub_fixed_costs", {
+      target_user: USER_ID,
+      costs,
+    });
+    if (error) throw new Error(error.message);
+    notes.push(`synced ${costs.items.length} fixed costs as of ${costs.asOf}`);
+  } catch (err) {
+    failed = true;
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(message);
+    notes.push(`fixed costs failed: ${message}`);
   }
 
-  return new Response(`synced ${costs.items.length} fixed costs as of ${costs.asOf}`);
+  try {
+    const snapshot = parseInsurance(await readGrid(accessToken, INSURANCE_TAB), asOf);
+    const { error } = await supabase.rpc("set_familyhub_insurance", {
+      target_user: USER_ID,
+      snapshot,
+    });
+    if (error) throw new Error(error.message);
+    notes.push(`synced ${snapshot.policies.length} policies as of ${snapshot.asOf}`);
+  } catch (err) {
+    failed = true;
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(message);
+    notes.push(`insurance failed: ${message}`);
+  }
+
+  return new Response(notes.join("; "), { status: failed ? 500 : 200 });
 });

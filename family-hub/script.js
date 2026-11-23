@@ -648,9 +648,8 @@ function dateButton(item, long) {
   const inner = `<i class="dot" style="background:${dotColor(item.kind)}"></i>
     <span class="date-title">${esc(item.title)}${item.subtitle ? `<small>${esc(item.subtitle)}</small>` : ""}</span>
     <span class="date-when">${esc(when)}</span>`;
-  if (item.source === "snapshot") return `<div class="date-row">${inner}</div>`;
-  const mode = item.source === "insurance" ? "insurance" : "keyDate";
-  return `<button type="button" class="date-row" data-edit="${mode}" data-id="${esc(item.id)}">${inner}</button>`;
+  if (item.source === "snapshot" || item.source === "insurance") return `<div class="date-row">${inner}</div>`;
+  return `<button type="button" class="date-row" data-edit="keyDate" data-id="${esc(item.id)}">${inner}</button>`;
 }
 
 function moneyMessage() {
@@ -697,17 +696,16 @@ function insuranceHtml(day) {
     return `<section class="card budget-card">
       <div class="section-head"><h2>Insurance</h2>${link}</div>
       <p class="empty-copy">Insurance not loaded yet.</p>
-      <button type="button" class="text-btn" data-add="insurance">Add a cover</button>
     </section>`;
   }
   const renewals = view.renewals.length
     ? `<h3 class="subhead">Renewals in next 60 days</h3><div class="list-card">${view.renewals
         .map(
-          (item) => `<button type="button" class="date-row" data-edit="insurance" data-id="${esc(item.id)}">
+          (item) => `<div class="date-row">
             <i class="dot" style="background:${dotColor("renewal")}"></i>
             <span class="date-title">${esc(item.title)}<small>${esc(item.subtitle)}</small></span>
             <span class="date-when">${esc(L.formatDayMonth(item.date))}</span>
-          </button>`
+          </div>`
         )
         .join("")}</div>`
     : `<p class="empty-copy">No renewals in the next 60 days.</p>`;
@@ -720,7 +718,6 @@ function insuranceHtml(day) {
           return `<div class="check-row${policy.status === "cancelled" ? " is-done" : ""}">
             <span><b>${esc(policy.name)}</b><small class="aside">${esc(meta)}${policy.cover ? ` · ${esc(policy.cover)}` : ""}</small></span>
             <b>${esc(premium)}</b>
-            ${pencilButton("insurance", policy.id)}
           </div>`;
         })
         .join("")}</div>`
@@ -728,11 +725,10 @@ function insuranceHtml(day) {
     .join("");
   return `<section class="card budget-card">
     <div class="section-head"><h2>Insurance</h2>${link}</div>
-    <p class="lede">${view.asOf ? `As of ${esc(L.formatDayMonthYear(view.asOf))}` : "No as-of date"}</p>
+    <p class="lede">${view.asOf ? `Synced from sheet ${esc(L.formatDayMonthYear(view.asOf))}` : "Synced from sheet"}</p>
     ${view.cancelledCount ? `<button type="button" class="text-btn" data-action="toggle-cancelled">${ui.showCancelled ? "Hide cancelled" : "Show cancelled"}</button>` : ""}
     ${renewals}
     ${groups}
-    <button type="button" class="text-btn" data-add="insurance">Add a cover</button>
   </section>`;
 }
 
@@ -1110,7 +1106,7 @@ function onClick(event) {
   }
   if (actionEl.dataset.add) {
     const mode = actionEl.dataset.add === "milestone" ? "milestone" : actionEl.dataset.add;
-    if (mode === "fixedItem") return;
+    if (mode === "fixedItem" || mode === "insurance") return;
     if (mode === "milestone" || mode === "kidprep") {
       document.querySelector(`.inline-add[data-inline="${mode}"] input`)?.focus();
       return;
@@ -1254,27 +1250,11 @@ function findItem(mode, id, listId) {
   }
   if (mode === "keyDate") return state.keyDates.find((row) => row.id === id);
   if (mode === "doc") return state.docs.find((row) => row.id === id);
-  if (mode === "insurance" && state.insurance) return policyById(state.insurance, id);
   return null;
 }
 
-function policyById(insurance, id) {
-  const policies = (insurance && insurance.policies) || [];
-  const found = policies.find((policy) => policy && policy.id === id);
-  if (found) return found;
-  const index = /^ins:(\d+):/.exec(id);
-  return index ? policies[Number(index[1])] || null : null;
-}
-
-function ensureInsurance(draft) {
-  if (!draft.insurance || typeof draft.insurance !== "object") draft.insurance = { asOf: today(), policies: [] };
-  if (!Array.isArray(draft.insurance.policies)) draft.insurance.policies = [];
-  if (!draft.insurance.asOf) draft.insurance.asOf = today();
-  return draft.insurance;
-}
-
 function openEditor(mode, id, listId) {
-  if (mode === "fixedItem") return;
+  if (mode === "fixedItem" || mode === "insurance") return;
   editor.mode = mode;
   editor.id = id || "";
   editor.listId = listId || "";
@@ -1316,17 +1296,6 @@ function openEditor(mode, id, listId) {
     );
     fields.append(field("notes", "text", "Note (optional)", item ? item.notes || "" : ""));
     fields.append(selectField("child", "Child (optional)", item && item.child ? item.child : "", [["", "None"], ["anya", "Anya"], ["yuna", "Yuna"]]));
-  } else if (mode === "insurance") {
-    title.textContent = id ? "Edit cover" : "Add cover";
-    fields.append(selectField("person", "Person", item ? item.person : "Wei Liang", [["Wei Liang", "Wei Liang"], ["Zhen Ling", "Zhen Ling"], ["Anya", "Anya"], ["Yuna", "Yuna"]]));
-    fields.append(selectField("category", "Category", item ? item.category : "Health", [["Life", "Life"], ["Health", "Health"], ["Extras", "Extras"]]));
-    fields.append(field("name", "text", "Name", item ? item.name : ""));
-    fields.append(field("cover", "text", "What it covers", item ? item.cover || "" : ""));
-    fields.append(field("premium", "number", "Premium", item && item.premium != null ? item.premium : ""));
-    fields.append(selectField("frequency", "Frequency", item ? item.frequency || "yearly" : "yearly", [["monthly", "Monthly"], ["yearly", "Yearly"]]));
-    fields.append(field("payment", "text", "How it is paid", item ? item.payment || "" : ""));
-    fields.append(field("nextDue", "date", "Next due", item && item.nextDue ? item.nextDue : ""));
-    fields.append(selectField("status", "Status", item ? item.status || "active" : "active", [["active", "Active"], ["cancelled", "Cancelled"]]));
   } else if (mode === "doc") {
     title.textContent = id ? "Edit document" : "Add a document";
     fields.append(field("title", "text", "Title", item ? item.title : ""));
@@ -1362,7 +1331,7 @@ function onEditorSubmit(event) {
   const mode = editor.mode;
   const id = editor.id;
   const listId = editor.listId;
-  if (mode === "fixedItem") {
+  if (mode === "fixedItem" || mode === "insurance") {
     document.getElementById("editor").close();
     return;
   }
@@ -1412,27 +1381,6 @@ function onEditorSubmit(event) {
         const item = draft.keyDates.find((row) => row.id === id);
         if (item) Object.assign(item, next);
       } else draft.keyDates.push({ id: uid(), ...next });
-    } else if (mode === "insurance") {
-      if (!text("name")) return;
-      const book = ensureInsurance(draft);
-      const premium = Number(text("premium"));
-      const next = {
-        person: text("person") || "Wei Liang",
-        category: text("category") || "Health",
-        name: text("name"),
-        cover: text("cover"),
-        premium: Number.isFinite(premium) ? premium : 0,
-        frequency: text("frequency") === "monthly" ? "monthly" : "yearly",
-        payment: text("payment"),
-        nextDue: text("nextDue") || null,
-        status: text("status") === "cancelled" ? "cancelled" : "active",
-      };
-      const current = id ? policyById(book, id) : null;
-      if (current) {
-        const keepId = current.id || uid();
-        Object.keys(current).forEach((key) => delete current[key]);
-        Object.assign(current, next, { id: keepId });
-      } else book.policies.push({ id: uid(), ...next });
     } else if (mode === "doc") {
       if (!text("title")) return;
       const next = { title: text("title"), subtitle: text("subtitle"), url: text("url") };
@@ -1473,7 +1421,7 @@ function onEditorDelete() {
   }
   const mode = editor.mode;
   const id = editor.id;
-  if (mode === "fixedItem") {
+  if (mode === "fixedItem" || mode === "insurance") {
     document.getElementById("editor").close();
     return;
   }
@@ -1494,13 +1442,8 @@ function onEditorDelete() {
       writeKid(draft, (kid) => {
         kid.vaccines = (kid.vaccines || []).filter((row) => row.id !== id);
       });
-    } else if (mode === "keyDate") draft.keyDates = draft.keyDates.filter((row) => row.id !== id);
-    else if (mode === "insurance" && draft.insurance) {
-      draft.insurance.policies = (draft.insurance.policies || []).filter((policy, index) => {
-        if (policy && policy.id === id) return false;
-        return `ins:${index}:${policy.person || ""}:${policy.name || ""}:${policy.nextDue || ""}` !== id;
-      });
-    } else if (mode === "doc") draft.docs = draft.docs.filter((row) => row.id !== id);
+    }     else if (mode === "keyDate") draft.keyDates = draft.keyDates.filter((row) => row.id !== id);
+    else if (mode === "doc") draft.docs = draft.docs.filter((row) => row.id !== id);
   });
   document.getElementById("editor").close();
 }
