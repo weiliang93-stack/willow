@@ -689,6 +689,17 @@ function fixedCostsHtml() {
   </section>`;
 }
 
+function premiumText(policy) {
+  const premium = policy.premium;
+  if (premium && typeof premium === "object") {
+    const parts = [];
+    if (premium.monthly != null) parts.push(`${L.formatMoney(premium.monthly)} / mo`);
+    if (premium.yearly != null) parts.push(`${L.formatMoney(premium.yearly)} / yr`);
+    return parts.join(" · ");
+  }
+  return premium == null ? "" : L.formatMoney(premium);
+}
+
 function insuranceHtml(day) {
   const view = L.insuranceView(state.insurance, day, ui.showCancelled);
   const link = sheetLink(TEOLOH_SHEET_URL, "Open TeoLoh Financial Planning");
@@ -713,11 +724,13 @@ function insuranceHtml(day) {
     .map(
       (group) => `<h3 class="subhead">${esc(group.person)}</h3><div class="list-card">${group.policies
         .map((policy) => {
-          const meta = [policy.category, policy.frequency, policy.payment].filter(Boolean).join(" · ");
-          const premium = policy.premium === null ? "" : L.formatMoney(policy.premium);
+          const frequency = policy.frequency === "both" ? "" : policy.frequency;
+          const meta = [policy.category, frequency, policy.payment].filter(Boolean).join(" · ");
+          const premium = premiumText(policy);
+          const dual = policy.premium && typeof policy.premium === "object";
           return `<div class="check-row${policy.status === "cancelled" ? " is-done" : ""}">
-            <span><b>${esc(policy.name)}</b><small class="aside">${esc(meta)}${policy.cover ? ` · ${esc(policy.cover)}` : ""}</small></span>
-            <b>${esc(premium)}</b>
+            <span><b>${esc(policy.name)}</b><small class="aside">${esc(meta)}${policy.cover ? ` · ${esc(policy.cover)}` : ""}</small>${dual ? `<small class="aside">${esc(premium)}</small>` : ""}</span>
+            ${dual ? "" : `<b>${esc(premium)}</b>`}
           </div>`;
         })
         .join("")}</div>`

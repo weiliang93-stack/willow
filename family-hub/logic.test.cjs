@@ -202,6 +202,16 @@ test("fixed costs and insurance use the hub snapshot, with fake figures only", (
   const upcoming = logic.upcomingKeyDates(hub, TODAY, 6);
   assert.equal(upcoming[0].title, "Wei Liang · Example life");
   assert.equal(JSON.stringify(view).includes("policyNumber"), false);
+
+  const both = logic.insuranceView({
+    asOf: "2026-01-15",
+    policies: [
+      { person: "Zhen Ling", category: "Health", name: "Example giro", cover: "Ward", premium: { monthly: 9, yearly: 108 }, frequency: "both", payment: "GIRO", nextDue: "2026-12-01", status: "active" },
+    ],
+  }, TODAY, false);
+  assert.deepEqual(both.groups[0].policies[0].premium, { monthly: 9, yearly: 108 });
+  assert.equal(both.renewals[0].subtitle, "Health");
+  assert.equal(both.renewals[0].subtitle.includes("both"), false);
 });
 
 test("condo, car, childcare, net worth, annual dates, and folder links stay on the hub row", () => {
@@ -384,7 +394,7 @@ test("the fixed-cost card is read-only and the kids tab is labelled Kids", () =>
   assert.equal(src.includes("ensureFixed"), false);
   assert.equal(src.includes("ensureInsurance"), false);
   assert.match(html, /<span>Kids<\/span>/);
-  assert.match(html, /script\.js\?v=20261125/);
+  assert.match(html, /script\.js\?v=20261125b/);
 });
 
 test("hub copy does not name Penny", () => {

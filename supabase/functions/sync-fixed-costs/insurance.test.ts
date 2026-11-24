@@ -53,14 +53,18 @@ test("parses person bands and drops policy numbers", () => {
   assert.equal(encoded.includes("Policy No"), false);
 });
 
-test("fails instead of guessing when both premiums are filled and remarks do not say which is paid", () => {
+test("keeps both sheet premiums when remarks name GIRO but not a frequency", () => {
   const grid = [
     ["WEI LIANG"],
     ["Type", "Cover", "Monthly", "Yearly", "Remarks"],
     ["HEALTH"],
     ["Example vague", "Ward", 9, 108, "Paid by GIRO."],
   ];
-  assert.throws(() => parseInsurance(grid, "2026-11-24"), /both a monthly and a yearly amount/);
+  const parsed = parseInsurance(grid, "2026-11-24");
+  assert.equal(parsed.policies.length, 1);
+  assert.equal(parsed.policies[0].frequency, "both");
+  assert.deepEqual(parsed.policies[0].premium, { monthly: 9, yearly: 108 });
+  assert.equal(parsed.policies[0].payment, "GIRO");
 });
 
 test("fails when the header is incomplete", () => {

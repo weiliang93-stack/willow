@@ -9,16 +9,17 @@
 // removed. Remarks are not stored; they are only used to read an explicit
 // next-due date, a cancelled flag, a payment label, and — when both
 // Monthly and Yearly are filled — which of those two sheet cells is the
-// one being paid. Nothing is multiplied or divided. If that choice is
-// not written in the remarks, the run fails.
+// one being paid. Nothing is multiplied or divided. If the remarks name
+// one frequency, that cell is stored alone. If they do not, frequency is
+// "both" and premium is { monthly, yearly } with both cells unchanged.
 
 export type InsurancePolicy = {
   person: string;
   category: "Life" | "Health" | "Extras";
   name: string;
   cover: string;
-  premium: number;
-  frequency: "monthly" | "yearly";
+  premium: number | { monthly: number; yearly: number };
+  frequency: "monthly" | "yearly" | "both";
   payment: string;
   nextDue: string | null;
   status: "active" | "cancelled";
@@ -237,8 +238,8 @@ export function parseInsurance(grid: unknown[][], asOf: string): InsuranceSnapsh
     if (!name) throw new Error("Insurance policy name is missing");
     if (monthly === null && yearly === null) throw new Error(`Premium missing for ${person} · ${name}`);
 
-    let frequency: "monthly" | "yearly";
-    let premium: number;
+    let frequency: InsurancePolicy["frequency"];
+    let premium: InsurancePolicy["premium"];
     if (monthly !== null && yearly === null) {
       frequency = "monthly";
       premium = monthly;
@@ -247,9 +248,13 @@ export function parseInsurance(grid: unknown[][], asOf: string): InsuranceSnapsh
       premium = yearly;
     } else {
       const stated = paidFrequency(cellText(row[columns.remarks]));
-      if (!stated) throw new Error(`${person} · ${name} has both a monthly and a yearly amount and the remarks do not say which is paid`);
-      frequency = stated;
-      premium = stated === "monthly" ? (monthly as number) : (yearly as number);
+      if (!stated) {
+        frequency = "both";
+        premium = { monthly: monthly as number, yearly: yearly as number };
+      } else {
+        frequency = stated;
+        premium = stated === "monthly" ? (monthly as number) : (yearly as number);
+      }
     }
 
     const remarks = cellText(row[columns.remarks]);
