@@ -707,9 +707,11 @@ date, the word cancelled, a payment label (MediSave, CPF, GIRO, AMEX,
 Cash, Card), and, when both Monthly and Yearly are filled, which of
 those two cells is the one being paid. A date marked with a tilde stays
 null. A blank next due stays null. The run does not multiply a monthly
-figure to make a yearly one. If both amounts are filled and the remarks
-do not say which is paid, the insurance half of the run fails and
-writes nothing.
+figure to make a yearly one. If the remarks name monthly or yearly, that
+cell is stored alone. If both amounts are filled and the remarks do not
+name a frequency, `frequency` is `both` and `premium` is
+`{ monthly, yearly }` with both cells unchanged. The card shows both
+figures. Nothing in the app adds those two figures into a total.
 
 ```json
 {

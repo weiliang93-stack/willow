@@ -604,6 +604,13 @@
     };
   }
 
+  function premiumView(value) {
+    if (value && typeof value === "object") {
+      return { monthly: moneyOrNull(value.monthly), yearly: moneyOrNull(value.yearly) };
+    }
+    return moneyOrNull(value);
+  }
+
   function moneyOrNull(value) {
     if (typeof value === "number" && Number.isFinite(value)) return round2(value);
     if (typeof value === "string" && value.trim() !== "") {
@@ -668,7 +675,7 @@
         category: policy.category || "",
         name: policy.name || "Cover",
         cover: policy.cover || "",
-        premium: moneyOrNull(policy.premium),
+        premium: premiumView(policy.premium),
         frequency: policy.frequency || "",
         payment: policy.payment || "",
         nextDue: policy.nextDue || null,
@@ -685,7 +692,7 @@
         date: policy.nextDue,
         kind: "renewal",
         source: "insurance",
-        subtitle: [policy.category, policy.frequency].filter(Boolean).join(" · "),
+        subtitle: [policy.category, policy.frequency === "both" ? "" : policy.frequency].filter(Boolean).join(" · "),
       }))
       .sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
   }
