@@ -33,10 +33,11 @@ have her own login yet. See the end of this note before adding her.
   read. `parse.ts` turns the iCal feed into events;
   `node --experimental-strip-types --test supabase/functions/family-calendar/parse.test.ts`
 - `supabase/functions/sync-fixed-costs/` — daily one-way read of the
-  TeoLoh Fixed Monthly Expense table into `familyhub.state.fixedCosts`.
-  `node --experimental-strip-types --test supabase/functions/sync-fixed-costs/parse.test.ts`
-- `shared/sync-fixed-costs.sql` — one-time `jsonb_set` helper. No cron
-  and no secrets.
+  TeoLoh Fixed Monthly Expense table into `familyhub.state.fixedCosts`,
+  and of the Insurance tab into `familyhub.state.insurance`. Same run,
+  two keys. `node --experimental-strip-types --test supabase/functions/sync-fixed-costs/parse.test.ts supabase/functions/sync-fixed-costs/insurance.test.ts`
+- `shared/sync-fixed-costs.sql` — one-time `jsonb_set` helpers for those
+  two keys. No cron and no secrets.
 
 Shared code, unchanged by this app: `shared/supabase-config.js` and
 `shared/supabase-sync.js`. The public anon key in the config file is
@@ -644,8 +645,10 @@ summaries or Total is missing, the run fails and writes nothing. It
 updates only `state.fixedCosts` on `app = 'familyhub'` for
 `WILLOW_USER_ID`, via `set_familyhub_fixed_costs` in
 `shared/sync-fixed-costs.sql` (`jsonb_set` on `{fixedCosts}`, and it
-bumps `updated_at`). It does not write to Google and it does not touch
-any other table or any other key.
+bumps `updated_at`). The same run then updates `state.insurance` through
+`set_familyhub_insurance`. It does not write to Google and it does not
+touch any other table or any other key. If one of the two parses fails,
+the other is still written, and the call returns an error.
 
 Apply that SQL once in the SQL editor before the first run. Then schedule
 the function the same way as the other sheet jobs: `POST` to
@@ -686,9 +689,27 @@ only in the database, not in git.
 
 ### Insurance
 
-Also on the Money tab, from the Insurance tab of the same TeoLoh
-workbook. Stored as `state.insurance`. No policy numbers, in the app or
-in this file.
+Also on the Money tab. The sheet is the master. The same daily
+`sync-fixed-costs` run reads the Insurance tab and writes
+`state.insurance` through `set_familyhub_insurance`. The card is
+read-only. It shows "Synced from sheet" plus the `asOf` date. There is
+no pencil and no "Add a cover". "Show cancelled" stays. Renewals in the
+next 60 days still feed Home and Calendar. No policy numbers, in the
+app or in this file.
+
+The live tab is one block per person (Wei Liang, Zhen Ling, Anya).
+Under each name the header is Type, Cover, Monthly, Yearly, Bought
+date, Policy No, Remarks, Verified. Then LIFE, HEALTH, and EXTRAS
+bands. The parser finds those columns by their labels. Policy No is
+dropped, including a policy token written in brackets in the name.
+Remarks are not stored. They are read only for an explicit next-due
+date, the word cancelled, a payment label (MediSave, CPF, GIRO, AMEX,
+Cash, Card), and, when both Monthly and Yearly are filled, which of
+those two cells is the one being paid. A date marked with a tilde stays
+null. A blank next due stays null. The run does not multiply a monthly
+figure to make a yearly one. If both amounts are filled and the remarks
+do not say which is paid, the insurance half of the run fails and
+writes nothing.
 
 ```json
 {
@@ -711,43 +732,19 @@ in this file.
 
 `person` is Wei Liang, Zhen Ling, Anya, or Yuna. `category` is Life, Health,
 or Extras. `frequency` is monthly or yearly. `status` is active or
-cancelled. `nextDue` is `YYYY-MM-DD` or null. `cover` is a short
-description of what it covers, not a policy number.
+cancelled. `nextDue` is `YYYY-MM-DD` or null. `cover` is the Cover cell,
+not a policy number. `premium` is the Monthly or Yearly cell that the
+sheet says is being paid.
 
 The card groups active policies by person and hides cancelled ones
 until "Show cancelled". "Renewals in next 60 days" lists active
-policies with a `nextDue` in that window, soonest first. Those same
-renewals also appear in Home and Calendar key dates, and on the week
-list when the due date falls in the week. If `insurance` is missing,
-the card says "Insurance not loaded yet".
+policies with a `nextDue` in that window, soonest first. If `insurance`
+is missing, the card says "Insurance not loaded yet".
 
-```sql
-update app_state
-set state = jsonb_set(
-      state,
-      '{insurance}',
-      '{
-        "asOf": "2026-01-01",
-        "policies": [
-          {
-            "person": "Anya",
-            "category": "Health",
-            "name": "Example cover",
-            "cover": "Sample ward",
-            "premium": 1,
-            "frequency": "yearly",
-            "payment": "Cash",
-            "nextDue": "2026-12-20",
-            "status": "active"
-          }
-        ]
-      }'::jsonb,
-      true
-    ),
-    updated_at = now()
-where app = 'familyhub'
-  and user_id = 'USER_ID_HERE';
-```
+Re-apply `shared/sync-fixed-costs.sql` once so `set_familyhub_insurance`
+exists, then redeploy `sync-fixed-costs` with `verify_jwt` off. The cron
+already pointed at that function does not need a second schedule. The
+SQL file has no secret.
 
 ### Condo, car, childcare, net worth, annual dates, folder links
 
@@ -858,8 +855,8 @@ where app = 'familyhub'
   from this app or from a "helpful" SQL update.
 - Do not commit a cron statement or a webhook secret. `family-calendar`
   runs only when the app asks, and its iCal secret stays in Supabase.
-  `sync-fixed-costs` is the one scheduled reader added for the fixed-cost
-  card. Its cron is created by hand, not in git. Do not add a Google
+  `sync-fixed-costs` is the scheduled reader for the fixed-cost card and
+  the insurance card. Its cron is created by hand, not in git. Do not add a Google
   Calendar OAuth client.
 - Do not change Auth or Row Level Security in order to add Zhen Ling
   inside this piece of work. That is a later, separate change.

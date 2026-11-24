@@ -381,11 +381,10 @@ without the user needing to re-explain anything — read this first.
   `expenses_automation` and never pushes them. Variable household spend
   is `excludedExpenses` with `type === "combined"` this Singapore month,
   against `combinedMonthlyBudget`, with a link to the Household Expenses
-  sheet.   Insurance is a snapshot on the `familyhub` row (`insurance`), edited
-  in the app or by SQL. Fixed monthly costs (`fixedCosts`) are read-only
-  in the app: `sync-fixed-costs` copies the TeoLoh Fixed Monthly Expense
-  table once a day and writes only that key. Neither is seeded with real
-  amounts or policy numbers. The same
+  sheet. Fixed monthly costs (`fixedCosts`) and insurance (`insurance`)
+  are read-only in the app. `sync-fixed-costs` copies both from the
+  TeoLoh workbook once a day and writes only those two keys. Policy
+  numbers are not stored. Neither is seeded with real amounts. The same
   row can also hold `home` (MCST, warranties, facts), `car` (no plate or
   policy number), `childcare`, `netWorth`, `annualDates`, and `docLinks`.
   Dates from those blocks join the key-date list. The

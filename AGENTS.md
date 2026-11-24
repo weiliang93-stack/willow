@@ -14,8 +14,8 @@ Its Supabase row is `app_state.app = "familyhub"`. Variable household
 spend is read-only: `type === "combined"` against `combinedMonthlyBudget`,
 with a link to the Household Expenses sheet. Fixed monthly costs are a
 read-only copy of the TeoLoh sheet, written only by `sync-fixed-costs`
-into `state.fixedCosts`. Insurance is `state.insurance` on that same row
-(no real amounts or policy numbers in git). Condo, car, childcare, net
+into `state.fixedCosts`, and the Insurance tab into `state.insurance`
+(no policy numbers, in the app or in git). Condo, car, childcare, net
 worth, annual dates, and folder links are further fields on that row.
 Children live on `state.kids`, migrated from the older `state.anya` keys.
 It may `pullState("expenses")`
