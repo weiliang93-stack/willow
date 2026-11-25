@@ -17,6 +17,11 @@
   --fhg-tint: #f5e3d3;
   --fhg-on: #ffffff;
 
+  --psh: #1d5fa8;
+  --psh-ink: #123f6e;
+  --psh-tint: #dcebf8;
+  --psh-on: #ffffff;
+
   --good: #2f8f44;
   --good-tint: #deefe1;
   --warn: #97710a;
@@ -49,6 +54,11 @@
     --fhg-tint: #3a2415;
     --fhg-on: #2a1500;
 
+    --psh: #6ea8e0;
+    --psh-ink: #cfe4f8;
+    --psh-tint: #16283d;
+    --psh-on: #0a1c30;
+
     --good: #5fc975;
     --good-tint: #163420;
     --warn: #e0bb4a;
@@ -78,6 +88,11 @@
   --fhg-ink: #f6d2ae;
   --fhg-tint: #3a2415;
   --fhg-on: #2a1500;
+
+  --psh: #6ea8e0;
+  --psh-ink: #cfe4f8;
+  --psh-tint: #16283d;
+  --psh-on: #0a1c30;
 
   --good: #5fc975;
   --good-tint: #163420;
@@ -227,6 +242,7 @@ html, body {
   background: var(--wc);
 }
 .card.fhg .card-head { background: var(--fhg); color: var(--fhg-on); }
+.card.psh .card-head { background: var(--psh); color: var(--psh-on); }
 
 .card-head h2 {
   margin: 0;
@@ -275,6 +291,7 @@ html, body {
   background: var(--wc-ink);
 }
 .card.fhg .switch input:checked + .track .knob { background: var(--fhg-ink); }
+.card.psh .switch input:checked + .track .knob { background: var(--psh-ink); }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .switch .switch-label {
   font-size: 12.5px;
@@ -411,6 +428,7 @@ html, body {
   transition: transform 0.08s ease, background 0.15s ease;
 }
 .card.fhg .tap-btn { background: var(--fhg-tint); color: var(--fhg-ink); }
+.card.psh .tap-btn { background: var(--psh-tint); color: var(--psh-ink); }
 .tap-btn:hover { filter: brightness(0.97); }
 .tap-btn:active { transform: scale(0.97); }
 .tap-btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
@@ -474,6 +492,7 @@ html, body {
 }
 .stat.total .v { color: var(--wc); }
 .card.fhg .stat.total .v { color: var(--fhg); }
+.card.psh .stat.total .v { color: var(--psh); }
 
 .card-foot {
   display: flex;
@@ -521,6 +540,7 @@ html, body {
   transition: background 0.15s ease, transform 0.08s ease;
 }
 .card.fhg .copy-btn { border-color: var(--fhg); background: var(--fhg-tint); color: var(--fhg-ink); }
+.card.psh .copy-btn { border-color: var(--psh); background: var(--psh-tint); color: var(--psh-ink); }
 .copy-btn:hover { filter: brightness(0.97); }
 .copy-btn:active { transform: scale(0.98); }
 .copy-btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
@@ -636,6 +656,7 @@ html, body {
 }
 .fp-job-label.wc { color: var(--wc); }
 .fp-job-label.fhg { color: var(--fhg); }
+.fp-job-label.psh { color: var(--psh); }
 .fp-total {
   font-size: 19px;
   font-weight: 700;
@@ -643,6 +664,7 @@ html, body {
 }
 .fp-total.wc { color: var(--wc); }
 .fp-total.fhg { color: var(--fhg); }
+.fp-total.psh { color: var(--psh); }
 .fp-sub {
   font-size: 11px;
   color: var(--ink-muted);
@@ -661,6 +683,7 @@ html, body {
 }
 .fp-btn.wc { background: var(--wc-tint); color: var(--wc-ink); }
 .fp-btn.fhg { background: var(--fhg-tint); color: var(--fhg-ink); }
+.fp-btn.psh { background: var(--psh-tint); color: var(--psh-ink); }
 .fp-btn.wide { width: 100%; }
 .fp-btn:active { transform: scale(0.96); }
 .fp-divider { height: 1px; background: var(--line); }
@@ -848,7 +871,9 @@ footer.note {
 }
 .month-block.wc h3 { color: var(--wc); }
 .month-block.fhg h3 { color: var(--fhg); }
+.month-block.psh h3 { color: var(--psh); }
 .month-block.fhg .stat.total .v { color: var(--fhg); }
+.month-block.psh .stat.total .v { color: var(--psh); }
 .month-note {
   margin: 8px 0 0;
   font-size: 12.5px;

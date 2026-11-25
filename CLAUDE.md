@@ -101,9 +101,9 @@ without the user needing to re-explain anything — read this first.
   selected mode. Not connected to the Telegram bot. Light/dark follows
   the OS via `prefers-color-scheme` rather than a fixed palette, unlike
   the other apps — this one gets opened at all hours.
-- **teleconsult-tracker/** — live per-patient earnings clicker for running two
-  simultaneous teleconsult jobs, Whitecoat TM and Fullerton TM. Not connected
-  to the Telegram bot. Session state lives in `localStorage` only, keyed to
+- **teleconsult-tracker/** — live per-patient earnings clicker for running three
+  simultaneous teleconsult jobs, Whitecoat TM, Fullerton TM and Parkway
+  Shenton TM. Not connected to the Telegram bot. Session state lives in `localStorage` only, keyed to
   the current calendar date (a new day resets patient counts/history but
   keeps the target-$ and shift-length settings) — it is *not* synced live
   to `app_state` the way the other apps' whole state is (no `pullState` on
@@ -150,6 +150,17 @@ without the user needing to re-explain anything — read this first.
     informational only (on-pace/behind-pace vs elapsed time), it doesn't
     change the math. When not rostered: flat $10/patient, no base, no
     threshold — the owner can still log on ad hoc.
+  - **Parkway Shenton TM** — fixed Mon & Fri 12:00–14:00 shift, from Mon 4 Jan
+    2027 through the first half of 2027. When rostered: base pay is a flat
+    `2 × $50 = $100` plus $10/patient from the first patient (no bonus
+    threshold, no timer — the shift length never varies). When not rostered:
+    flat $10/patient, no base, same ad-hoc rule as Fullerton. Roster
+    auto-detection is a client-side weekday rule in `script.js`
+    (`pshRosteredFor`: Mon/Fri within 4 Jan–30 Jun 2027), not the
+    `teleconsult-check-roster` Edge Function, which only knows WC/FHG —
+    the shift is fixed, so the calendar isn't consulted for it. Rows fill
+    E:I with `#cfe2f3` in the Accounts sheet copy, and the month view totals
+    it over the plain calendar month, like Whitecoat.
   - Because the real FHG TM claim nets hours and patients across the whole
     month (see `telemed-locum-claims`), this app's per-session bonus figure
     is only an estimate for that one session — the monthly claim is what
@@ -284,7 +295,8 @@ without the user needing to re-explain anything — read this first.
   - **Month-to-date history.** Each successful "End shift" also records
     that day's raw counts (`recordShift`) into `app_state` app `"teleconsult"` as
     `{shifts: {"YYYY-MM-DD": {date, weekday, wc: {rostered, target, meds,
-    nomeds, pay}, fhg: {rostered, hours, patients, sessionPay}, loggedAt}}}`
+    nomeds, pay}, fhg: {rostered, hours, patients, sessionPay}, psh: {rostered,
+    hours, patients, sessionPay}, loggedAt}}}`
     — the one piece of this app that *is* synced (the live session itself
     still stays localStorage-only). Keyed by date, so re-ending the same
     day replaces that day's record. Merged per-record by `loggedAt` (the
@@ -295,7 +307,9 @@ without the user needing to re-explain anything — read this first.
     the next month** (owner-specified; e.g. 26 Sep – 25 Oct is one claim —
     `fhgPeriodFor`), netted across that period exactly like the real claim
     (`hours×$70 + max(0, rostered patients − hours×5)×$10`, ad-hoc patients
-    flat $10); Whitecoat over the plain calendar month. No combined total,
+    flat $10); Whitecoat over the plain calendar month, and Parkway over
+    the plain calendar month too (base $100 per rostered shift + $10/patient,
+    summed per shift, no netting). No combined total,
     since the two windows don't line up. Also shows "Claim cases" — the completed-case count the
     `telemed-locum-claims` skill needs, readable directly via
     `select state from app_state where app = 'teleconsult'`. Whitecoat is

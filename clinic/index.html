@@ -10,7 +10,7 @@
   <!-- Loaded here (not just inside the Teleconsult tab's own vendored markup
        below) because that markup runs directly in this top-level document,
        not an iframe -- see CLAUDE.md's "clinic/ shell" entry for why. -->
-  <link rel="stylesheet" href="../teleconsult-tracker/style.css?v=20260928f">
+  <link rel="stylesheet" href="../teleconsult-tracker/style.css?v=20261125">
   <link rel="stylesheet" href="style.css?v=20260928">
 </head>
 <body>
@@ -31,7 +31,7 @@
         <div id="app" class="wrap" style="display:none">
           <header class="topbar">
             <div>
-              <div class="eyebrow">Double Shift</div>
+              <div class="eyebrow">Triple Shift</div>
               <h1 class="page-title">Today&rsquo;s session</h1>
             </div>
             <div class="combined">
@@ -47,7 +47,7 @@
             <button id="checkCalendarBtn" class="ghost-btn" type="button">Check calendar ⧉</button>
             <div class="date-row-actions">
               <button id="floatBtn" class="ghost-btn" type="button">Float tracker ⧉</button>
-              <button id="copyBothBtn" class="ghost-btn" type="button">Copy both rows ⧉</button>
+              <button id="copyBothBtn" class="ghost-btn" type="button">Copy all rows ⧉</button>
             </div>
           </div>
           <div class="calendar-msg" id="calendarMsg"></div>
@@ -214,6 +214,63 @@
                 </div>
               </div>
             </section>
+
+            <!-- PSH TM CARD -->
+            <section class="card psh" id="pshCard">
+              <div class="card-head">
+                <div>
+                  <h2>Parkway Shenton TM</h2>
+                  <div class="sub" id="pshSub">Rostered &mdash; $50/hr + $10/patient</div>
+                </div>
+                <label class="switch">
+                  <input type="checkbox" id="pshRostered" checked>
+                  <span class="track"><span class="knob"></span></span>
+                  <span class="switch-label" id="pshRosteredLabel">Rostered</span>
+                </label>
+              </div>
+              <div class="card-body">
+
+                <div class="rostered-only derived" id="pshDerived">Base pay <b>2 &times; $50 = $100</b>. Plus <b>$10/patient</b> from the first patient.</div>
+
+                <div class="tap-row">
+                  <button class="tap-btn solo" id="pshPatientBtn" type="button">
+                    <span class="count-badge num" id="pshPatientCount">0</span>
+                    <span class="name">Patient seen</span>
+                    <span class="rate num" id="pshRateHint">+$10 each</span>
+                  </button>
+                </div>
+
+                <div class="stats">
+                  <div class="stat">
+                    <p class="k">Patients</p>
+                    <p class="v num" id="pshPatients">0</p>
+                  </div>
+                  <div class="stat" id="pshBaseStat">
+                    <p class="k">Base</p>
+                    <p class="v num" id="pshBase">$100</p>
+                  </div>
+                  <div class="stat total">
+                    <p class="k">Earned</p>
+                    <p class="v num" id="pshTotal">$0</p>
+                  </div>
+                </div>
+
+                <div class="copy-block">
+                  <button class="copy-btn" id="pshCopyBtn" type="button">
+                    <span>⧉</span><span id="pshCopyBtnText">Copy row for sheet</span>
+                  </button>
+                  <div class="copy-preview-row">
+                    <span class="color-swatch" style="background:#cfe2f3"></span>
+                    <div class="copy-preview num" id="pshCopyPreview"></div>
+                  </div>
+                </div>
+
+                <div class="card-foot">
+                  <button class="text-btn" id="pshUndo" type="button">Undo last</button>
+                  <button class="text-btn" id="pshReset" type="button">Reset session</button>
+                </div>
+              </div>
+            </section>
           </div>
 
           <!-- Month-to-date: built from every shift "End shift" has logged into
@@ -243,6 +300,15 @@
                 </div>
                 <p class="month-note" id="mWcNote"></p>
               </div>
+              <div class="month-block psh">
+                <h3>Parkway Shenton TM <span class="period" id="mPshPeriod"></span></h3>
+                <div class="stats">
+                  <div class="stat"><p class="k">Shifts</p><p class="v num" id="mPshShifts">0</p></div>
+                  <div class="stat"><p class="k">Patients</p><p class="v num" id="mPshPatients">0</p></div>
+                  <div class="stat total"><p class="k">Earned</p><p class="v num" id="mPshPay">$0</p></div>
+                </div>
+                <p class="month-note" id="mPshNote"></p>
+              </div>
             </div>
             <details class="month-log">
               <summary>Logged shifts (<span id="mCount">0</span>)</summary>
@@ -271,7 +337,7 @@
        tabs never hides it while it's floating -- see CLAUDE.md. -->
   <div class="float-panel" id="floatPanel">
     <div class="fp-head" id="floatHead">
-      <span>⠿ Double Shift</span>
+      <span>⠿ Triple Shift</span>
       <button class="fp-close" id="floatClose" type="button" aria-label="Close floating tracker">✕</button>
     </div>
     <div class="fp-clock" id="floatClock"></div>
@@ -296,6 +362,15 @@
         <div class="fp-sub num" id="floatFhgSub">0 patients</div>
         <button class="fp-btn fhg wide" id="floatFhgBtn" type="button">Patient seen</button>
       </div>
+      <div class="fp-divider"></div>
+      <div class="fp-job" id="floatPshJob">
+        <div class="fp-job-row">
+          <span class="fp-job-label psh">Parkway Shenton TM</span>
+          <span class="fp-total num psh" id="floatPshTotal">$0</span>
+        </div>
+        <div class="fp-sub num" id="floatPshSub">0 patients</div>
+        <button class="fp-btn psh wide" id="floatPshBtn" type="button">Patient seen</button>
+      </div>
       <div class="fp-combined">
         <span>Combined</span>
         <span class="num" id="floatCombinedTotal">$0</span>
@@ -306,7 +381,7 @@
   <script src="../shared/supabase-config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script src="../shared/supabase-sync.js"></script>
-  <script src="../teleconsult-tracker/script.js?v=20260928f"></script>
+  <script src="../teleconsult-tracker/script.js?v=20261125"></script>
   <script src="script.js?v=20260928"></script>
 </body>
 </html>

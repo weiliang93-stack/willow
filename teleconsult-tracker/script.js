@@ -27,7 +27,8 @@ function bootApp() {
       date: todayStr(),
       sheetDate: dateInput.value,
       wc: { rostered: wc.rostered, target: wc.target, meds: wc.meds, nomeds: wc.nomeds },
-      fhg: { rostered: fhg.rostered, hours: fhg.hours, patients: fhg.patients }
+      fhg: { rostered: fhg.rostered, hours: fhg.hours, patients: fhg.patients },
+      psh: { rostered: psh.rostered, patients: psh.patients }
     });
   }
 
@@ -82,6 +83,7 @@ function bootApp() {
     updateWeekdayFromInput();
     wcRenderStats();
     fhgRenderStats();
+    pshRenderStats();
     persist();
     renderMonth();
   });
@@ -93,6 +95,7 @@ function bootApp() {
   var WHITE = "#ffffff";
   var WC_BG = "#f4cccc";
   var FHG_BG = "#9900ff";
+  var PSH_BG = "#cfe2f3";
   var COLS = [
     { align: "center" }, { align: "center" }, { align: "left" }, { align: "left" },
     { align: "left" }, { align: "left" }, { align: "right" }, { align: "right" },
@@ -476,6 +479,105 @@ function bootApp() {
     copyRows([fhgRowCells()], fhgEls.copyBtn, fhgEls.copyBtnText, "Copy row for sheet");
   });
 
+  /* ---------------- PSH TM ---------------- */
+  // Parkway Shenton TM: fixed Mon & Fri 12:00-14:00 shift, from Mon 4 Jan
+  // 2027 through the first half of 2027. When rostered: base pay is a flat
+  // 2 x $50 = $100 plus $10/patient from the first patient -- no bonus
+  // threshold like Fullerton's, no meds/no-meds split like Whitecoat's,
+  // no shift timer (the shift length never varies). When not rostered:
+  // flat $10/patient, no base -- the same ad-hoc rule as Fullerton.
+  var PSH_HOURS = 2;
+  var PSH_RATE = 50;
+  var PSH_BASE = PSH_HOURS * PSH_RATE; // $100
+  var PSH_PER_PATIENT = 10;
+
+  var psh = {
+    rostered: sameDay && stored.psh && typeof stored.psh.rostered === "boolean" ? stored.psh.rostered : true,
+    patients: sameDay && stored.psh ? (stored.psh.patients || 0) : 0,
+    history: []
+  };
+  var pshEls = {
+    rosteredInput: document.getElementById("pshRostered"),
+    rosteredLabel: document.getElementById("pshRosteredLabel"),
+    sub: document.getElementById("pshSub"),
+    card: document.getElementById("pshCard"),
+    derived: document.getElementById("pshDerived"),
+    rosteredOnlyEls: document.querySelectorAll("#pshCard .rostered-only"),
+    patientBtn: document.getElementById("pshPatientBtn"),
+    patientCount: document.getElementById("pshPatientCount"),
+    rateHint: document.getElementById("pshRateHint"),
+    patients: document.getElementById("pshPatients"),
+    baseStat: document.getElementById("pshBaseStat"),
+    base: document.getElementById("pshBase"),
+    total: document.getElementById("pshTotal"),
+    undo: document.getElementById("pshUndo"),
+    reset: document.getElementById("pshReset"),
+    copyBtn: document.getElementById("pshCopyBtn"),
+    copyBtnText: document.getElementById("pshCopyBtnText"),
+    copyPreview: document.getElementById("pshCopyPreview")
+  };
+  pshEls.rosteredInput.checked = psh.rostered;
+  pshEls.rosteredOnlyEls.forEach(function (el) { el.style.display = psh.rostered ? "" : "none"; });
+  pshEls.rosteredLabel.textContent = psh.rostered ? "Rostered" : "Ad-hoc";
+  pshEls.sub.textContent = psh.rostered ? "Rostered — $50/hr + $10/patient" : "Not rostered — $10/patient, no base";
+
+  function pshPay() {
+    return psh.rostered ? (PSH_BASE + psh.patients * PSH_PER_PATIENT) : (psh.patients * PSH_PER_PATIENT);
+  }
+
+  function pshRowCells() {
+    if (psh.rostered) {
+      return buildRowCells("Parkway Shenton", "TM", 0, pshPay(), psh.patients + " pts", PSH_BG);
+    }
+    return buildRowCells("Parkway Shenton", "TM", 0, psh.patients * PSH_PER_PATIENT, psh.patients + " adhoc", PSH_BG);
+  }
+
+  function pshRenderStats() {
+    markShiftDirty();
+    var total = pshPay();
+    pshEls.patientCount.textContent = psh.patients;
+    pshEls.patients.textContent = psh.patients;
+    pshEls.total.textContent = fmtMoney(total);
+    if (psh.rostered) {
+      pshEls.baseStat.style.display = "";
+      pshEls.base.textContent = fmtMoney(PSH_BASE);
+      pshEls.rateHint.textContent = "+$10 each";
+    } else {
+      pshEls.baseStat.style.display = "none";
+      pshEls.rateHint.textContent = "$10 flat, ad-hoc";
+    }
+    pshEls.copyPreview.textContent = cellsToTabText(pshRowCells());
+
+    floatEls.pshTotal.textContent = fmtMoney(total);
+    floatEls.pshSub.textContent = psh.rostered
+      ? psh.patients + " patients · base $100"
+      : psh.patients + " patients (ad-hoc)";
+    floatEls.pshBtn.textContent = "Patient seen (" + psh.patients + ")";
+    updateCombined();
+  }
+
+  function pshSetActive(rostered) {
+    psh.rostered = rostered;
+    pshEls.rosteredLabel.textContent = rostered ? "Rostered" : "Ad-hoc";
+    pshEls.sub.textContent = rostered ? "Rostered — $50/hr + $10/patient" : "Not rostered — $10/patient, no base";
+    pshEls.rosteredOnlyEls.forEach(function (el) { el.style.display = rostered ? "" : "none"; });
+    pshRenderStats();
+    persist();
+  }
+
+  pshEls.rosteredInput.addEventListener("change", function (e) { pshSetActive(e.target.checked); });
+  function pshAddPatient() { psh.patients++; psh.history.push(1); pshRenderStats(); persist(); }
+  pshEls.patientBtn.addEventListener("click", pshAddPatient);
+  pshEls.undo.addEventListener("click", function () {
+    if (psh.history.length) { psh.history.pop(); psh.patients = Math.max(0, psh.patients - 1); pshRenderStats(); persist(); }
+  });
+  armReset(pshEls.reset, function () {
+    psh.patients = 0; psh.history = []; pshRenderStats(); persist();
+  });
+  pshEls.copyBtn.addEventListener("click", function () {
+    copyRows([pshRowCells()], pshEls.copyBtn, pshEls.copyBtnText, "Copy row for sheet");
+  });
+
   /* ---------------- shared ---------------- */
   function armReset(btn, doReset) {
     var armed = false;
@@ -507,7 +609,8 @@ function bootApp() {
     var fhgTotal = fhg.rostered
       ? (fhg.hours * 70 + Math.max(0, fhg.patients - threshold) * 10)
       : fhg.patients * 10;
-    var total = wcTotal + fhgTotal;
+    var pshTotal = pshPay();
+    var total = wcTotal + fhgTotal + pshTotal;
     document.getElementById("combinedTotal").textContent = fmtMoney(total);
     floatEls.combinedTotal.textContent = fmtMoney(total);
   }
@@ -515,7 +618,7 @@ function bootApp() {
   var copyBothBtn = document.getElementById("copyBothBtn");
   var copyBothLabel = copyBothBtn.textContent;
   copyBothBtn.addEventListener("click", function () {
-    var rows = wcRowsForCopy().concat([fhgRowCells()]);
+    var rows = wcRowsForCopy().concat([fhgRowCells(), pshRowCells()]);
     copyRows(rows, copyBothBtn, copyBothBtn, copyBothLabel);
   });
 
@@ -527,6 +630,16 @@ function bootApp() {
   // Applies a teleconsult-check-roster result to both cards, reusing the
   // same setters a manual toggle tap already goes through (so UI state,
   // rendering, and persistence all stay in the one place).
+  // Parkway Shenton is a fixed Mon & Fri 12:00-14:00 shift from Mon 4 Jan
+  // 2027 through the first half of 2027 -- no calendar lookup needed (and
+  // the check-roster Edge Function doesn't know about it); the logging
+  // date's own weekday decides, so the roster toggle follows the date,
+  // not the calendar.
+  function pshRosteredFor(p) {
+    var d = new Date(p.year, p.month - 1, p.day);
+    return dateKey(p) >= "2027-01-04" && dateKey(p) <= "2027-06-30" && (d.getDay() === 1 || d.getDay() === 5);
+  }
+
   function applyRosterResult(data) {
     if (typeof data.wcTarget === "number") {
       wc.target = data.wcTarget;
@@ -574,11 +687,15 @@ function bootApp() {
         return;
       }
       applyRosterResult(result.data);
+      var pshOn = pshRosteredFor(dateParts);
+      pshEls.rosteredInput.checked = pshOn;
+      pshSetActive(pshOn);
       var wcPart = result.data.wcRostered
         ? "Whitecoat rostered (" + (result.data.isInspireDay ? "Inspire, $250" : "$650") + ")"
         : "Whitecoat not rostered";
       var fhgPart = result.data.fhgRostered ? "Fullerton rostered" : "Fullerton not rostered";
-      calendarMsg.textContent = wcPart + " · " + fhgPart;
+      var pshPart = pshOn ? "Parkway rostered" : "Parkway not rostered";
+      calendarMsg.textContent = wcPart + " · " + fhgPart + " · " + pshPart;
       calendarMsg.className = "calendar-msg success";
     });
   }
@@ -619,7 +736,7 @@ function bootApp() {
       return;
     }
 
-    var rows = wcRowsForCopy().concat([fhgRowCells()]).map(cellsToEndShiftRow);
+    var rows = wcRowsForCopy().concat([fhgRowCells(), pshRowCells()]).map(cellsToEndShiftRow);
 
     endShiftBtn.disabled = true;
     endShiftBtn.textContent = "Adding to sheet…";
@@ -735,6 +852,8 @@ function bootApp() {
     var wcPay = wc.meds * 13 + wc.nomeds * 10;
     var fhgBase = fhg.rostered ? fhg.hours * 70 : 0;
     var fhgBonus = fhg.rostered ? Math.max(0, fhg.patients - fhg.hours * 5) * 10 : fhg.patients * 10;
+    var pshBase = psh.rostered ? PSH_BASE : 0;
+    var pshPayVal = pshBase + psh.patients * PSH_PER_PATIENT;
     shiftHistory[dateKey(dateParts)] = {
       date: dateKey(dateParts),
       weekday: weekdayEl.textContent,
@@ -746,6 +865,12 @@ function bootApp() {
         // Per-session estimate only — the monthly claim nets hours and
         // patients across the whole month (see renderMonth).
         sessionPay: fhgBase + fhgBonus
+      },
+      psh: {
+        rostered: psh.rostered,
+        hours: psh.rostered ? PSH_HOURS : 0,
+        patients: psh.patients,
+        sessionPay: pshPayVal
       },
       loggedAt: new Date().toISOString()
     };
@@ -772,8 +897,13 @@ function bootApp() {
     wcPatients: document.getElementById("mWcPatients"),
     wcPay: document.getElementById("mWcPay"),
     wcNote: document.getElementById("mWcNote"),
+    pshShifts: document.getElementById("mPshShifts"),
+    pshPatients: document.getElementById("mPshPatients"),
+    pshPay: document.getElementById("mPshPay"),
+    pshNote: document.getElementById("mPshNote"),
     fhgPeriod: document.getElementById("mFhgPeriod"),
     wcPeriod: document.getElementById("mWcPeriod"),
+    pshPeriod: document.getElementById("mPshPeriod"),
     count: document.getElementById("mCount"),
     list: document.getElementById("mList")
   };
@@ -805,9 +935,10 @@ function bootApp() {
   // recomputed from the counts rather than trusted from storage.
   function shiftRecord(k) {
     var r = shiftHistory[k];
-    var wcR = r.wc || {}, fhgR = r.fhg || {};
+    var wcR = r.wc || {}, fhgR = r.fhg || {}, pshR = r.psh || {};
     var meds = wcR.meds || 0, nomeds = wcR.nomeds || 0;
     var hours = fhgR.rostered ? (fhgR.hours || 0) : 0, pts = fhgR.patients || 0;
+    var pshPts = pshR.patients || 0;
     return {
       date: k,
       weekday: r.weekday,
@@ -815,6 +946,10 @@ function bootApp() {
       fhg: {
         rostered: !!fhgR.rostered, hours: hours, patients: pts,
         sessionPay: fhgR.rostered ? hours * 70 + Math.max(0, pts - hours * 5) * 10 : pts * 10
+      },
+      psh: {
+        rostered: !!pshR.rostered, hours: pshR.rostered ? PSH_HOURS : 0, patients: pshPts,
+        sessionPay: pshR.rostered ? PSH_BASE + pshPts * PSH_PER_PATIENT : pshPts * PSH_PER_PATIENT
       }
     };
   }
@@ -838,6 +973,7 @@ function bootApp() {
     // hours × 5 for the period as a whole). Ad-hoc patients are flat $10.
     var fhgHours = 0, fhgRosteredPts = 0, fhgAdhocPts = 0, fhgSessionSum = 0;
     var wcShifts = 0, wcMeds = 0, wcNomeds = 0, wcPay = 0;
+    var pshShifts = 0, pshPatients = 0, pshPayTotal = 0;
     fhgDays.forEach(function (d) {
       if (d.fhg.rostered) { fhgHours += d.fhg.hours; fhgRosteredPts += d.fhg.patients; }
       else fhgAdhocPts += d.fhg.patients;
@@ -846,6 +982,9 @@ function bootApp() {
     wcDays.forEach(function (d) {
       // Ad-hoc (not rostered) days with patients pay the same rate, so count them too.
       if (d.wc.rostered || d.wc.meds + d.wc.nomeds > 0) { wcShifts++; wcMeds += d.wc.meds; wcNomeds += d.wc.nomeds; wcPay += d.wc.pay; }
+      // Parkway: a rostered shift pays its $100 base even with no patients;
+      // ad-hoc days count only if they saw patients.
+      if (d.psh.rostered || d.psh.patients > 0) { pshShifts++; pshPatients += d.psh.patients; pshPayTotal += d.psh.sessionPay; }
     });
     var threshold = fhgHours * 5;
     var over = Math.max(0, fhgRosteredPts - threshold);
@@ -855,6 +994,7 @@ function bootApp() {
     monthEls.title.textContent = MONTHS[p.month - 1] + " " + p.year;
     monthEls.fhgPeriod.textContent = period.label;
     monthEls.wcPeriod.textContent = MON_SHORT[p.month - 1] + " " + p.year;
+    monthEls.pshPeriod.textContent = MON_SHORT[p.month - 1] + " " + p.year;
     monthEls.sub.textContent = days.length
       ? days.length + " day" + (days.length === 1 ? "" : "s") + " logged via End shift"
       : "No shifts logged yet — End shift records each day here";
@@ -874,6 +1014,12 @@ function bootApp() {
     monthEls.wcNote.innerHTML = wcShifts
       ? "<b>" + wcNomeds + "</b> no meds / <b>" + wcMeds + "</b> with meds" +
         " · avg " + fmtMoney(wcPay / wcShifts) + " per shift"
+      : "";
+    monthEls.pshShifts.textContent = pshShifts;
+    monthEls.pshPatients.textContent = pshPatients;
+    monthEls.pshPay.textContent = fmtMoney(pshPayTotal);
+    monthEls.pshNote.innerHTML = pshShifts
+      ? "<b>" + pshPatients + "</b> patients · avg " + fmtMoney(pshPayTotal / pshShifts) + " per shift"
       : "";
     monthEls.count.textContent = days.length;
 
@@ -896,6 +1042,8 @@ function bootApp() {
       if (d.fhg.rostered) bits.push("FHG " + d.fhg.hours + "h · " + d.fhg.patients + " pts");
       else if (d.fhg.patients) bits.push("FHG " + d.fhg.patients + " ad-hoc");
       if (d.wc.rostered || d.wc.meds + d.wc.nomeds > 0) bits.push("WC " + d.wc.nomeds + "/" + d.wc.meds + " · " + fmtMoney(d.wc.pay));
+      if (d.psh.rostered) bits.push("PSH " + d.psh.hours + "h · " + d.psh.patients + " pts · " + fmtMoney(d.psh.sessionPay));
+      else if (d.psh.patients) bits.push("PSH " + d.psh.patients + " ad-hoc");
       x.textContent = bits.join("  ·  ") || "no patients";
       var rm = document.createElement("button");
       rm.type = "button";
@@ -926,11 +1074,16 @@ function bootApp() {
     fhgTotal: document.getElementById("floatFhgTotal"),
     fhgSub: document.getElementById("floatFhgSub"),
     fhgBtn: document.getElementById("floatFhgBtn"),
+    pshJob: document.getElementById("floatPshJob"),
+    pshTotal: document.getElementById("floatPshTotal"),
+    pshSub: document.getElementById("floatPshSub"),
+    pshBtn: document.getElementById("floatPshBtn"),
     combinedTotal: document.getElementById("floatCombinedTotal")
   };
   floatEls.wcMeds.addEventListener("click", wcAddMeds);
   floatEls.wcNomeds.addEventListener("click", wcAddNomeds);
   floatEls.fhgBtn.addEventListener("click", fhgAddPatient);
+  floatEls.pshBtn.addEventListener("click", pshAddPatient);
 
   // Wall clock in the float panel body (not fp-head, which is hidden while
   // docked in a real PiP window — that window supplies its own native
@@ -969,7 +1122,7 @@ function bootApp() {
   function openFloat() {
     if (supportsPip) {
       if (pipWindow) { pipWindow.focus(); return; }
-      documentPictureInPicture.requestWindow({ width: 240, height: 340 }).then(function (win) {
+      documentPictureInPicture.requestWindow({ width: 240, height: 430 }).then(function (win) {
         pipWindow = win;
         copyStylesInto(pipWindow.document);
         // .float-panel.in-pip relies on height:100% to bound fp-body so it can
@@ -1037,11 +1190,12 @@ function bootApp() {
   })();
 
   document.getElementById("pipNote").innerHTML = supportsPip
-    ? "<b>&ldquo;Float tracker&rdquo;</b> opens an always-on-top window (Chrome&rsquo;s Document Picture-in-Picture) with both jobs&rsquo; totals and tap buttons &mdash; it stays visible over the Whitecoat/Fullerton tabs and any other app until you close it."
+    ? "<b>&ldquo;Float tracker&rdquo;</b> opens an always-on-top window (Chrome&rsquo;s Document Picture-in-Picture) with all three jobs&rsquo; totals and tap buttons &mdash; it stays visible over the Whitecoat/Fullerton/Parkway tabs and any other app until you close it."
     : "<b>&ldquo;Float tracker&rdquo;</b> needs Chrome&rsquo;s Document Picture-in-Picture support, which this browser doesn&rsquo;t have &mdash; it&rsquo;ll open as a panel pinned to this page instead (drag it by the header), not a true always-on-top window.";
 
   wcRenderStats();
   fhgRenderStats();
+  pshRenderStats();
   renderMonth();
   syncHistory();
 
