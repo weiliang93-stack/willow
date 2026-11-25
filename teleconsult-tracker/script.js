@@ -491,8 +491,18 @@ function bootApp() {
   var PSH_BASE = PSH_HOURS * PSH_RATE; // $100
   var PSH_PER_PATIENT = 10;
 
+  // Parkway roster is purely date-derived (Mon & Fri, 4 Jan–30 Jun 2027), so
+  // a fresh day's default comes from the date itself. The old default of
+  // `true` left the toggle on for every new day until the calendar check ran
+  // — and that check only runs when signed in, so an unsigned-in load stayed
+  // wrongly rostered (e.g. Wed 25 Nov 2026 showed ROSTERED with a $100 base).
+  var pshDefaultRostered = (function () {
+    var p = parsedDateComponents();
+    return p ? pshRosteredFor(p) : true;
+  })();
+
   var psh = {
-    rostered: sameDay && stored.psh && typeof stored.psh.rostered === "boolean" ? stored.psh.rostered : true,
+    rostered: sameDay && stored.psh && typeof stored.psh.rostered === "boolean" ? stored.psh.rostered : pshDefaultRostered,
     patients: sameDay && stored.psh ? (stored.psh.patients || 0) : 0,
     history: []
   };
